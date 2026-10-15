@@ -124,11 +124,12 @@ namespace VortexTests
             GameEntity door = null, guard = null;
             Level(s =>
             {
-                door = Door(s, enabled: false);   // open at the start: carved anyway (switched off), so shutting it is instant
+                door = Door(s);
                 guard = PhysicsRaycastTests.Add(s, null, "Guard", West, e => e.AddComponentDirect(new NavAgent(e) { ResolveCollisions = false, Speed = 3.5f, Radius = 0.4f }));
             }, out _);
             try
             {
+                NavigationService.SetObstacleEnabled(door, 0, false);   // open at the start: carved anyway (switched off), so shutting it is instant
                 Ticks(1);
                 t.True(NavigationService.FlushRebuilds(), "the open door's tiles are rebuilt");
                 t.True(NavigationService.IsObstacleReady(door, 0) && !NavigationService.IsObstacleEnabled(door, 0), "the open door is carved, switched off");
@@ -241,6 +242,90 @@ namespace VortexTests
                 t.Equal(2, Corners(new Vector3(-5f, 0, 0), new Vector3(5f, 0, 0)), "the path goes straight through where the wall was");
             }
             finally { End(); }
+        }
+    
+        /// <summary>#435 review: a script obstacle moved a little every frame beside the agent's way (on the far side of a
+        /// wall, inside the box from the agent to its target) is only steered around while it moves — no tile rebuilds every
+        /// frame — and the agent is never re-planned into a standstill: it arrives as soon as without the obstacle.</summary>
+        [Test]
+        public static void AScriptObstacleMovedEveryFrameDoesNotStopAnAgent(TestContext t)
+        {
+            if (!Native()) return;
+            float Run(bool withObstacle)
+            {
+                GameEntity runner = null;
+                Level(s => runner = PhysicsRaycastTests.Add(s, null, "Runner", West, e => e.AddComponentDirect(new NavAgent(e) { ResolveCollisions = false, Speed = 5f, Radius = 0.4f })), out _);
+                try
+                {
+                    Ticks(1);
+                    NavigationService.SetDestination(runner, East);
+                    long cart = withObstacle ? NavigationService.AddObstacle(new SysVec(2.5f, 1f, -0.5f), new SysVec(0.4f, 1f, 0.4f), SysQuat.Identity, false, true) : 0;
+                    int built0 = NavigationService.GetRebuildStats().TilesBuilt;
+                    for (int i = 0; i < 60 * 30; i++)
+                    {
+                        if (cart != 0) NavigationService.MoveObstacle(cart, new SysVec(2.5f + (float)Math.Sin(i * 0.02), 1f, -0.5f), SysQuat.Identity);   // a cart pushed to and fro
+                        NavigationService.Tick(Dt);
+                        if (NavigationService.HasArrived(runner))
+                        {
+                            if (withObstacle)
+                                Console.WriteLine("        a script obstacle moved every frame beside the way: arrived after " + (i * Dt).ToString("0.00") + " s, "
+                                    + (NavigationService.GetRebuildStats().TilesBuilt - built0) + " tile builds");
+                            return i * Dt;
+                        }
+                    }
+                    return float.PositiveInfinity;
+                }
+                finally { End(); }
+            }
+            float alone = Run(false), beside = Run(true);
+            t.True(!float.IsInfinity(beside) && beside < alone + 1.5f, "it arrives about as soon as without one, the cart steered around (" + beside + " s vs " + alone + " s)");
+        }
+
+        /// <summary>#435 review: Carve Only Stationary measures from where the obstacle came to rest — a physics prop settling
+        /// (a jitter under Move Threshold every frame) carves; moving more than that, it is only steered around.</summary>
+        [Test]
+        public static void AJitteringObstacleStillCarves(TestContext t)
+        {
+            if (!Native()) return;
+            GameEntity crate = null;
+            Level(s => crate = PhysicsRaycastTests.Add(s, null, "Crate", new Vector3(-8f, 1f, 10f), e =>
+                e.AddComponentDirect(new NavMeshObstacle(e) { Size = new Vector3(2f, 2f, 2f), TimeToStationary = 0.25f, MoveThreshold = 0.1f })), out _);
+            try
+            {
+                var rng = new Random(435);
+                bool OnMesh(Vector3 q) => NavigationService.SamplePosition(q, 0.1f, out var h) && Math.Abs(h.X - q.X) < 0.05f && Math.Abs(h.Z - q.Z) < 0.05f;
+                for (int i = 0; i < 60; i++)
+                {
+                    // 1 cm of jitter every frame (a prop settling on the physics world)
+                    crate.Transform.LocalPosition = new Vector3(-8f + 0.01f * (float)(rng.NextDouble() - 0.5), 1f, 10f + 0.01f * (float)(rng.NextDouble() - 0.5));
+                    NavigationService.Tick(Dt);
+                }
+                NavigationService.FlushRebuilds();
+                t.False(OnMesh(new Vector3(-8f, 0, 10f)), "jittering under its Move Threshold it is carved");
+            }
+            finally { End(); }
+        }
+
+        /// <summary>#435 review: only an enabled carving obstacle leaves its entity out of the bake; a disabled one, or one that
+        /// only steers agents around it, is level geometry like any other. The rebuild budget is back to 2 ms after play.</summary>
+        [Test]
+        public static void OnlyCarvingObstaclesLeaveTheBake(TestContext t)
+        {
+            if (!Native()) return;
+            foreach (var (carve, enabled, boxes) in new[] { (true, true, 2), (true, false, 3), (false, true, 3) })
+            {
+                Level(s => PhysicsRaycastTests.Add(s, null, "Prop", new Vector3(8f, 1f, -8f), e =>
+                {
+                    e.AddComponentDirect(new BoxCollider(e) { Size = new Vector3(1f, 2f, 1f) });
+                    e.AddComponentDirect(new NavMeshObstacle(e) { Carve = carve, IsEnabled = enabled });
+                }), out var bake);
+                try { t.Equal(boxes, bake.Stats.InputBoxes, "carve " + carve + ", enabled " + enabled + ": " + boxes + " boxes baked"); }
+                finally { End(); }
+            }
+            Level(null, out _);
+            NavigationService.RebuildBudgetMs = 7f;
+            End();
+            t.Equal(2f, NavigationService.RebuildBudgetMs, "RebuildBudgetMs is back to its default after play");
         }
     }
 }

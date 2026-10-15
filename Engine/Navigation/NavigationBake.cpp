@@ -1124,10 +1124,11 @@ namespace vortex::navigation::rebuild {
 		std::vector<u8> tri_areas;
 		std::vector<f32> boxes;
 		std::vector<u8> box_areas;
-		bake_detail::bake_job job;   // its verts / tris point into the vectors above
+		format::file_header header{};   // the navmesh it is binned for
+		bake_detail::bake_job job;      // its verts / tris point into the vectors above (prepare_source)
 	};
 
-	std::shared_ptr<const source> make_source(const format::file_header& header, const f32* verts, s32 vert_count, const s32* tris,
+	std::shared_ptr<source> copy_source(const format::file_header& header, const f32* verts, s32 vert_count, const s32* tris,
 		s32 tri_count, const u8* tri_areas, const f32* boxes, s32 box_count, const u8* box_areas)
 	{
 		if (header.magic != data_magic || header.stats.tiles_x <= 0 || header.stats.tiles_z <= 0) return nullptr;
@@ -1138,12 +1139,25 @@ namespace vortex::navigation::rebuild {
 		if (tri_areas && tri_count > 0) src->tri_areas.assign(tri_areas, tri_areas + tri_count);
 		if (boxes && box_count > 0) src->boxes.assign(boxes, boxes + (size_t)box_count * box_floats);
 		if (box_areas && box_count > 0) src->box_areas.assign(box_areas, box_areas + box_count);
-		src->job.s = header.settings;
-		const s32 r = bake_detail::prepare_job(src->job, src->verts.empty() ? nullptr : src->verts.data(), (s32)(src->verts.size() / 3),
-			src->tris.empty() ? nullptr : src->tris.data(), (s32)(src->tris.size() / 3), src->tri_areas.empty() ? nullptr : src->tri_areas.data(),
-			src->boxes.empty() ? nullptr : src->boxes.data(), (s32)(src->boxes.size() / box_floats), src->box_areas.empty() ? nullptr : src->box_areas.data(),
-			&header);
-		if (r < 0) return nullptr;
+		src->header = header;
+		return src;
+	}
+
+	bool prepare_source(source& src)
+	{
+		src.job.s = src.header.settings;
+		const s32 r = bake_detail::prepare_job(src.job, src.verts.empty() ? nullptr : src.verts.data(), (s32)(src.verts.size() / 3),
+			src.tris.empty() ? nullptr : src.tris.data(), (s32)(src.tris.size() / 3), src.tri_areas.empty() ? nullptr : src.tri_areas.data(),
+			src.boxes.empty() ? nullptr : src.boxes.data(), (s32)(src.boxes.size() / box_floats), src.box_areas.empty() ? nullptr : src.box_areas.data(),
+			&src.header);
+		return r >= 0;
+	}
+
+	std::shared_ptr<const source> make_source(const format::file_header& header, const f32* verts, s32 vert_count, const s32* tris,
+		s32 tri_count, const u8* tri_areas, const f32* boxes, s32 box_count, const u8* box_areas)
+	{
+		auto src = copy_source(header, verts, vert_count, tris, tri_count, tri_areas, boxes, box_count, box_areas);
+		if (!src || !prepare_source(*src)) return nullptr;
 		return src;
 	}
 

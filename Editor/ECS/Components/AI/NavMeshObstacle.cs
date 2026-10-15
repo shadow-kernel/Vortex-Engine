@@ -18,9 +18,10 @@ namespace Editor.ECS.Components.AI
     /// navmesh: paths go around it and agents re-plan when it appears in their way. The tiles it covers are rebuilt in the
     /// background from the scene geometry, so the first carve lands a few milliseconds later; switching it off and on again
     /// (the component, or <c>Navigation.SetObstacleEnabled</c>) is instant — a door. Not carving, the agents only steer
-    /// around it like around another agent (a moving cart, a car that just parked). The obstacle's own entity (and its
-    /// children) are left out of the navmesh bake, the component switched on or off: bake with the door open or closed, it
-    /// is the obstacle that decides — switched off (a door that starts open) it blocks nothing.
+    /// around it like around another agent (a moving cart, a car that just parked). A carving obstacle's own entity (and its
+    /// children) are left out of the navmesh bake — bake with the door open or closed, it is the obstacle that decides; for a
+    /// door that starts open, switch it off at the start with <c>Navigation.SetObstacleEnabled(door, false)</c> (it is
+    /// carved anyway, so shutting it is instant). A disabled or non-carving obstacle's entity is baked like any other.
     /// </summary>
     [DataContract(Name = "NavMeshObstacle", Namespace = "")]
     public class NavMeshObstacle : Component
@@ -74,11 +75,13 @@ namespace Editor.ECS.Components.AI
         [DataMember(Name = "carveOnlyStationary", Order = 16)]
         public bool CarveOnlyStationary { get => _carveOnlyStationary; set => SetProperty(ref _carveOnlyStationary, value, nameof(CarveOnlyStationary)); }
 
-        /// <summary>How far (m) it has to move — or how far a box corner, turning — before it counts as moving.</summary>
+        /// <summary>How far (m) it has to move — or how far a box corner, turning — from where it came to rest before it counts
+        /// as moving (a physics prop settling by less keeps standing), and from where it is carved before it is carved anew.</summary>
         [DataMember(Name = "moveThreshold", Order = 17)]
         public float MoveThreshold { get => _moveThreshold; set => SetProperty(ref _moveThreshold, Clamp(value, 0.001f, 100f), nameof(MoveThreshold)); }
 
-        /// <summary>Seconds it has to stand still before it carves again (with Carve Only Stationary).</summary>
+        /// <summary>Seconds it has to stand (moved less than <see cref="MoveThreshold"/>) before it carves again (with Carve Only
+        /// Stationary).</summary>
         [DataMember(Name = "timeToStationary", Order = 18)]
         public float TimeToStationary { get => _timeToStationary; set => SetProperty(ref _timeToStationary, Clamp(value, 0f, 100f), nameof(TimeToStationary)); }
 

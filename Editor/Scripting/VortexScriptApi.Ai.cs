@@ -243,9 +243,10 @@ namespace Vortex
 
         /// <summary>An obstacle made by code — rubble that fell, a barricade that was built — without an entity: a box of
         /// <paramref name="halfExtents"/> turned by <paramref name="rotation"/> (Euler degrees). <paramref name="carve"/>: cut
-        /// out of the navmesh (paths go around it; its tiles are rebuilt in the background); false: agents only steer around
-        /// it. Returns its id for <see cref="MoveObstacle"/> / <see cref="SetObstacleEnabled"/> / <see cref="RemoveObstacle"/>
-        /// (0 without a running navmesh). It goes when play stops.</summary>
+        /// out of the navmesh (paths go around it; its tiles are rebuilt in the background — while it is moved it is only
+        /// steered around, see <see cref="MoveObstacle"/>); false: agents only steer around it. Returns its id for
+        /// <see cref="MoveObstacle"/> / <see cref="SetObstacleEnabled"/> / <see cref="RemoveObstacle"/> (0 without a running
+        /// navmesh). It goes when play stops.</summary>
         public static long AddObstacle(Vector3 center, Vector3 halfExtents, Vector3 rotation = default(Vector3), bool carve = true)
         {
             AiRuntime.EnsureRunning();
@@ -259,8 +260,9 @@ namespace Vortex
             return NavigationService.AddObstacle(S(center), new System.Numerics.Vector3(radius, height * 0.5f, radius), System.Numerics.Quaternion.Identity, true, carve);
         }
 
-        /// <summary>Move an obstacle from <see cref="AddObstacle"/>. A carving one is carved again at its new place (its
-        /// tiles are rebuilt); something that keeps moving should not carve.</summary>
+        /// <summary>Move an obstacle from <see cref="AddObstacle"/>. A carving one follows the rules of a Nav Mesh Obstacle with
+        /// Carve Only Stationary: moved more than 0.1 m from where it stood, it is only steered around until it has stood still
+        /// for half a second — then it is carved where it is (its tiles rebuilt). Moving it every frame is fine.</summary>
         public static bool MoveObstacle(long obstacle, Vector3 center, Vector3 rotation = default(Vector3))
         {
             return NavigationService.MoveObstacle(obstacle, S(center), Rot(rotation));
@@ -270,8 +272,9 @@ namespace Vortex
         public static void RemoveObstacle(long obstacle) { NavigationService.RemoveObstacle(obstacle); }
 
         /// <summary>Re-bake the navmesh inside a box from the scene as it is now — after a wall was blown away (destroy or
-        /// deactivate its entity first). The scene geometry is gathered again (call it once per event, not every frame) and
-        /// the tiles over the box are rebuilt in the background. False without a running navmesh.</summary>
+        /// deactivate its entity first). The scene geometry is gathered again over the next frames (a few milliseconds each;
+        /// call it once per event, not every frame), then the tiles over the box are rebuilt in the background. False without
+        /// a running navmesh.</summary>
         public static bool Rebake(Vector3 center, Vector3 halfExtents)
         {
             AiRuntime.EnsureRunning();

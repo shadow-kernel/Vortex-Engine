@@ -92,7 +92,7 @@ namespace vortex::navigation {
 	inline constexpr s32 bake_error_busy{ -8 };          // another bake is running
 
 	inline constexpr s32 box_floats{ 10 };               // centre xyz, half extents xyz, rotation quaternion xyzw
-	inline constexpr s32 max_agents{ 256 };
+	inline constexpr s32 max_agents{ 256 };   // crowd agents; obstacles' avoidance circles have 256 slots of their own
 	// The bake keeps book of every tile of its grid, empty ones included; this bounds that bookkeeping, not the navmesh
 	// (#517: the old 16,384 came from the 32-bit poly ref and went with it). Editor/Core/Services/AI/NavigationService.cs
 	// (ErrorText) names it.
@@ -233,6 +233,9 @@ namespace vortex::navigation {
 	bool agent_get_state(u32 agent, agent_state* out);
 	s32  agent_get_corners(u32 agent, f32* out_points, s32 max_points);   // remaining path corners
 	s32  agent_count();
+	// #435: also re-plans the agents whose way a navmesh change touched (keeping their corridor while the path is searched,
+	// at most every half second each, never while a search runs) and places agents the crowd lost (invalid: an obstacle
+	// dropped on them) on the nearest open navmesh within 5 m, their target kept.
 	void crowd_update(f32 dt);
 	void crowd_clear();                                            // remove every agent
 
@@ -271,18 +274,21 @@ namespace vortex::navigation {
 		s32 revision;             // changes with every tile swapped in and every polygon blocked / unblocked (redraw the debug mesh)
 	};
 
-	// The geometry the loaded navmesh was baked from (bake()'s input: world-space triangles + solid boxes); it is binned into
-	// the navmesh's own tile grid with its own settings. Replaces the previous source and marks every tile an obstacle covers
-	// for a rebuild. False without a navmesh or when nothing of it lies in the grid.
+	// The geometry the loaded navmesh was baked from (bake()'s input: world-space triangles + solid boxes); it is copied here
+	// and binned into the navmesh's own tile grid — at once for a small level (up to 20000 triangles + boxes), on a thread
+	// of its own for a larger one (tens of ms), which rebuild_update then puts in place (the previous source serves the
+	// rebuilds until then). Every tile an obstacle covers is rebuilt from it. False without a navmesh, or when a small level's
+	// geometry does not fit the grid (a large one's is reported when its binning ends).
 	bool rebuild_set_source(const f32* verts, s32 vert_count, const s32* tris, s32 tri_count, const u8* tri_areas,
 		const f32* boxes, s32 box_count, const u8* box_areas);
-	bool rebuild_has_source();
+	bool rebuild_has_source();                                     // true from rebuild_set_source on (binned or not yet)
 	void rebuild_clear_source();
 	// Re-bake the tiles over [bmin, bmax] from the source (after rebuild_set_source with the changed geometry: a wall blown
-	// up). False without a source.
+	// up — with a source still being binned, from that one once it is in place). False without a source.
 	bool rebuild_tiles(const f32* bmin, const f32* bmax);
-	// Game thread, every frame: queue builds for changed tiles and swap finished ones in until budget_ms is spent (at least
-	// one). Returns the tiles swapped.
+	// Game thread, every frame: queue builds for changed tiles — in the order they were first asked for, a tile at most every
+	// 150 ms — and swap finished ones in until budget_ms is spent (at least one). Returns the tiles swapped. Agents whose way
+	// a change touched are re-planned by crowd_update.
 	s32  rebuild_update(f32 budget_ms);
 	// Tests and tools: wait (up to timeout_ms) for every pending build and swap it in. True when nothing is pending.
 	bool rebuild_flush(f32 timeout_ms);

@@ -34,6 +34,12 @@ namespace vortex::navigation::rebuild {
 	// null when the header describes no navmesh or nothing of the geometry lies in the grid.
 	std::shared_ptr<const source> make_source(const format::file_header& header, const f32* verts, s32 vert_count, const s32* tris,
 		s32 tri_count, const u8* tri_areas, const f32* boxes, s32 box_count, const u8* box_areas);
+	// make_source in two steps: the copy of the input (fast — the caller's arrays may go right after), then the binning into
+	// the tile grid (tens of milliseconds for a large level: any thread). copy_source: null for a header without a navmesh;
+	// prepare_source: false when nothing of the geometry lies in the grid.
+	std::shared_ptr<source> copy_source(const format::file_header& header, const f32* verts, s32 vert_count, const s32* tris,
+		s32 tri_count, const u8* tri_areas, const f32* boxes, s32 box_count, const u8* box_areas);
+	bool prepare_source(source& s);
 	s32 source_triangles(const source& s);
 	s32 source_boxes(const source& s);
 	// Bytes the source keeps (its geometry and tile lists).

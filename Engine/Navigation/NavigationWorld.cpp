@@ -10,6 +10,7 @@
 // ============================================================================
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -165,6 +166,19 @@ namespace vortex::navigation {
 
 		// ---- #435: dynamic obstacles and runtime tile rebuilds ------------------------------------------------------------
 		constexpr int k_max_proxies{ 8 };   // avoidance circles per obstacle
+		// Avoidance circles live in crowd slots of their own past the agents' — they never take an agent's place.
+		constexpr int k_proxy_slots{ 256 };
+		constexpr int k_crowd_slots{ max_agents + k_proxy_slots };
+		// An agent is re-planned for navmesh changes at most this often (s), and never while its path search runs: a carving
+		// obstacle that keeps moving must not restart the search every frame (it would never finish).
+		constexpr f32 k_replan_interval{ 0.5f };
+		// An agent the crowd lost (state invalid: an obstacle dropped on it) is placed again this often (s) until it is.
+		constexpr f32 k_replace_interval{ 0.25f };
+		// ... within these half extents of where it was (wider than the crowd's own placement, 2 x 1.5 x 2 m)
+		const f32 k_replace_extents[3] = { 5.0f, 1.5f, 5.0f };
+		// A tile is rebuilt at most this often (ms): an obstacle re-carved every frame swaps its tiles a few times a second,
+		// and the agents in them are not re-placed by the crowd on every frame.
+		constexpr double k_tile_min_interval_ms{ 150.0 };
 
 		struct obstacle_slot
 		{
@@ -203,12 +217,15 @@ namespace vortex::navigation {
 
 		// One thread builds the tiles: a tile takes milliseconds, so the game thread never waits for one; it only swaps the
 		// finished ones in (rebuild_update). The thread lives while there are jobs — it ends when they run out (kick starts
-		// the next) — so no thread is left to join when the library goes away.
+		// the next) — so no thread is left to join when the library goes away. Tiles wait in the order they were first asked
+		// for; a newer request for a waiting tile replaces its job where it stands — with many obstacles moving, every tile
+		// gets its turn (re-queuing at the back each frame kept rebuilding the same few).
 		struct tile_worker
 		{
 			std::thread thread;
 			std::mutex mutex;
-			std::deque<tile_job> jobs;
+			std::deque<s64> order;                        // tiles waiting for the worker, the oldest request first
+			std::unordered_map<s64, tile_job> waiting;    // their jobs
 			std::deque<tile_result> results;
 			bool running{ false };
 			bool stop{ false };
@@ -220,7 +237,7 @@ namespace vortex::navigation {
 			{
 				{
 					std::lock_guard<std::mutex> lock(mutex);
-					if (running || jobs.empty()) return;
+					if (running || order.empty()) return;
 					running = true;
 				}
 				if (thread.joinable()) thread.join();   // the previous one, done
@@ -233,7 +250,8 @@ namespace vortex::navigation {
 				{
 					std::lock_guard<std::mutex> lock(mutex);
 					stop = true;
-					jobs.clear();
+					order.clear();
+					waiting.clear();
 				}
 				if (thread.joinable()) thread.join();
 				std::lock_guard<std::mutex> lock(mutex);
@@ -249,9 +267,13 @@ namespace vortex::navigation {
 					tile_job job;
 					{
 						std::lock_guard<std::mutex> lock(mutex);
-						if (stop || jobs.empty()) { running = false; return; }
-						job = std::move(jobs.front());
-						jobs.pop_front();
+						if (stop || order.empty()) { running = false; return; }
+						const s64 key = order.front();
+						order.pop_front();
+						auto it = waiting.find(key);
+						if (it == waiting.end()) continue;
+						job = std::move(it->second);
+						waiting.erase(it);
 					}
 					tile_result r;
 					r.tx = job.tx;
@@ -266,6 +288,56 @@ namespace vortex::navigation {
 			}
 		};
 
+		// Binning a large level's geometry into the tile grid takes tens of milliseconds: it runs on a thread of its own and
+		// rebuild_update puts the finished source in place (the tiles asked for meanwhile wait for it).
+		struct source_maker
+		{
+			std::thread thread;
+			std::mutex mutex;
+			std::shared_ptr<rebuild::source> made;
+			bool done{ false }, ok{ false };
+
+			~source_maker() { wait(); }
+
+			void wait() { if (thread.joinable()) thread.join(); }
+
+			void start(std::shared_ptr<rebuild::source> src)
+			{
+				wait();   // (a previous one ends first; its source is dropped)
+				{
+					std::lock_guard<std::mutex> lock(mutex);
+					made.reset();
+					done = false;
+					ok = false;
+				}
+				thread = std::thread([this, src]
+				{
+					const bool fits = rebuild::prepare_source(*src);
+					std::lock_guard<std::mutex> lock(mutex);
+					made = fits ? src : nullptr;
+					ok = fits;
+					done = true;
+				});
+			}
+
+			// the finished source, once: true when the binning is over (out null when the geometry did not fit)
+			bool take(std::shared_ptr<rebuild::source>& out)
+			{
+				{
+					std::lock_guard<std::mutex> lock(mutex);
+					if (!done) return false;
+				}
+				wait();
+				std::lock_guard<std::mutex> lock(mutex);
+				out = ok ? made : nullptr;
+				made.reset();
+				done = false;
+				return true;
+			}
+
+			void drop() { wait(); std::lock_guard<std::mutex> lock(mutex); made.reset(); done = false; ok = false; }
+		};
+
 		struct world_state
 		{
 			dtNavMesh* mesh{ nullptr };
@@ -274,9 +346,13 @@ namespace vortex::navigation {
 			dtQueryFilter filter;
 			format::file_header header{};
 			std::vector<u8> blob;                // the loaded data (data_copy hands it back)
-			u16 generation[max_agents]{};
-			bool proxy[max_agents]{};            // #435: crowd slots that are an obstacle's avoidance circles
-			f32 replan_wait[max_agents]{};       // #435: seconds before a tile swap may re-plan the agent again
+			u16 generation[k_crowd_slots]{};
+			bool proxy[k_crowd_slots]{};         // #435: crowd slots that are an obstacle's avoidance circles
+			s32 proxy_count{ 0 };
+			f32 replan_wait[k_crowd_slots]{};    // #435: seconds before a navmesh change may re-plan the agent again
+			bool replan_due[k_crowd_slots]{};    // #435: a change touched its way — re-planned once the wait is over
+			f32 replace_wait[k_crowd_slots]{};   // #435: seconds before a lost agent is placed again
+			s32 checked_revision{ -1 };          // #435: the navmesh revision the agents' corridors were last checked against
 
 			// #435
 			std::shared_ptr<const rebuild::source> source;
@@ -285,10 +361,14 @@ namespace vortex::navigation {
 			std::unordered_map<s64, u64> landed;      // tile -> the version in the navmesh (absent = the baked one)
 			std::unordered_set<s64> dirty;            // tiles to queue at the next rebuild_update
 			std::unordered_map<s64, u64> queued;      // tile -> the version queued on the worker, not swapped in yet
+			std::unordered_map<s64, std::chrono::steady_clock::time_point> last_queued;   // when each tile was last queued
+			bool source_pending{ false };             // a source is being binned (source_maker)
+			std::vector<std::array<f32, 6>> pending_boxes;   // rebuild_tiles while it is: done once it is in place
 			u64 serial{ 0 };
 			rebuild_stats stats{};
 			s32 revision{ 0 };                        // never reset: a load is a change too
 			bool pool_full_logged{ false };
+			source_maker maker;
 			tile_worker worker;                       // last: its thread stops before the rest goes
 		};
 		world_state g;
@@ -321,7 +401,7 @@ namespace vortex::navigation {
 		{
 			if (!g.crowd || handle == 0) return -1;
 			const int idx = (int)(handle & 0xFFFFu) - 1;
-			if (idx < 0 || idx >= max_agents) return -1;
+			if (idx < 0 || idx >= k_crowd_slots || g.proxy[idx]) return -1;
 			if ((handle >> 16) != (u32)g.generation[idx]) return -1;
 			const dtCrowdAgent* ag = g.crowd->getAgent(idx);
 			return ag && ag->active ? idx : -1;
@@ -351,7 +431,7 @@ namespace vortex::navigation {
 			g.crowd = dtAllocCrowd();
 			if (!g.crowd) return;
 			const f32 max_radius = std::max(1.0f, baked_radius * 2.5f);
-			if (!g.crowd->init(max_agents, max_radius, g.mesh))
+			if (!g.crowd->init(k_crowd_slots, max_radius, g.mesh))   // max_agents agents + the obstacles' avoidance circles
 			{
 				log("crowd init failed");
 				dtFreeCrowd(g.crowd);
@@ -392,14 +472,22 @@ namespace vortex::navigation {
 	{
 		// #435: the builds of this navmesh and its obstacles go with it
 		g.worker.shutdown();
+		g.maker.drop();
 		g.source.reset();
+		g.source_pending = false;
+		g.pending_boxes.clear();
+		g.last_queued.clear();
 		g.obstacles.clear();
 		g.requested.clear();
 		g.landed.clear();
 		g.dirty.clear();
 		g.queued.clear();
 		std::fill(std::begin(g.proxy), std::end(g.proxy), false);
+		g.proxy_count = 0;
 		std::fill(std::begin(g.replan_wait), std::end(g.replan_wait), 0.0f);
+		std::fill(std::begin(g.replan_due), std::end(g.replan_due), false);
+		std::fill(std::begin(g.replace_wait), std::end(g.replace_wait), 0.0f);
+		g.checked_revision = -1;
 		g.stats = rebuild_stats{};
 		g.pool_full_logged = false;
 		if (g.crowd) { dtFreeCrowd(g.crowd); g.crowd = nullptr; }
@@ -737,6 +825,7 @@ namespace vortex::navigation {
 	u32 agent_add(const f32* pos, const agent_params* params)
 	{
 		if (!g.crowd || !finite3(pos)) return 0;
+		if (agent_count() >= max_agents) { log("agent_add: the crowd is full (%d agents)", max_agents); return 0; }
 		dtCrowdAgentParams p;
 		to_params(params, p);
 		const int idx = g.crowd->addAgent(pos, &p);
@@ -744,6 +833,8 @@ namespace vortex::navigation {
 		g.generation[idx] = (u16)(g.generation[idx] + 1);
 		g.proxy[idx] = false;
 		g.replan_wait[idx] = 0.0f;
+		g.replan_due[idx] = false;
+		g.replace_wait[idx] = 0.0f;
 		return make_handle(idx);
 	}
 
@@ -1131,33 +1222,120 @@ namespace vortex::navigation {
 				}
 		}
 
-		// Agents whose way runs through [bmin, bmax] — the box from where they stand to their target, 2 m bigger, touches it
-		// — ask for their path again: their corridor may be blocked now, or a shorter way open. A door (now) re-plans them at
-		// once; tile swaps at most every half second each — an obstacle moving every frame would otherwise restart their
-		// path search every frame, and a long one would never finish (the crowd's own check re-plans a blocked corridor
-		// ahead of an agent anyway).
-		void replan_near(const f32* bmin, const f32* bmax, bool now)
+		// Agents whose way may have changed with [bmin, bmax] — the box from where they stand to their target, 2 m bigger,
+		// touches it: a shorter way may be open now (a door opened, a wall blown away) — are re-planned (crowd_update, at most
+		// every k_replan_interval). Agents whose corridor runs through a polygon that is blocked or gone now are found by
+		// their corridor instead (check_corridors), however far off their start-to-target box the detour leads.
+		void mark_replan_near(const f32* bmin, const f32* bmax)
 		{
 			if (!g.crowd || !g.query) return;
 			constexpr f32 margin{ 2.0f };
-			constexpr f32 k_swap_replan_interval{ 0.5f };
 			for (int i = 0; i < g.crowd->getAgentCount(); ++i)
 			{
-				if (g.proxy[i] || (!now && g.replan_wait[i] > 0.0f)) continue;
-				dtCrowdAgent* ag = g.crowd->getEditableAgent(i);
+				if (g.proxy[i]) continue;
+				const dtCrowdAgent* ag = g.crowd->getAgent(i);
 				if (!ag || !ag->active || ag->state != DT_CROWDAGENT_STATE_WALKING) continue;
-				if (ag->targetState == DT_CROWDAGENT_TARGET_NONE || ag->targetState == DT_CROWDAGENT_TARGET_FAILED
-					|| ag->targetState == DT_CROWDAGENT_TARGET_VELOCITY) continue;
+				if (ag->targetState == DT_CROWDAGENT_TARGET_NONE || ag->targetState == DT_CROWDAGENT_TARGET_VELOCITY) continue;
 				const f32 x0 = std::min(ag->npos[0], ag->targetPos[0]) - margin, x1 = std::max(ag->npos[0], ag->targetPos[0]) + margin;
 				const f32 z0 = std::min(ag->npos[2], ag->targetPos[2]) - margin, z1 = std::max(ag->npos[2], ag->targetPos[2]) + margin;
 				if (x1 < bmin[0] || x0 > bmax[0] || z1 < bmin[2] || z0 > bmax[2]) continue;
-				dtPolyRef ref = 0;
-				f32 nearest[3], target[3];
-				dtVcopy(target, ag->targetPos);
-				if (dtStatusSucceed(g.query->findNearestPoly(target, g.crowd->getQueryHalfExtents(), &g.filter, &ref, nearest)) && ref)
+				g.replan_due[i] = true;
+			}
+		}
+
+		// After the navmesh changed (a tile swapped in, polygons blocked or freed): agents whose corridor — all of it, not the
+		// crowd's own ten polygons of look-ahead — runs through a polygon that is gone or blocked now are due a re-plan.
+		void check_corridors()
+		{
+			if (!g.crowd || !g.query || g.checked_revision == g.revision) return;
+			g.checked_revision = g.revision;
+			for (int i = 0; i < g.crowd->getAgentCount(); ++i)
+			{
+				if (g.proxy[i] || g.replan_due[i]) continue;
+				dtCrowdAgent* ag = g.crowd->getEditableAgent(i);
+				if (!ag || !ag->active || ag->state != DT_CROWDAGENT_STATE_WALKING) continue;
+				if (ag->targetState != DT_CROWDAGENT_TARGET_VALID) continue;
+				if (!ag->corridor.isValid(ag->corridor.getPathCount(), g.query, &g.filter)) g.replan_due[i] = true;
+			}
+		}
+
+		// dtCrowd::requestMoveTargetReplan (private there), by hand: the agent keeps following its corridor while the path to
+		// its target is searched again — requestMoveTarget would swap the corridor for a 20-step greedy path and drop the
+		// search in flight. A target whose polygon is gone or blocked moves to the nearest open one.
+		bool request_replan(int i)
+		{
+			dtCrowdAgent* ag = g.crowd->getEditableAgent(i);
+			dtPolyRef ref = ag->targetRef;
+			f32 pos[3];
+			dtVcopy(pos, ag->targetPos);
+			if (!ref || !g.query->isValidPolyRef(ref, &g.filter))
+			{
+				f32 nearest[3];
+				ref = 0;
+				if (dtStatusFailed(g.query->findNearestPoly(pos, g.crowd->getQueryHalfExtents(), &g.filter, &ref, nearest)) || !ref) return false;
+				dtVcopy(pos, nearest);
+			}
+			ag->targetRef = ref;
+			dtVcopy(ag->targetPos, pos);
+			ag->targetPathqRef = DT_PATHQ_INVALID;
+			ag->targetReplan = true;
+			ag->targetState = DT_CROWDAGENT_TARGET_REQUESTING;
+			return true;
+		}
+
+		// The re-plans that are due and allowed: not within k_replan_interval of the agent's last, not while its path search
+		// runs (it is re-planned when the search has landed).
+		void run_replans()
+		{
+			for (int i = 0; i < g.crowd->getAgentCount(); ++i)
+			{
+				if (!g.replan_due[i] || g.replan_wait[i] > 0.0f) continue;
+				const dtCrowdAgent* ag = g.crowd->getAgent(i);
+				if (!ag || !ag->active || g.proxy[i] || ag->state != DT_CROWDAGENT_STATE_WALKING
+					|| ag->targetState == DT_CROWDAGENT_TARGET_NONE || ag->targetState == DT_CROWDAGENT_TARGET_VELOCITY)
 				{
-					g.crowd->requestMoveTarget(i, ref, target);
-					g.replan_wait[i] = k_swap_replan_interval;
+					g.replan_due[i] = false;
+					continue;
+				}
+				if (ag->targetState == DT_CROWDAGENT_TARGET_REQUESTING || ag->targetState == DT_CROWDAGENT_TARGET_WAITING_FOR_QUEUE
+					|| ag->targetState == DT_CROWDAGENT_TARGET_WAITING_FOR_PATH) continue;
+				g.replan_due[i] = false;
+				if (request_replan(i)) g.replan_wait[i] = k_replan_interval;
+			}
+		}
+
+		// Agents the crowd lost — invalid: no open polygon within its placement search, as under an obstacle dropped on them —
+		// are placed on the nearest open navmesh within k_replace_extents, their target kept, every k_replace_interval
+		// until they are (the crowd itself never places them again).
+		void replace_invalid()
+		{
+			for (int i = 0; i < g.crowd->getAgentCount(); ++i)
+			{
+				if (g.proxy[i] || g.replace_wait[i] > 0.0f) continue;
+				dtCrowdAgent* ag = g.crowd->getEditableAgent(i);
+				if (!ag || !ag->active || ag->state != DT_CROWDAGENT_STATE_INVALID) continue;
+				g.replace_wait[i] = k_replace_interval;
+				dtPolyRef ref = 0;
+				f32 p[3];
+				if (dtStatusFailed(g.query->findNearestPoly(ag->npos, k_replace_extents, &g.filter, &ref, p)) || !ref) continue;
+				ag->corridor.reset(ref, p);
+				ag->boundary.reset();
+				ag->partial = false;
+				ag->topologyOptTime = 0.0f;
+				ag->targetReplanTime = 0.0f;
+				ag->nneis = 0;
+				ag->ncorners = 0;
+				dtVset(ag->dvel, 0, 0, 0);
+				dtVset(ag->nvel, 0, 0, 0);
+				dtVset(ag->vel, 0, 0, 0);
+				dtVcopy(ag->npos, p);
+				ag->desiredSpeed = 0.0f;
+				ag->state = DT_CROWDAGENT_STATE_WALKING;
+				if (ag->targetState != DT_CROWDAGENT_TARGET_NONE && ag->targetState != DT_CROWDAGENT_TARGET_VELOCITY)
+				{
+					if (!request_replan(i)) ag->targetState = DT_CROWDAGENT_TARGET_FAILED;
+					g.replan_wait[i] = k_replan_interval;
+					g.replan_due[i] = false;
 				}
 			}
 		}
@@ -1178,9 +1356,22 @@ namespace vortex::navigation {
 				}
 		}
 
+		// A binned source goes in place: every carving obstacle's tiles and the boxes asked for while it was binned are built
+		// from it.
+		void install_source(std::shared_ptr<rebuild::source> src)
+		{
+			g.source = std::move(src);
+			g.stats.source_triangles = rebuild::source_triangles(*g.source);
+			g.stats.source_boxes = rebuild::source_boxes(*g.source);
+			g.stats.source_kbytes = (s32)((rebuild::source_bytes(*g.source) + 1023) / 1024);
+			for (auto& o : g.obstacles) if (o.used && o.carved) mark_dirty(o.vmin, o.vmax);
+			for (const auto& b : g.pending_boxes) mark_dirty(&b[0], &b[3]);
+			g.pending_boxes.clear();
+		}
+
 		bool tile_waiting(const f32* bmin, const f32* bmax)
 		{
-			if (!g.source) return true;
+			if (!g.source || g.source_pending) return true;
 			s32 tx0, tz0, tx1, tz1;
 			if (!rebuild::tile_range(*g.source, bmin, bmax, tx0, tz0, tx1, tz1)) return false;
 			for (s32 tz = tz0; tz <= tz1; ++tz)
@@ -1281,6 +1472,7 @@ namespace vortex::navigation {
 				o.proxies.pop_back();
 				g.crowd->removeAgent(idx);
 				g.proxy[idx] = false;
+				--g.proxy_count;
 				g.generation[idx] = (u16)(g.generation[idx] + 1);
 			}
 			for (int k = 0; k < n; ++k)
@@ -1294,9 +1486,11 @@ namespace vortex::navigation {
 				p.updateFlags = 0;
 				if (k >= (int)o.proxies.size())
 				{
+					if (g.proxy_count >= k_proxy_slots) { log("obstacle: all %d avoidance circles are in use", k_proxy_slots); break; }
 					const int idx = g.crowd->addAgent(pos, &p);
-					if (idx < 0) { log("obstacle: no crowd slot left for its avoidance circles (%d agents)", max_agents); break; }
+					if (idx < 0) { log("obstacle: no crowd slot left for its avoidance circles"); break; }
 					g.proxy[idx] = true;
+					++g.proxy_count;
 					g.generation[idx] = (u16)(g.generation[idx] + 1);   // an agent handle of the slot's last user is stale
 					o.proxies.push_back(idx);
 				}
@@ -1311,7 +1505,7 @@ namespace vortex::navigation {
 			}
 		}
 
-		void place_proxies(f32)
+		void place_proxies()
 		{
 			for (auto& o : g.obstacles)
 				if (o.used && (o.flags & obstacle_avoid) && (o.flags & obstacle_active)) sync_proxies(o);
@@ -1324,7 +1518,7 @@ namespace vortex::navigation {
 				mark_dirty(o.vmin, o.vmax);
 				o.carved = false;
 				refresh_flags(o.vmin, o.vmax);
-				replan_near(o.vmin, o.vmax, true);
+				mark_replan_near(o.vmin, o.vmax);
 			}
 			o.flags = 0;
 			sync_proxies(o);
@@ -1337,24 +1531,39 @@ namespace vortex::navigation {
 		const f32* boxes, s32 box_count, const u8* box_areas)
 	{
 		if (!loaded()) return false;
-		auto src = rebuild::make_source(g.header, verts, vert_count, tris, tri_count, tri_areas, boxes, box_count, box_areas);
+		auto src = rebuild::copy_source(g.header, verts, vert_count, tris, tri_count, tri_areas, boxes, box_count, box_areas);
 		if (!src)
 		{
 			log("rebuild: the geometry does not fit the loaded navmesh - nothing to rebuild tiles from");
 			return false;
 		}
-		g.source = std::move(src);
-		g.stats.source_triangles = rebuild::source_triangles(*g.source);
-		g.stats.source_boxes = rebuild::source_boxes(*g.source);
-		g.stats.source_kbytes = (s32)((rebuild::source_bytes(*g.source) + 1023) / 1024);
-		for (auto& o : g.obstacles) if (o.used && o.carved) mark_dirty(o.vmin, o.vmax);   // built from the new geometry
+		// A small level is binned here at once (well under a millisecond); a large one on the maker's thread — until it is in
+		// place the previous source (if any) keeps serving the rebuilds.
+		constexpr s32 k_inline_inputs{ 20000 };
+		if (tri_count + box_count <= k_inline_inputs)
+		{
+			g.maker.drop();
+			g.source_pending = false;
+			if (!rebuild::prepare_source(*src))
+			{
+				log("rebuild: the geometry does not fit the loaded navmesh - nothing to rebuild tiles from");
+				return false;
+			}
+			install_source(std::move(src));
+			return true;
+		}
+		g.maker.start(std::move(src));
+		g.source_pending = true;
 		return true;
 	}
 
-	bool rebuild_has_source() { return g.source != nullptr; }
+	bool rebuild_has_source() { return g.source != nullptr || g.source_pending; }
 
 	void rebuild_clear_source()
 	{
+		g.maker.drop();
+		g.source_pending = false;
+		g.pending_boxes.clear();
 		g.source.reset();
 		for (const s64 key : g.dirty) g.requested.erase(key);   // never built now (builds already queued still land)
 		g.dirty.clear();
@@ -1363,8 +1572,10 @@ namespace vortex::navigation {
 
 	bool rebuild_tiles(const f32* bmin, const f32* bmax)
 	{
-		if (!g.source || !finite3(bmin) || !finite3(bmax)) return false;
-		mark_dirty(bmin, bmax);
+		if ((!g.source && !g.source_pending) || !finite3(bmin) || !finite3(bmax)) return false;
+		// with a new source on its way, after it is in place (the box is rebuilt from the new geometry)
+		if (g.source_pending) g.pending_boxes.push_back({ bmin[0], bmin[1], bmin[2], bmax[0], bmax[1], bmax[2] });
+		else mark_dirty(bmin, bmax);
 		return true;
 	}
 
@@ -1372,32 +1583,52 @@ namespace vortex::navigation {
 	{
 		if (!loaded()) return 0;
 		const auto t0 = std::chrono::steady_clock::now();
+		// 0) a source binned meanwhile goes in place: every carving obstacle's tiles and the boxes asked for while it was
+		// binned are built from it
+		if (g.source_pending)
+		{
+			std::shared_ptr<rebuild::source> made;
+			if (g.maker.take(made))
+			{
+				g.source_pending = false;
+				if (!made) log("rebuild: the geometry does not fit the loaded navmesh - nothing to rebuild tiles from");
+				else install_source(std::move(made));
+				g.pending_boxes.clear();
+			}
+		}
 		// 1) builds for the changed tiles, with the carve volumes over each
 		if (!g.dirty.empty() && g.source)
 		{
-			std::vector<tile_job> batch;
-			batch.reserve(g.dirty.size());
-			for (const s64 key : g.dirty)
-			{
-				tile_job job;
-				job.tx = (s32)(u32)(key & 0xFFFFFFFF);
-				job.tz = (s32)(key >> 32);
-				job.version = g.requested[key];
-				job.src = g.source;
-				carves_over(job.tx, job.tz, job.carves);
-				g.queued[key] = job.version;
-				batch.push_back(std::move(job));
-			}
+			std::vector<s64> later;
 			{
 				std::lock_guard<std::mutex> lock(g.worker.mutex);
-				// a job of the same tile still waiting for the worker is superseded by the new one
-				const size_t before = g.worker.jobs.size();
-				g.worker.jobs.erase(std::remove_if(g.worker.jobs.begin(), g.worker.jobs.end(),
-					[](const tile_job& j) { return g.dirty.count(tile_key(j.tx, j.tz)) != 0; }), g.worker.jobs.end());
-				g.stats.tiles_superseded += (s32)(before - g.worker.jobs.size());
-				for (auto& job : batch) g.worker.jobs.push_back(std::move(job));
+				for (const s64 key : g.dirty)
+				{
+					auto it = g.worker.waiting.find(key);
+					if (it == g.worker.waiting.end())
+					{
+						auto last = g.last_queued.find(key);
+						if (last != g.last_queued.end() && std::chrono::duration<double, std::milli>(t0 - last->second).count() < k_tile_min_interval_ms)
+						{
+							later.push_back(key);   // built a moment ago: once its interval is over
+							continue;
+						}
+						g.last_queued[key] = t0;
+						it = g.worker.waiting.emplace(key, tile_job{}).first;
+						g.worker.order.push_back(key);
+					}
+					else ++g.stats.tiles_superseded;   // the waiting job is replaced where it stands
+					tile_job& job = it->second;
+					job.tx = (s32)(u32)(key & 0xFFFFFFFF);
+					job.tz = (s32)(key >> 32);
+					job.version = g.requested[key];
+					job.src = g.source;
+					carves_over(job.tx, job.tz, job.carves);
+					g.queued[key] = job.version;
+				}
 			}
 			g.dirty.clear();
+			for (const s64 key : later) g.dirty.insert(key);
 			g.worker.kick();
 		}
 		// 2) finished tiles in, within the budget (at least one per call)
@@ -1442,14 +1673,14 @@ namespace vortex::navigation {
 		}
 		if (swapped > 0)
 		{
-			replan_near(changed_min, changed_max, false);
+			mark_replan_near(changed_min, changed_max);   // (blocked corridors are found by crowd_update)
 			g.stats.swap_ms_last = (f32)std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 			g.stats.swap_ms_max = std::max(g.stats.swap_ms_max, g.stats.swap_ms_last);
 		}
 		return swapped;
 	}
 
-	s32 rebuild_pending() { return (s32)(g.dirty.size() + g.queued.size()); }
+	s32 rebuild_pending() { return (s32)(g.dirty.size() + g.queued.size()) + (g.source_pending ? 1 : 0); }
 
 	bool rebuild_flush(f32 timeout_ms)
 	{
@@ -1458,7 +1689,7 @@ namespace vortex::navigation {
 		{
 			rebuild_update(1.0e9f);
 			if (rebuild_pending() == 0) return true;
-			if (!g.source) return false;
+			if (!g.source && !g.source_pending) return false;
 			if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() > timeout_ms) return false;
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
@@ -1551,8 +1782,8 @@ namespace vortex::navigation {
 			if (o->carved) grow(o->vmin, o->vmax);
 			if (lo[0] <= hi[0])
 			{
-				refresh_flags(lo, hi);
-				replan_near(lo, hi, true);
+				refresh_flags(lo, hi);   // (agents whose corridor it blocks are found by crowd_update)
+				if (!active || !o->carved) mark_replan_near(lo, hi);   // opened: a shorter way may lead through
 			}
 		}
 		sync_proxies(*o);
@@ -1602,7 +1833,17 @@ namespace vortex::navigation {
 	{
 		if (!g.crowd || !(dt > 0.0f)) return;
 		if (dt > 0.1f) dt = 0.1f;   // a hitch must not fling agents through walls
-		place_proxies(dt);          // #435: the avoidance circles where their obstacles are
+		// #435: obstacles and runtime rebuilds — the waits count down, the avoidance circles go where their obstacles are,
+		// lost agents are placed again, agents whose way changed are re-planned (at most every k_replan_interval each)
+		for (int i = 0; i < g.crowd->getAgentCount(); ++i)
+		{
+			if (g.replan_wait[i] > 0.0f) g.replan_wait[i] = std::max(0.0f, g.replan_wait[i] - dt);
+			if (g.replace_wait[i] > 0.0f) g.replace_wait[i] = std::max(0.0f, g.replace_wait[i] - dt);
+		}
+		place_proxies();
+		replace_invalid();
+		check_corridors();
+		run_replans();
 		g.crowd->update(dt, nullptr);
 	}
 
@@ -1614,7 +1855,10 @@ namespace vortex::navigation {
 			const dtCrowdAgent* ag = g.crowd->getAgent(i);
 			if (ag && ag->active) { g.crowd->removeAgent(i); g.generation[i] = (u16)(g.generation[i] + 1); }
 			g.proxy[i] = false;
+			g.replan_due[i] = false;
+			g.replan_wait[i] = g.replace_wait[i] = 0.0f;
 		}
+		g.proxy_count = 0;
 		for (auto& o : g.obstacles) o.proxies.clear();   // (made again for the obstacles that still avoid)
 	}
 }

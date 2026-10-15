@@ -80,7 +80,7 @@ namespace Editor.Core.Services.AI
     /// world space — box / sphere / capsule colliders and primitive meshes as SOLID oriented boxes, mesh colliders and
     /// model render meshes as triangles (the same model-triangle export the mesh colliders use) — skipping moving
     /// entities (dynamic / kinematic Rigidbody, joints), characters (Animator, NavAgent, tag "Player") and everything
-    /// tagged <see cref="IgnoreTag"/> or carrying a <see cref="NavMeshObstacle"/> (#435). <see cref="Bake"/> runs Recast (tiled, multi-threaded; safe on a worker thread)
+    /// tagged <see cref="IgnoreTag"/> or carrying an enabled carving <see cref="NavMeshObstacle"/> (#435). <see cref="Bake"/> runs Recast (tiled, multi-threaded; safe on a worker thread)
     /// and the result is saved as <c>&lt;Scene&gt;.vnav</c> next to the <c>.vscene</c> (it ships inside Assets.vpak).
     ///
     /// <b>Runtime</b> (play / standalone): <see cref="Begin"/> loads the scene's .vnav and registers every enabled
@@ -1142,8 +1142,40 @@ namespace Editor.Core.Services.AI
 
             public void Visit(GameEntity e)
             {
-                if (e == null || !e.IsActive) return;
-                if (Excluded(e)) return;
+                if (!VisitSelf(e)) return;
+                if (e.Children != null) foreach (var c in e.Children) Visit(c);
+            }
+
+            // #435: the same walk a few milliseconds a frame (the runtime rebuild source of a large scene took 90 ms at once):
+            // Start, then Step until it returns true, then Finish.
+            private readonly Stack<GameEntity> _pending = new Stack<GameEntity>();
+
+            public void Start(Scene scene)
+            {
+                _pending.Clear();
+                if (scene?.Entities == null) return;
+                for (int i = scene.Entities.Count - 1; i >= 0; i--) _pending.Push(scene.Entities[i]);
+            }
+
+            /// <summary>Visit entities until <paramref name="budgetMs"/> is spent (one at least); true when every one was.</summary>
+            public bool Step(double budgetMs)
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                while (_pending.Count > 0)
+                {
+                    var e = _pending.Pop();
+                    if (VisitSelf(e) && e.Children != null)
+                        for (int i = e.Children.Count - 1; i >= 0; i--) _pending.Push(e.Children[i]);   // (the order Visit takes)
+                    if (sw.Elapsed.TotalMilliseconds >= budgetMs) break;
+                }
+                return _pending.Count == 0;
+            }
+
+            /// <summary>The entity's own geometry; false when it and its children are left out (inactive, excluded).</summary>
+            private bool VisitSelf(GameEntity e)
+            {
+                if (e == null || !e.IsActive) return false;
+                if (Excluded(e)) return false;
                 var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
                 if (terrain != null && terrain.IsEnabled && terrain.Collision && terrain.Navigation)
                 {
@@ -1159,8 +1191,7 @@ namespace Editor.Core.Services.AI
                             AddTriangle(tworld, new SysVec(raw[i], raw[i + 1], raw[i + 2]), new SysVec(raw[i + 3], raw[i + 4], raw[i + 5]), new SysVec(raw[i + 6], raw[i + 7], raw[i + 8]));
                         _contributors.Add(e);
                     }
-                    if (e.Children != null) foreach (var c in e.Children) Visit(c);
-                    return;
+                    return true;
                 }
                 var waterComp = e.GetComponent<Editor.ECS.Components.Rendering.Water>();
                 if (waterComp != null && waterComp.IsEnabled)
@@ -1182,8 +1213,7 @@ namespace Editor.Core.Services.AI
                             AddBox(SysMat.Identity, new SysVec(c.Base.X, c.Base.Y + c.Height * 0.5f, c.Base.Z), new SysVec(c.Radius, c.Height * 0.5f, c.Radius), SysQuat.Identity);
                         _contributors.Add(e);
                     }
-                    if (e.Children != null) foreach (var c in e.Children) Visit(c);
-                    return;
+                    return true;
                 }
                 bool hadCollider = false;
                 if ((_src & NavGeometrySource.Colliders) != 0)
@@ -1208,7 +1238,7 @@ namespace Editor.Core.Services.AI
                         if (AddMesh(e, mr.MeshPath, SysVec.Zero, Animation.BoneSocketService.EntityWorld(e))) _contributors.Add(e);
                     }
                 }
-                if (e.Children != null) foreach (var c in e.Children) Visit(c);
+                return true;
             }
 
             /// <summary>Moving things and characters are not level geometry.</summary>
@@ -1219,7 +1249,7 @@ namespace Editor.Core.Services.AI
                 foreach (var c in e.Components)
                 {
                     if (c is NavAgent || c is Animator) return true;
-                    if (c is NavMeshObstacle) return true;   // #435: the obstacle decides at runtime (switched off: open)
+                    if (c is NavMeshObstacle o && o.IsEnabled && o.Carve) return true;   // #435: it carves the navmesh at runtime
                     if (c is Rigidbody rb && rb.IsEnabled && rb.BodyType != RigidbodyType.Static) return true;
                     if (c is PhysicsJoint j && j.IsEnabled) return true;
                 }

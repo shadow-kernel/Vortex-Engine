@@ -7,6 +7,7 @@
 #include "Test.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -583,6 +584,7 @@ private:
 	}
 
 	// ---- dynamic obstacles and runtime tile rebuilds (#435) ---------------------------------------------------------------
+#if VORTEX_HAS_RECAST   // (the rebuild internals exist with Recast only; the stub build verifies the stub contract)
 	// The test level's wall (x -0.5..0.5, z -6..6) has a gap at each end to the floor's edge (z 6..15 and -15..-6). A box in
 	// the north gap closes it; paths and walking agents go south; removing it, or switching it off, opens the gap again.
 
@@ -795,7 +797,205 @@ private:
 		check("rebake: with the wall gone from the geometry the path goes straight through", rebaked && status == navigation::path_complete && straight == 2);
 		navigation::load(_blob.data(), (s32)_blob.size());   // back to the bake for whatever runs next
 		check("load drops the source and the obstacles", !navigation::rebuild_has_source() && navigation::obstacle_count() == 0);
+		run_obstacle_review_tests();
 	}
+
+	// ---- #435 review: obstacles that keep moving, many of them, one dropped on an agent, slots of their own --------------
+
+	void set_source()
+	{
+		navigation::rebuild_set_source(_verts.data(), (s32)_verts.size() / 3, _tris.data(), (s32)_tris.size() / 3, nullptr,
+			_boxes.data(), (s32)_boxes.size() / navigation::box_floats, nullptr);
+	}
+
+	void run_obstacle_review_tests()
+	{
+		const auto p = params();
+		const f32 west[3] = { -5, 0, 3 }, east[3] = { 5, 0, 3 };
+		const f32 ident[4] = { 0, 0, 0, 1 };
+		const u32 carve_on = navigation::obstacle_carve | navigation::obstacle_active;
+		navigation::agent_state ws{};
+
+		// (a) a carving obstacle re-carved every frame beside the agent's way (inside the box from its start to its target)
+		// re-plans it at most every half second, keeping its corridor: it arrives about as soon as without one
+		auto walk = [&](bool with_obstacle)
+		{
+			navigation::load(_blob.data(), (s32)_blob.size());
+			set_source();
+			navigation::rebuild_flush(2000.0f);
+			const u32 a = navigation::agent_add(west, &p);
+			navigation::agent_set_target(a, east);
+			u32 cart = 0;
+			const f32 half[3] = { 0.4f, 1.0f, 0.4f };
+			if (with_obstacle)
+			{
+				const f32 c[3] = { -3.0f, 1.0f, 1.0f };
+				cart = navigation::obstacle_add(navigation::obstacle_box, c, half, ident, carve_on);
+			}
+			int arrived = -1;
+			for (int i = 0; i < 60 * 20 && arrived < 0; ++i)
+			{
+				if (cart)
+				{
+					const f32 c[3] = { -3.0f + 0.8f * std::sin((f32)i * 0.15f), 1.0f, 1.0f };
+					navigation::obstacle_set(cart, c, half, ident, carve_on, nullptr);
+				}
+				navigation::rebuild_update(1.0f);
+				navigation::crowd_update(k_dt);
+				navigation::agent_get_state(a, &ws);
+				if (dist(ws.position, east) < 0.3f) arrived = i;
+				if (cart && i % 3 == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));   // the worker builds meanwhile
+			}
+			navigation::rebuild_stats st{};
+			navigation::rebuild_get_stats(&st);
+			if (with_obstacle) std::printf("[info] obstacle re-carved every frame beside the way: %d tiles swapped, agent arrived after %.2f s\n", st.tiles_swapped, arrived / 60.0f);
+			navigation::crowd_clear();
+			return arrived;
+		};
+		const int alone = walk(false), beside = walk(true);
+		check("re-carving beside an agent's way: it still arrives, about as soon as without (no re-plan every swap)", alone > 0 && beside > 0 && beside < alone + 90);
+
+		// (b) many carving obstacles moving every frame: each gets carved — tiles wait in the order they were first asked for
+		// and a waiting one is updated where it stands (re-queued at the back each frame, the same few were rebuilt forever)
+		{
+			std::vector<f32> floor_box = { 0.0f, -0.5f, 0.0f, 48.0f, 0.5f, 48.0f, 0.0f, 0.0f, 0.0f, 1.0f };
+			navigation::bake_settings s = _settings;
+			s.tile_size = 32;
+			navigation::bake_stats bst{};
+			std::vector<u8> big;
+			const bool baked = bake_blob({}, {}, floor_box, s, bst, big) > 0 && navigation::load(big.data(), (s32)big.size());
+			navigation::rebuild_set_source(nullptr, 0, nullptr, 0, nullptr, floor_box.data(), 1, nullptr);
+			std::vector<u32> movers;
+			std::vector<std::array<f32, 3>> at;
+			const f32 half[3] = { 1.0f, 1.0f, 1.0f };
+			for (int ix = 0; ix < 6; ++ix)
+				for (int iz = 0; iz < 6; ++iz)
+				{
+					at.push_back({ -40.0f + 16.0f * (f32)ix, 1.0f, -40.0f + 16.0f * (f32)iz });
+					movers.push_back(navigation::obstacle_add(navigation::obstacle_box, at.back().data(), half, ident, carve_on));
+				}
+			const auto t0 = std::chrono::steady_clock::now();
+			int frames = 0;
+			for (; frames < 400 && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < 2500.0; ++frames)
+			{
+				for (size_t k = 0; k < movers.size(); ++k)
+				{
+					at[k][0] += 0.02f;
+					navigation::obstacle_set(movers[k], at[k].data(), half, ident, carve_on, nullptr);
+				}
+				navigation::rebuild_update(1.0f);
+				std::this_thread::sleep_for(std::chrono::milliseconds(6));
+			}
+			int carved = 0;
+			const f32 probe_ext[3] = { 0.3f, 1.0f, 0.3f };
+			for (const auto& c : at)
+			{
+				const f32 q[3] = { c[0], 0.0f, c[2] };
+				f32 r[3]{};
+				const bool open = navigation::closest_point(q, probe_ext, r) && std::fabs(r[0] - q[0]) < 0.05f && std::fabs(r[2] - q[2]) < 0.05f;
+				if (!open) ++carved;
+			}
+			navigation::rebuild_stats st{};
+			navigation::rebuild_get_stats(&st);
+			std::printf("[info] 36 carving obstacles moved every frame for %d frames: %d carved where they are now (built %d, swapped %d, pending %d)\n",
+				frames, carved, st.tiles_built, st.tiles_swapped, st.pending);
+			check("many moving obstacles: every one of them is carved while they keep moving", baked && carved == 36);
+		}
+
+		// (c) an obstacle dropped on a standing agent: wider than the crowd's placement search, so the crowd loses the agent;
+		// crowd_update places it on the nearest open navmesh and keeps its target — removed again, the agent walks on
+		{
+			navigation::load(_blob.data(), (s32)_blob.size());
+			set_source();
+			navigation::rebuild_flush(2000.0f);
+			const f32 spot[3] = { -5.0f, 0.0f, 3.0f };
+			const u32 a = navigation::agent_add(spot, &p);
+			for (int i = 0; i < 5; ++i) navigation::crowd_update(k_dt);
+			const f32 c[3] = { -5.0f, 1.0f, 3.0f }, half[3] = { 2.6f, 1.0f, 2.6f };
+			const u32 crate = navigation::obstacle_add(navigation::obstacle_box, c, half, ident, carve_on);
+			navigation::rebuild_flush(2000.0f);
+			for (int i = 0; i < 30; ++i) navigation::crowd_update(k_dt);
+			navigation::agent_get_state(a, &ws);
+			const f32 out_x = ws.position[0], out_z = ws.position[2];
+			const bool placed = ws.on_navmesh != 0 && (std::fabs(out_x + 5.0f) > 2.6f || std::fabs(out_z - 3.0f) > 2.6f);
+			navigation::obstacle_remove(crate);
+			navigation::rebuild_flush(2000.0f);
+			const f32 goal[3] = { -5.0f, 0.0f, -10.0f };
+			navigation::agent_set_target(a, goal);
+			int arrived = -1;
+			for (int i = 0; i < 60 * 10 && arrived < 0; ++i)
+			{
+				navigation::crowd_update(k_dt);
+				navigation::agent_get_state(a, &ws);
+				if (dist(ws.position, goal) < 0.4f) arrived = i;
+			}
+			std::printf("[info] a 5.2 m crate dropped on an agent: placed at (%.2f, %.2f) beside it; removed, the agent arrived after %.2f s\n", out_x, out_z, arrived / 60.0f);
+			check("dropped obstacle: the lost agent is placed beside it, on the navmesh", placed);
+			check("dropped obstacle: removed again, the agent walks to its target", arrived > 0);
+			navigation::crowd_clear();
+		}
+
+		// (d) avoidance circles have slots of their own: a full crowd still gets them, and they take no agent's place
+		{
+			navigation::load(_blob.data(), (s32)_blob.size());
+			int added = 0;
+			for (int i = 0; i < navigation::max_agents + 4; ++i)
+			{
+				const f32 at[3] = { -14.0f + 0.9f * (f32)(i % 30), 0.0f, -14.0f + 0.9f * (f32)(i / 30) };
+				if (navigation::agent_add(at, &p)) ++added;
+			}
+			const f32 c[3] = { 10.0f, 0.75f, -12.0f }, half[3] = { 2.2f, 0.75f, 0.9f };
+			const u32 car = navigation::obstacle_add(navigation::obstacle_box, c, half, ident, navigation::obstacle_avoid | navigation::obstacle_active);
+			navigation::crowd_update(k_dt);
+			check("crowd slots: max_agents agents, no more", added == navigation::max_agents && navigation::agent_count() == navigation::max_agents);
+			check("crowd slots: a full crowd still steers around an avoiding obstacle (its circles have slots of their own)", car != 0
+				&& navigation::agent_count() == navigation::max_agents);
+			navigation::obstacle_remove(car);
+			navigation::crowd_clear();
+		}
+
+		// (e) the source is binned off the calling thread: rebuild_set_source returns at once, has_source is true from then on
+		{
+			navigation::load(_blob.data(), (s32)_blob.size());
+			const auto t0 = std::chrono::steady_clock::now();
+			set_source();
+			const d64 ms = std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - t0).count();
+			const bool has = navigation::rebuild_has_source();
+			navigation::rebuild_flush(2000.0f);
+			navigation::rebuild_stats st{};
+			navigation::rebuild_get_stats(&st);
+			check("a small source is binned at once", has && st.source_boxes == 4 && st.pending == 0 && ms < 50.0);
+
+			// a large one (the floor as 80000 triangles) is binned on a thread of its own: the call returns after the copy
+			std::vector<f32> verts;
+			std::vector<s32> tris;
+			const int n = 201;
+			for (int z = 0; z < n; ++z)
+				for (int x = 0; x < n; ++x) { verts.push_back(-15.0f + 30.0f * (f32)x / (n - 1)); verts.push_back(0.0f); verts.push_back(-15.0f + 30.0f * (f32)z / (n - 1)); }
+			for (int z = 0; z + 1 < n; ++z)
+				for (int x = 0; x + 1 < n; ++x)
+				{
+					const s32 a = z * n + x, b = a + 1, c = a + n, d = c + 1;
+					tris.insert(tris.end(), { a, c, b, b, c, d });
+				}
+			const auto t1 = std::chrono::steady_clock::now();
+			const bool accepted = navigation::rebuild_set_source(verts.data(), (s32)verts.size() / 3, tris.data(), (s32)tris.size() / 3, nullptr,
+				_boxes.data(), (s32)_boxes.size() / navigation::box_floats, nullptr);
+			const d64 copy_ms = std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - t1).count();
+			const bool waiting = navigation::rebuild_has_source() && navigation::rebuild_pending() >= 1;
+			const bool landed = navigation::rebuild_flush(10000.0f);
+			navigation::rebuild_get_stats(&st);
+			std::printf("[info] a source of %d triangles: the call took %.1f ms, the binning landed with rebuild_update (%d KB kept)\n",
+				(int)tris.size() / 3, copy_ms, st.source_kbytes);
+			check("a large source is binned off the calling thread and put in place by rebuild_update", accepted && waiting && landed
+				&& st.source_triangles == (s32)tris.size() / 3);
+		}
+		navigation::load(_blob.data(), (s32)_blob.size());
+	}
+
+#else
+	void run_obstacle_tests() {}
+#endif
 
 	// ---- tall levels (#451) ---------------------------------------------------------------------------------------
 
