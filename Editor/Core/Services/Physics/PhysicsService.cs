@@ -83,6 +83,13 @@ namespace Editor.Core.Services.Physics
         public static QueryShape Box(Vector3 center, Vector3 halfExtents, SysQuat rotation)
             => new QueryShape { Type = PhysicsService.ShapeBox, Center = center, HalfExtents = halfExtents, Rotation = rotation };
 
+        /// <summary>Is every number of the shape finite (no NaN, no infinity)? A query with one that is not finds nothing.</summary>
+        public bool IsFinite =>
+            float.IsFinite(Center.X) && float.IsFinite(Center.Y) && float.IsFinite(Center.Z)
+            && float.IsFinite(Rotation.X) && float.IsFinite(Rotation.Y) && float.IsFinite(Rotation.Z) && float.IsFinite(Rotation.W)
+            && float.IsFinite(Radius) && float.IsFinite(HalfHeight)
+            && float.IsFinite(HalfExtents.X) && float.IsFinite(HalfExtents.Y) && float.IsFinite(HalfExtents.Z);
+
         /// <summary>The same shape moved by <paramref name="offset"/>.</summary>
         public QueryShape Moved(Vector3 offset) { var s = this; s.Center = new Vector3(Center.X + offset.X, Center.Y + offset.Y, Center.Z + offset.Z); return s; }
     }

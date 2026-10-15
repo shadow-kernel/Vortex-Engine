@@ -186,11 +186,27 @@ namespace Editor.Core.Services.Physics
             var tris = s.Tris;
             if (s.Grid != null)
             {
-                var buf = s.QueryBox(smin, smax, out int cnt);
-                // (the grid's buffer is shared: copy the candidates before CastAgainst could query anything else)
-                if (_triCandidates.Length < cnt) _triCandidates = new int[Math.Max(cnt, _triCandidates.Length * 2)];
-                Array.Copy(buf, _triCandidates, cnt);
-                for (int j = 0; j < cnt; j++) TryTriangle(q, disp, tris, _triCandidates[j] * 3, ref limit, ref any, ref t, ref point, ref normal);
+                // The sweep is walked in pieces of a few grid cells, nearest first (#480 review): a hit within a piece ends it —
+                // a triangle the later pieces add lies outside everything the sweep crossed so far, so it cannot be reached
+                // sooner. The AABB of a long sweep held every triangle of a terrain (an 800 m sweep: 180k triangles, 30 ms).
+                Bounds(q, default(V3), out V3 qmin, out V3 qmax);
+                float len = disp.Len();
+                float piece = Math.Max(s.Grid.Cell * 4f, 1e-3f);   // (a movable mesh's grid is over its scaled triangles: metres too)
+                int pieces = len > piece ? Math.Min(1024, (int)Math.Ceiling(len / piece)) : 1;
+                for (int k = 0; k < pieces; k++)
+                {
+                    float a = (float)k / pieces, b = k + 1 == pieces ? Math.Max(1f, maxLambda) : (float)(k + 1) / pieces;
+                    if (a > limit) break;   // beyond the reach left (the query's end, or a hit found so far)
+                    V3 da = disp * a, db = disp * b;
+                    var lo = new V3(Math.Min(qmin.X + da.X, qmin.X + db.X), Math.Min(qmin.Y + da.Y, qmin.Y + db.Y), Math.Min(qmin.Z + da.Z, qmin.Z + db.Z));
+                    var hi = new V3(Math.Max(qmax.X + da.X, qmax.X + db.X), Math.Max(qmax.Y + da.Y, qmax.Y + db.Y), Math.Max(qmax.Z + da.Z, qmax.Z + db.Z));
+                    var buf = s.QueryBox(lo, hi, out int cnt, k == 0);
+                    // (the grid's buffer is shared: copy the candidates before CastAgainst could query anything else)
+                    if (_triCandidates.Length < cnt) _triCandidates = new int[Math.Max(cnt, _triCandidates.Length * 2)];
+                    Array.Copy(buf, _triCandidates, cnt);
+                    for (int j = 0; j < cnt; j++) TryTriangle(q, disp, tris, _triCandidates[j] * 3, ref limit, ref any, ref t, ref point, ref normal);
+                    if (any && t <= b) break;
+                }
             }
             else
                 for (int k = 0; k + 2 < tris.Length; k += 3) TryTriangle(q, disp, tris, k, ref limit, ref any, ref t, ref point, ref normal);

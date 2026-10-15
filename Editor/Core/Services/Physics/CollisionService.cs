@@ -84,9 +84,11 @@ namespace Editor.Core.Services.Physics
                 return Grid.QueryRay(Rot.Inverse(o - Origin), Rot.Inverse(dir), maxDist, out count);
             }
 
-            public int[] QueryBox(V3 qmin, V3 qmax, out int count)
+            /// <summary>Triangles in the cells of the world box; <paramref name="fresh"/> false continues the previous query
+            /// (only triangles it did not return yet — a sweep walked in pieces).</summary>
+            public int[] QueryBox(V3 qmin, V3 qmax, out int count, bool fresh = true)
             {
-                if (LocalTris == null) return Grid.QueryBox(qmin, qmax, out count);
+                if (LocalTris == null) return Grid.QueryBox(qmin, qmax, out count, fresh);
                 // the world box rotated into local space: the AABB of its corners (conservative)
                 var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
                 for (int i = 0; i < 8; i++)
@@ -96,7 +98,7 @@ namespace Editor.Core.Services.Physics
                     mn = new V3(Math.Min(mn.X, l.X), Math.Min(mn.Y, l.Y), Math.Min(mn.Z, l.Z));
                     mx = new V3(Math.Max(mx.X, l.X), Math.Max(mx.Y, l.Y), Math.Max(mx.Z, l.Z));
                 }
-                return Grid.QueryBox(mn, mx, out count);
+                return Grid.QueryBox(mn, mx, out count, fresh);
             }
         }
 
@@ -119,6 +121,9 @@ namespace Editor.Core.Services.Physics
             private int[] _buf = new int[64]; private int _n;  // reusable candidate buffer
 
             private TriGrid(int triCount) { _stamp = new int[triCount]; }
+
+            /// <summary>The edge of a cell (m, in the grid's space).</summary>
+            public float Cell => _cell;
 
             public static TriGrid Build(V3[] tris, V3 mn, V3 mx)
             {
@@ -184,10 +189,11 @@ namespace Editor.Core.Services.Physics
                 _buf[_n++] = tri;
             }
 
-            /// <summary>Triangle indices whose cells overlap the box [qmin,qmax]. Returns the shared buffer; read [0,count).</summary>
-            public int[] QueryBox(V3 qmin, V3 qmax, out int count)
+            /// <summary>Triangle indices whose cells overlap the box [qmin,qmax]. Returns the shared buffer; read [0,count).
+            /// <paramref name="fresh"/> false: only triangles the previous queries since the last fresh one did not return.</summary>
+            public int[] QueryBox(V3 qmin, V3 qmax, out int count, bool fresh = true)
             {
-                Begin();
+                if (fresh) Begin(); else _n = 0;
                 int x0 = Cx(qmin.X), x1 = Cx(qmax.X), y0 = Cy(qmin.Y), y1 = Cy(qmax.Y), z0 = Cz(qmin.Z), z1 = Cz(qmax.Z);
                 for (int z = z0; z <= z1; z++) for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++)
                 {

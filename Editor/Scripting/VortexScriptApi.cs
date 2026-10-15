@@ -1632,6 +1632,7 @@ namespace Vortex
             QueryTriggerInteraction triggers)
         {
             hit = default(RaycastHit);
+            if (!Finite(origin) || !Finite(direction) || !Reach(ref maxDist)) return false;
             var o = new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z);
             var d = new Editor.ECS.Vector3(direction.X, direction.Y, direction.Z);
             float dl = (float)Math.Sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z);
@@ -1862,10 +1863,27 @@ namespace Vortex
             };
         }
 
+        /// <summary>The farthest a query reaches (m): a longer maxDist — float.MaxValue, infinity — is cut to this. Beyond it
+        /// float precision gives either world false hits at the start or at 3.4e38 m.</summary>
+        public const float MaxQueryDistance = 100000f;
+
+        private static bool Finite(Vector3 v) { return float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z); }
+
+        // maxDist NaN or not positive: nothing to find; longer than MaxQueryDistance: cut to it
+        private static bool Reach(ref float maxDist)
+        {
+            if (!(maxDist > 0f)) return false;
+            if (maxDist > MaxQueryDistance) maxDist = MaxQueryDistance;
+            return true;
+        }
+
         private static bool Cast(Editor.Core.Services.Physics.QueryShape shape, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask,
             long ignoreEntity, QueryTriggerInteraction triggers)
         {
             hit = default(RaycastHit);
+            // one gate for both worlds: a query with NaN / infinite numbers finds nothing (Jolt cast from the origin, the
+            // collision world missed), maxDist is cut to MaxQueryDistance
+            if (!shape.IsFinite || !Finite(direction) || !Reach(ref maxDist)) return false;
             var ignored = Ignored(ignoreEntity);
             bool tr = HitsTriggers(triggers);
             Editor.Core.Services.Physics.PhysicsQueryHit h;
@@ -1887,6 +1905,7 @@ namespace Vortex
             Vector3 origin, Vector3 direction, float maxDist, int layerMask, long ignoreEntity, QueryTriggerInteraction triggers)
         {
             _queryHits.Clear();
+            if ((shape.HasValue ? !shape.Value.IsFinite : !Finite(origin)) || !Finite(direction) || !Reach(ref maxDist)) return _queryHits;
             var ignored = Ignored(ignoreEntity);
             bool tr = HitsTriggers(triggers);
             bool jolt = JoltAnswers(layerMask);
@@ -1918,9 +1937,12 @@ namespace Vortex
             return n;
         }
 
+        private static readonly System.Collections.Generic.List<Editor.ECS.GameEntity> _noEntities = new System.Collections.Generic.List<Editor.ECS.GameEntity>();
+
         private static System.Collections.Generic.List<Editor.ECS.GameEntity> Overlap(Editor.Core.Services.Physics.QueryShape shape, int layerMask,
             long ignoreEntity, QueryTriggerInteraction triggers)
         {
+            if (!shape.IsFinite) { _noEntities.Clear(); return _noEntities; }
             var ignored = Ignored(ignoreEntity);
             bool tr = HitsTriggers(triggers);
             return JoltAnswers(layerMask)
@@ -1930,6 +1952,7 @@ namespace Vortex
 
         private static bool Check(Editor.Core.Services.Physics.QueryShape shape, int layerMask, long ignoreEntity, QueryTriggerInteraction triggers)
         {
+            if (!shape.IsFinite) return false;
             var ignored = Ignored(ignoreEntity);
             bool tr = HitsTriggers(triggers);
             return JoltAnswers(layerMask)
@@ -1955,6 +1978,7 @@ namespace Vortex
         /// <c>bool buried = Physics.OverlapPoint(eye).Length &gt; 0;</c></summary>
         public static long[] OverlapPoint(Vector3 point)
         {
+            if (!Finite(point)) return new long[0];
             var p = new Editor.ECS.Vector3(point.X, point.Y, point.Z);
             var hits = Editor.Core.Services.Physics.PhysicsService.IsBuilt
                 ? Editor.Core.Services.Physics.PhysicsService.OverlapPoint(p)

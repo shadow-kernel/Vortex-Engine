@@ -784,5 +784,103 @@ namespace VortexTests
             }
             finally { ClearWorlds(); }
         }
+    
+        /// <summary>#480 review: NaN / infinite numbers make no query on either path (Jolt cast from the world origin, the
+        /// collision world missed), and maxDist beyond <c>Physics.MaxQueryDistance</c> — float.MaxValue, infinity — is cut to it:
+        /// both paths report the same, no false hit at the start or at 3.4e38 m.</summary>
+        [Test]
+        public static void DegenerateQueriesAgreeOnBothPaths(TestContext t)
+        {
+            if (!Jolt()) return;
+            var scene = PhysicsQueryTests.QueryScene(out var e);
+            var old = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = PhysicsRaycastTests.RoomProvider;
+            try
+            {
+                BuildWorlds(scene);
+                var o = new Vortex.Vector3(15f, 1f, 0f);
+                var x = new Vortex.Vector3(1f, 0f, 0f);
+                const int Managed = 0x7FFFFFFF;
+                string Hit(bool got, Vortex.RaycastHit h) => got ? h.Name + "@" + h.Distance.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "miss";
+                void Same(string what, Func<int, string> run, string expect = null)
+                {
+                    string j = run(~0), m = run(Managed);
+                    t.Equal(j, m, what + ": Jolt and the collision world agree");
+                    if (expect != null) t.Equal(expect, j, what);
+                }
+                foreach (float md in new[] { float.MaxValue, float.PositiveInfinity, 1e20f })
+                {
+                    Same("SphereCast maxDist " + md, mask => Hit(Vortex.Physics.SphereCast(o, 0.3f, x, md, out var h, mask), h), "Crate@3.70");
+                    Same("Raycast maxDist " + md, mask => Hit(Vortex.Physics.Raycast(o, x, md, out var h, mask, 0), h), "Crate@4.00");
+                    Same("RaycastAll maxDist " + md, mask => Vortex.Physics.RaycastAll(o, x, md, mask).Length.ToString(), "3");
+                }
+                Same("SphereCast maxDist NaN", mask => Hit(Vortex.Physics.SphereCast(o, 0.3f, x, float.NaN, out var h, mask), h), "miss");
+                var nanOrigin = new Vortex.Vector3(float.NaN, 1f, 0f);
+                var infOrigin = new Vortex.Vector3(float.PositiveInfinity, 1f, 0f);
+                foreach (var org in new[] { nanOrigin, infOrigin })
+                {
+                    Same("RaycastAll from a non-finite origin", mask => Vortex.Physics.RaycastAll(org, x, 100f, mask).Length.ToString(), "0");
+                    Same("Raycast from a non-finite origin", mask => Hit(Vortex.Physics.Raycast(org, x, 100f, out var h, mask, 0), h), "miss");
+                    Same("SphereCast from a non-finite origin", mask => Hit(Vortex.Physics.SphereCast(org, 0.3f, x, 100f, out var h, mask), h), "miss");
+                }
+                var nanRot = new Vortex.Vector3(float.NaN, 0f, 0f);
+                Same("BoxCast with a NaN rotation", mask => Hit(Vortex.Physics.BoxCast(o, new Vortex.Vector3(0.3f, 0.3f, 0.3f), nanRot, x, 10f, out var h, mask), h), "miss");
+                Same("OverlapBox with a NaN rotation", mask => Vortex.Physics.OverlapBox(new Vortex.Vector3(20f, 1f, 0f), new Vortex.Vector3(0.3f, 0.3f, 0.3f), nanRot, mask).Length.ToString(), "0");
+                Same("CapsuleCast with an infinite point", mask => Hit(Vortex.Physics.CapsuleCast(o, new Vortex.Vector3(15f, float.PositiveInfinity, 0f), 0.3f, x, 10f, out var h, mask), h), "miss");
+                Same("SphereCast with a NaN radius", mask => Hit(Vortex.Physics.SphereCast(o, float.NaN, x, 10f, out var h, mask), h), "miss");
+                Same("SphereCast along a NaN direction", mask => Hit(Vortex.Physics.SphereCast(o, 0.3f, new Vortex.Vector3(float.NaN, 0f, 0f), 10f, out var h, mask), h), "miss");
+                t.Equal(0, Vortex.Physics.OverlapPoint(nanOrigin).Length, "OverlapPoint at NaN finds nothing");
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = old; }
+        }
+
+        /// <summary>#480 review: a long sweep over a big mesh on the collision world walks the triangle grid along its way in
+        /// pieces — the first hit ends it — instead of testing every triangle in the box of the whole sweep (an 800 m sweep
+        /// over a 180k-triangle terrain took 30 ms); it hits what Jolt hits.</summary>
+        [Test]
+        public static void LongSweepsOverABigMeshAreQuick(TestContext t)
+        {
+            if (!Jolt()) return;
+            int n = 300; float size = 600f;
+            var tris = new float[(n - 1) * (n - 1) * 18];
+            float step = size / (n - 1);
+            float H(int x, int z) => 1.5f * (float)Math.Sin(x * 0.11) * (float)Math.Cos(z * 0.07);
+            int k = 0;
+            for (int z = 0; z < n - 1; z++)
+                for (int x = 0; x < n - 1; x++)
+                {
+                    float x0 = -size / 2 + x * step, x1 = x0 + step, z0 = -size / 2 + z * step, z1 = z0 + step;
+                    foreach (var v in new[] { x0, H(x, z), z0, x0, H(x, z + 1), z1, x1, H(x + 1, z), z0, x1, H(x + 1, z), z0, x0, H(x, z + 1), z1, x1, H(x + 1, z + 1), z1 })
+                        tris[k++] = v;
+                }
+            var old = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = p => p == "Assets/terrain.glb" ? tris : null;
+            var s = new Scene { Name = "Big", IsActive = true };
+            PhysicsRaycastTests.Add(s, null, "Ground", new Vector3(0, 0, 0), e =>
+            {
+                e.AddComponentDirect(new MeshRenderer(e) { MeshPath = "Assets/terrain.glb" });
+                e.AddComponentDirect(new MeshCollider(e));
+            });
+            PhysicsRaycastTests.AsLoaded(s);
+            try
+            {
+                BuildWorlds(s);
+                // clear of the ground at the start (it rises 1.5 m at most), sinking 2 mm a metre: it touches far down the sweep
+                var o = new Vortex.Vector3(-280f, 2.5f, -280f);
+                var d = new Vortex.Vector3(1f, -0.003f, 1f);
+                Vortex.Physics.SphereCast(o, 0.3f, d, 800f, out _, 0x7FFFFFFF);   // (warm-up)
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                bool hm = Vortex.Physics.SphereCast(o, 0.3f, d, 800f, out var mh, 0x7FFFFFFF);
+                double ms = sw.Elapsed.TotalMilliseconds;
+                bool hj = Vortex.Physics.SphereCast(o, 0.3f, d, 800f, out var jh, ~0);
+                Console.WriteLine("        800 m sphere sweep over " + tris.Length / 9 + " triangles on the collision world: " + ms.ToString("0.00") + " ms, hit at "
+                    + mh.Distance.ToString("0.00") + " m (Jolt " + jh.Distance.ToString("0.00") + " m)");
+                t.True(hm && hj && mh.Distance > 50f && Math.Abs(mh.Distance - jh.Distance) < 0.05f, "it hits the ground far down the sweep, where Jolt does");
+                t.True(ms < 10.0, "in a few milliseconds, not 30 (" + ms.ToString("0.00") + " ms)");
+                bool miss = Vortex.Physics.SphereCast(new Vortex.Vector3(-280f, 2.5f, -280f), 0.3f, new Vortex.Vector3(1f, 0f, 1f), 800f, out _, 0x7FFFFFFF);
+                t.False(miss, "a level sweep that clears the ground hits nothing");
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = old; }
+        }
     }
 }
