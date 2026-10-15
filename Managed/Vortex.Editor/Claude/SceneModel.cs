@@ -185,6 +185,43 @@ namespace VortexEditor.Claude
             UndoRedoManager.Instance.Execute(new PropertyChangeCommand<T>(target, name, set, old, value));
         }
 
+        /// <summary>
+        /// Run <paramref name="edit"/>, which sets values of <paramref name="target"/> directly, and make what it changed one undo
+        /// step of the running call (#411 review): every saved value ([DataMember] property of a plain type) before and after.
+        /// For edits that set many values or go through methods (a definition applied) — one step instead of none.
+        /// </summary>
+        public static void RecordEdit(object target, string name, Action edit)
+        {
+            if (target == null) { edit(); return; }
+            var props = SavedValues(target.GetType());
+            object[] Read() { var v = new object[props.Length]; for (int i = 0; i < props.Length; i++) v[i] = props[i].GetValue(target); return v; }
+            var before = Read();
+            edit();
+            var after = Read();
+            bool changed = false;
+            for (int i = 0; i < props.Length && !changed; i++) changed = !Equals(before[i], after[i]);
+            if (!changed) return;
+            void Put(object[] values) { for (int i = 0; i < props.Length; i++) if (!Equals(props[i].GetValue(target), values[i])) props[i].SetValue(target, values[i]); }
+            UndoRedoManager.Instance.Execute(new ActionCommand(name, () => Put(after), () => Put(before)), execute: false);
+        }
+
+        private static readonly Dictionary<Type, System.Reflection.PropertyInfo[]> _savedValues = new Dictionary<Type, System.Reflection.PropertyInfo[]>();
+
+        private static System.Reflection.PropertyInfo[] SavedValues(Type t)
+        {
+            lock (_savedValues)
+            {
+                if (_savedValues.TryGetValue(t, out var props)) return props;
+                props = t.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+                         .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0
+                                     && Attribute.IsDefined(p, typeof(System.Runtime.Serialization.DataMemberAttribute), true)
+                                     && (p.PropertyType.IsValueType || p.PropertyType == typeof(string)))
+                         .ToArray();
+                _savedValues[t] = props;
+                return props;
+            }
+        }
+
         public static void SetTransform(GameEntity e, Vector3? pos, Vector3? rot, Vector3? scale)
         {
             var t = e.Transform ?? throw new ToolError(e.Name + " has no transform.");

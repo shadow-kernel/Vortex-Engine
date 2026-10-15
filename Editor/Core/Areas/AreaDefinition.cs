@@ -81,12 +81,17 @@ namespace Editor.Core.Areas
             return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         }
 
-        public void Save(string path)
+        public void Save(string path) => Save(path, null);
+
+        /// <summary>Write the definition to <paramref name="path"/> for an area of <paramref name="owner"/> — a revert of that
+        /// scene puts the file back as it was at the scene's last save (#411).</summary>
+        public void Save(string path, Data.Scene owner)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             bool created = !File.Exists(path);
-            Services.SceneDataFiles.BeforeWrite(path);   // a revert of the scene puts the saved version back (#411)
+            Services.SceneDataFiles.BeforeWrite(path, owner);   // a revert of the scene puts the saved version back (#411)
             File.WriteAllText(path, ToJson());
+            Services.SceneDataFiles.Written(path);
             Services.PlaySession.NoteWrite(path, created);   // a file saved in play for an area Stop reverts goes with it (#423)
         }
 

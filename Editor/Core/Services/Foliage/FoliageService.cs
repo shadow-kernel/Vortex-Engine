@@ -306,8 +306,8 @@ namespace Editor.Core.Services.Foliage
             string abs = TerrainService.ResolvePath(f.DataPath);
             if (abs == null) return false;
             bool created = !File.Exists(abs);
-            SceneDataFiles.BeforeWrite(abs);   // a revert puts the saved version back (#411)
-            try { rt.Data.Save(abs); rt.Unsaved = false; PlaySession.NoteWrite(abs, created); return true; }   // a layer made in play takes its file along (#423)
+            SceneDataFiles.BeforeWrite(abs, e.Scene);   // a revert puts the saved version back (#411)
+            try { rt.Data.Save(abs); rt.Unsaved = false; SceneDataFiles.Written(abs); PlaySession.NoteWrite(abs, created); return true; }   // a layer made in play takes its file along (#423)
             catch (Exception ex) { Log("Foliage save failed: " + ex.Message); return false; }
         }
 

@@ -30,6 +30,24 @@ namespace VortexEditor.Claude
         [ModuleInitializer]
         internal static void Register() => SmokeRegistry.Add("mcp scene revert", Run);
 
+        /// <summary>Where two .vscene contents part, as XML lines — what a failure says.</summary>
+        internal static string FirstDifference(byte[] a, byte[] b)
+        {
+            try
+            {
+                string[] Lines(byte[] data)
+                {
+                    var doc = System.Xml.Linq.XDocument.Load(System.Xml.XmlDictionaryReader.CreateBinaryReader(data, System.Xml.XmlDictionaryReaderQuotas.Max));
+                    return doc.ToString().Split('\n');
+                }
+                var x = Lines(a); var y = Lines(b);
+                for (int i = 0; i < Math.Min(x.Length, y.Length); i++)
+                    if (x[i] != y[i]) return "line " + (i + 1) + ": memory «" + x[i].Trim() + "» / file «" + y[i].Trim() + "»";
+                return x.Length == y.Length ? "none" : "lengths " + x.Length + " / " + y.Length;
+            }
+            catch (Exception ex) { return "(" + ex.Message + ")"; }
+        }
+
         public static async Task<bool> Run()
         {
             var log = ConsoleService.Instance;
@@ -162,7 +180,41 @@ namespace VortexEditor.Claude
                 var height = await C("terrain_height", new JsonObject { ["points"] = new JsonArray(new JsonArray(408, 408)) });
                 var at = (height as JsonArray)?[0];
                 if (at == null || Math.Abs((double)at["y"]) > 0.01) return Fail("the reverted terrain is not the saved, flat one: " + height?.ToJsonString());
-                log.Log("[smoke] mcp scene revert: " + r.ToJsonString() + " | terrain: " + back.ToJsonString());
+
+                // ================= a value set without an undo step (an inspector card's control, a gizmo) is unsaved too (#411 review)
+                bool Unsaved() => SceneService.Instance.HasUnsavedChanges(test);
+                async Task<bool> Listed() => (await C("list_scenes", new JsonObject()) as JsonArray)?.Any(s => (string)s["name"] == name && (bool?)s["unsaved"] == true) == true;
+                if (Unsaved()) return Fail("right after the revert the scene is unsaved; first difference: " + FirstDifference(Editor.Core.Serialization.DataSerializer.ToBinary(test), File.ReadAllBytes(path)));
+                var probe3 = test.Entities.First(e => e.Name == "Revert Probe");
+                SelectionService.Instance.Select(probe3);
+                await SmokeRegistry.Settle(200);   // the inspector shows it
+                test.IsDirty = false;
+                var saved = probe3.Transform.LocalPosition;
+                probe3.Transform.LocalPosition = new Vector3(7, 7, 7);
+                if (!test.IsDirty) return Fail("a value of the inspected entity set directly did not mark the scene");
+                if (!Unsaved() || !await Listed()) return Fail("list_scenes does not call a directly moved entity unsaved");
+                if (!SceneService.Instance.PreviewReload(test).Differs) return Fail("Revert Scene would not ask about a directly moved entity");
+                probe3.Transform.LocalPosition = saved;
+                if (Unsaved()) return Fail("moved back by hand, the scene is its file again — it must not be unsaved; first difference: " + FirstDifference(Editor.Core.Serialization.DataSerializer.ToBinary(test), File.ReadAllBytes(path)));
+                SelectionService.Instance.ClearSelection();
+
+                // ================= set_sky on an existing sky: one undo step, unsaved, and exactly saved again when undone
+                await C("set_sky", new JsonObject { ["exposure"] = 0.9 });
+                await C("save_scene", new JsonObject());
+                await C("set_sky", new JsonObject { ["exposure"] = 0.7 });
+                if (!Unsaved() || !await Listed() || !test.IsDirty) return Fail("set_sky on the existing sky left the scene saved (dirty " + test.IsDirty + ")");
+                var undone = await C("undo", new JsonObject());
+                if (Unsaved()) return Fail("set_sky undone, the scene is its file again: " + undone.ToJsonString());
+
+                // ================= a terrain made and deleted again: a revert takes its file (and .vmeta) along
+                var made = await C("create_terrain", new JsonObject { ["position"] = new JsonArray(500, 0, 500), ["size"] = 16, ["resolution"] = 33, ["name"] = "Revert Orphan" });
+                string orphan = Editor.Core.Services.Terrain.TerrainService.ResolvePath(SceneModel.Resolve("Revert Orphan").GetComponent<Editor.ECS.Components.Rendering.Terrain>()?.DataPath);
+                if (orphan == null || !File.Exists(orphan)) return Fail("create_terrain wrote no data file: " + made.ToJsonString());
+                await C("delete_entities", new JsonObject { ["entities"] = new JsonArray("Revert Orphan") });
+                var gone = await C("open_scene", new JsonObject { ["scene"] = name, ["reload"] = true });
+                if ((bool?)gone["reloaded"] != true || File.Exists(orphan) || File.Exists(orphan + ".vmeta"))
+                    return Fail("a revert must remove the data file of a terrain made and deleted since the save: " + gone.ToJsonString() + " (file there " + File.Exists(orphan) + ")");
+                log.Log("[smoke] mcp scene revert: " + r.ToJsonString() + " | terrain: " + back.ToJsonString() + " | orphan: " + gone.ToJsonString());
                 return true;
             }
             catch (Exception ex) { return Fail(ex.Message); }

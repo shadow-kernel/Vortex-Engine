@@ -558,8 +558,9 @@ namespace Editor.Core.Services
             // the editor's view travels with the scene (see EditorViewState)
             try { if (ReferenceEquals(project.ActiveScene, scene)) EditorViewState.Capture(scene); } catch { }
             // Speichere Szene als Bin�r
-            DataSerializer.SaveAsBinary(scene, scene.FilePath);
-            scene.NoteFileState();
+            var data = DataSerializer.ToBinary(scene);
+            File.WriteAllBytes(scene.FilePath, data);
+            scene.NoteFileState(data);
         }
 
         /// <summary>

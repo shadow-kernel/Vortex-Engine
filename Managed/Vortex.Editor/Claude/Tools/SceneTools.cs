@@ -29,8 +29,9 @@ namespace VortexEditor.Claude.Tools
         // ================================================================== scenes
 
         [McpServerTool(Name = "list_scenes", ReadOnly = true, Idempotent = true)]
-        [Description("Lists the project's scenes: name, file, whether it is the active (edited) scene, entity count, unsaved changes (edits since " +
-                     "it was read or saved), and file_changed_on_disk when its .vscene changed since the editor read or wrote it (a git checkout).")]
+        [Description("Lists the project's scenes: name, file, whether it is the active (edited) scene, entity count, unsaved (the scene in memory " +
+                     "differs from what it was when read or saved, whichever way it was edited), and file_changed_on_disk when its .vscene changed " +
+                     "since the editor read or wrote it (a git checkout).")]
         public static object ListScenes()
         {
             var p = SceneModel.Project;
@@ -52,9 +53,10 @@ namespace VortexEditor.Claude.Tools
                      "Every scene of the project is already in memory, so opening one does NOT read its file again: the result says already_open, with " +
                      "unsaved_changes (edits since it was read or saved), file_changed_on_disk (its .vscene changed since, e.g. by a git checkout) and how " +
                      "many undo steps a reload would drop. reload: true discards the scene's in-memory state and reads its .vscene again — entities, " +
-                     "environment, name and id come from the file, terrain / foliage / area data files written since the last save are put back, the " +
-                     "selection is cleared and the scene's undo steps are dropped (cannot be undone); when the scene already matches its file nothing " +
-                     "happens (unchanged). Refused while playing, and when an entity of the file is in another loaded scene now.")]
+                     "environment, name and id come from the file, terrain / foliage / area data files written since the last save are put back (one " +
+                     "made since is removed; one changed on disk since the editor wrote it, e.g. by a git pull, is left as it is), the selection is " +
+                     "cleared and the scene's undo steps are dropped (cannot be undone); when the scene already matches its file nothing happens " +
+                     "(unchanged). Refused while playing, and when an entity of the file is in another loaded scene now.")]
         public static object OpenScene(
             [Description("Scene name or project-relative .vscene path (default: the active scene)")] string scene = null,
             [Description("Discard the scene in memory and read its .vscene file again")] bool reload = false)
@@ -96,6 +98,7 @@ namespace VortexEditor.Claude.Tools
                     undo_steps_dropped = r.UndoStepsDropped,
                     data_files_restored = r.DataFilesRestored.Count > 0 ? r.DataFilesRestored.Select(Rel).ToArray() : null,
                     data_files_kept = r.DataFilesKept.Count > 0 ? r.DataFilesKept.Select(Rel).ToArray() : null,
+                    data_files_changed_on_disk = r.DataFilesChangedOnDisk.Count > 0 ? r.DataFilesChangedOnDisk.Select(Rel).ToArray() : null,
                 };
             }
             // the scene was in memory all along: say so, whether it still matches its file, and what a reload would cost (#411)
@@ -134,7 +137,9 @@ namespace VortexEditor.Claude.Tools
             var s = string.IsNullOrEmpty(scene) ? SceneModel.ActiveScene
                 : p.Scenes.FirstOrDefault(x => x != null && string.Equals(x.Name, scene, StringComparison.OrdinalIgnoreCase)) ?? throw new ToolError("No scene named '" + scene + "'.");
             SceneService.Instance.SaveScene(s);
-            return new { saved = s.Name, file = string.IsNullOrEmpty(s.FilePath) ? null : Rel(s.FilePath) };
+            // the file holds the game's state now; Stop puts the scene in memory back — it differs from the file then (#411 review)
+            string note = SceneModel.Playing ? "Saved while playing: the file holds the scene as the game has it now. Stop puts the scene in memory back to before Play, so it then differs from the file (unsaved) — save_scene after Stop keeps the editor's version." : null;
+            return new { saved = s.Name, file = string.IsNullOrEmpty(s.FilePath) ? null : Rel(s.FilePath), note };
         }
 
         [McpServerTool(Name = "scene_outline", ReadOnly = true, Idempotent = true)]

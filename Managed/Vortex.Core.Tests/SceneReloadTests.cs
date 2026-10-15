@@ -182,7 +182,7 @@ namespace VortexTests
                 t.False(SceneService.Instance.FileChangedOnDisk(scene), "and its file is the one it was read from");
 
                 Move(undo, scene.Entities[0], new Vector3(9, 9, 9));
-                t.True(SceneService.Instance.HasUnsavedChanges(scene), "an edit through the undo stack marks it — an inspector row, a gizmo, a tool");
+                t.True(scene.IsDirty && SceneService.Instance.HasUnsavedChanges(scene), "an undo step marks it (a gizmo drag, a hierarchy edit, a tool's step)");
                 SceneService.Instance.SaveScene(scene);
                 t.False(SceneService.Instance.HasUnsavedChanges(scene), "saved: none");
                 undo.Undo();
@@ -198,6 +198,199 @@ namespace VortexTests
                 t.True(SceneService.Instance.HasUnsavedChanges(unsaved), "a new scene has nothing saved");
             }
             finally { undo.RestoreHistory(outer); }
+        }
+
+        [Test]
+        public static void AValueSetWithoutAnUndoStepIsUnsavedAndRevertAsks(TestContext t)
+        {
+            var undo = UndoRedoManager.Instance;
+            var outer = undo.SaveHistory();
+            try
+            {
+                undo.Clear();
+                var scene = SavedScene(t, "Yard");
+                var crate = scene.Entities[0];
+                // an inspector row or a card's control writes the value directly: no undo step marks anything
+                crate.Transform.LocalPosition = new Vector3(9, 9, 9);
+                t.False(scene.IsDirty, "nothing marked the flag");
+                t.True(SceneService.Instance.HasUnsavedChanges(scene), "still the scene is unsaved: it differs from what was read");
+                var pv = SceneService.Instance.PreviewReload(scene);
+                t.True(pv.Differs && pv.Unsaved, "and Revert Scene asks before it discards the move");
+                var r = SceneService.Instance.ReloadScene(scene);
+                t.True(r.Reloaded && r.DiscardedChanges && At(scene.Entities[0], 1, 2, 3), "the revert reads the file");
+            }
+            finally { undo.RestoreHistory(outer); }
+        }
+
+        [Test]
+        public static void AnEditTakenBackByHandIsNoChange(TestContext t)
+        {
+            SceneDirtyTracker.Install();
+            var undo = UndoRedoManager.Instance;
+            var outer = undo.SaveHistory();
+            try
+            {
+                undo.Clear();
+                var scene = SavedScene(t, "Yard");
+                var crate = scene.Entities[0];
+                Move(undo, crate, new Vector3(5, 5, 5));
+                Move(undo, crate, new Vector3(1, 2, 3));   // where the file has it
+                t.True(scene.IsDirty, "the steps marked the flag");
+                t.False(SceneService.Instance.HasUnsavedChanges(scene), "but the scene is its file: nothing is unsaved");
+                var r = SceneService.Instance.ReloadScene(scene);
+                t.True(r.Unchanged && !r.Reloaded, "a revert reads nothing");
+                t.False(scene.IsDirty, "and the flag agrees again");
+                t.Equal(2, undo.UndoCount, "the steps stay");
+            }
+            finally { undo.RestoreHistory(outer); }
+        }
+
+        [Test]
+        public static void AFileOfAnOlderEngineMatchesItsScene(TestContext t)
+        {
+            var scene = new Scene { Name = "Old" };
+            EntityIdTests.Entity(scene, "Crate", new Vector3(1, 2, 3));
+            // an older engine wrote what this one does not read: the bytes differ, the scene does not
+            var doc = System.Xml.Linq.XDocument.Load(System.Xml.XmlDictionaryReader.CreateBinaryReader(DataSerializer.ToBinary(scene), System.Xml.XmlDictionaryReaderQuotas.Max));
+            doc.Root.Add(new System.Xml.Linq.XElement("legacyNote", "written by v2.9"));
+            byte[] old;
+            using (var ms = new MemoryStream())
+            {
+                using (var w = System.Xml.XmlDictionaryWriter.CreateBinaryWriter(ms)) doc.WriteTo(w);
+                old = ms.ToArray();
+            }
+            string path = t.Path("Old.vscene");
+            File.WriteAllBytes(path, old);
+            var loaded = SceneService.Instance.LoadScene(path);
+            t.False(DataSerializer.ToBinary(loaded).AsSpan().SequenceEqual(old), "this engine writes the file differently");
+            t.False(SceneService.Instance.HasUnsavedChanges(loaded), "a scene just read has no unsaved changes");
+            var r = SceneService.Instance.ReloadScene(loaded);
+            t.True(r.Unchanged && !r.Reloaded, "and a revert finds nothing to do: " + (r.Error ?? ""));
+            loaded.Entities[0].Transform.LocalPosition = new Vector3(4, 4, 4);
+            t.True(SceneService.Instance.HasUnsavedChanges(loaded) && SceneService.Instance.PreviewReload(loaded).Differs, "until it is edited");
+        }
+
+        [Test]
+        public static void ASceneSavedWhilePlayingIsUnsavedAfterStop(TestContext t)
+        {
+            var scene = SavedScene(t, "Yard");
+            var snap = PlaySnapshot.Take(new[] { scene });
+            scene.Entities[0].Transform.LocalPosition = new Vector3(77, 0, 0);   // the game moved it
+            scene.Save();                                                        // Cmd+S / save_scene while playing
+            snap.Restore();                                                      // Stop
+            t.True(At(scene.Entities[0], 1, 2, 3), "Stop put the crate back");
+            t.True(scene.IsDirty && SceneService.Instance.HasUnsavedChanges(scene), "the file holds the game's crate: the scene is unsaved");
+            t.False(SceneService.Instance.FileChangedOnDisk(scene), "the editor wrote that file itself");
+        }
+
+        [Test]
+        public static void AGizmoDragIsOneUndoStep(TestContext t)
+        {
+            SceneDirtyTracker.Install();
+            var undo = UndoRedoManager.Instance;
+            var outer = undo.SaveHistory();
+            try
+            {
+                undo.Clear();
+                var scene = SavedScene(t, "Yard");
+                var crate = scene.Entities[0];
+                var p0 = crate.Transform.LocalPosition; var r0 = crate.Transform.LocalRotation; var s0 = crate.Transform.LocalScale;
+                t.True(Editor.Core.Viewport.EditorViewportSession.GizmoStep(crate, p0, r0, s0) == null, "a drag that moved nothing is no step");
+                for (int i = 1; i <= 20; i++) crate.Transform.LocalPosition = new Vector3(1 + i * 0.1f, 2, 3);   // the drag, frame by frame
+                var step = Editor.Core.Viewport.EditorViewportSession.GizmoStep(crate, p0, r0, s0);
+                t.True(step != null && step.Name == "Move Crate", "one step for the whole drag: " + step?.Name);
+                undo.Execute(step, execute: false);
+                t.True(scene.IsDirty, "it marks the scene unsaved");
+                undo.Undo();
+                t.True(At(crate, 1, 2, 3), "undo puts the crate where the drag began");
+                undo.Redo();
+                t.True(At(crate, 3, 2, 3), "redo where it ended");
+            }
+            finally { undo.RestoreHistory(outer); }
+        }
+
+        [Test]
+        public static void TheInspectorCountsSavedValuesOnly(TestContext t)
+        {
+            var e = new GameEntity("Probe");
+            t.True(SceneDirtyTracker.IsPersisted(e.Transform, "LocalPosition"), "a transform's position is in the file");
+            t.True(SceneDirtyTracker.IsPersisted(new Editor.ECS.Components.Physics.BoxCollider(e), "Size"), "so is a collider's size");
+            t.True(SceneDirtyTracker.IsPersisted(e, "Name"), "and the entity's name");
+            t.False(SceneDirtyTracker.IsPersisted(e, "IsSelected") || SceneDirtyTracker.IsPersisted(e, "IsExpanded"), "the selection and a tree node's state are not");
+            t.False(SceneDirtyTracker.IsPersisted(new Scene { Name = "S" }, "IsDirty"), "nor the unsaved flag itself");
+        }
+
+        [Test]
+        public static void ARevertLeavesADataFileChangedOnDiskAlone(TestContext t)
+        {
+            var previous = ProjectData.Current;
+            try
+            {
+                ProjectData.Current = new ProjectData(Guid.NewGuid(), t.Dir, "P");
+                var scene = new Scene { Name = "Yard" };
+                EntityIdsWith(scene, "Zone", "Assets/Areas/Zone.varea");
+                string zoneFile = t.Path("Assets", "Areas", "Zone.varea");
+                new Editor.Core.Areas.AreaDefinition { Name = "v1-saved" }.Save(zoneFile);
+                string path = t.Path("Yard.vscene");
+                DataSerializer.SaveAsBinary(scene, path);
+                scene = SceneService.Instance.LoadScene(path);
+
+                new Editor.Core.Areas.AreaDefinition { Name = "v2-editor" }.Save(zoneFile, scene);   // an edit in the editor
+                File.WriteAllText(zoneFile, File.ReadAllText(zoneFile).Replace("v2-editor", "v3-teammate"));   // a git pull brings another version
+                File.SetLastWriteTimeUtc(zoneFile, DateTime.UtcNow.AddSeconds(5));
+                var r = SceneService.Instance.ReloadScene(scene);
+                t.True(r.Reloaded && r.DataFilesRestored.Count == 0 && r.DataFilesChangedOnDisk.Count == 1, "the revert names the file and leaves it: " + string.Join(", ", r.DataFilesChangedOnDisk));
+                t.True(File.ReadAllText(zoneFile).Contains("v3-teammate"), "the pulled version stays");
+                t.Equal(0, SceneDataFiles.Pending(scene).Count, "and it is the baseline now");
+            }
+            finally { ProjectData.Current = previous; SceneDataFiles.Clear(); }
+        }
+
+        [Test]
+        public static void AFileMadeForAnEntityDeletedAgainGoesWithARevert(TestContext t)
+        {
+            var previous = ProjectData.Current;
+            try
+            {
+                ProjectData.Current = new ProjectData(Guid.NewGuid(), t.Dir, "P");
+                var scene = SavedScene(t, "Yard");
+                var zone = EntityIdsWith(scene, "Zone", "Assets/Areas/T3.varea");
+                string made = t.Path("Assets", "Areas", "T3.varea");
+                new Editor.Core.Areas.AreaDefinition { Name = "t3" }.Save(made, scene);   // the new entity's file
+                File.WriteAllText(made + ".vmeta", "{}");                                   // and the asset database's sidecar
+                scene.Entities.Remove(zone);                                                 // deleted again before the revert
+
+                t.True(SceneDataFiles.Pending(scene).Count == 1 && SceneService.Instance.HasUnsavedChanges(scene), "the file is the scene's unsaved change");
+                var r = SceneService.Instance.ReloadScene(scene);
+                t.True(r.Reloaded && !r.Unchanged, "a revert is not 'unchanged' while the file is there");
+                t.False(File.Exists(made) || File.Exists(made + ".vmeta"), "the file and its .vmeta are gone");
+            }
+            finally { ProjectData.Current = previous; SceneDataFiles.Clear(); }
+        }
+
+        [Test]
+        public static void TheCopiesGoWithTheEditorAndACrashLeavesNoneForLong(TestContext t)
+        {
+            var previous = ProjectData.Current;
+            try
+            {
+                ProjectData.Current = new ProjectData(Guid.NewGuid(), t.Dir, "P");
+                string zoneFile = t.Path("Assets", "Areas", "Zone.varea");
+                new Editor.Core.Areas.AreaDefinition { Name = "v1" }.Save(zoneFile);
+                SceneDataFiles.Clear();
+                SceneDataFiles.BeforeWrite(zoneFile);   // a copy is kept
+                string mine = Path.Combine(SceneDataFiles.Root, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                t.True(Directory.Exists(mine) && Directory.GetFiles(mine).Length >= 1, "the copy is in this editor's folder");
+                SceneDataFiles.Clear(removeFolder: true);   // the editor quits
+                t.False(Directory.Exists(mine), "quitting takes the folder along");
+
+                string dead = Path.Combine(SceneDataFiles.Root, "99999999");   // a process id no system hands out
+                Directory.CreateDirectory(dead);
+                File.WriteAllText(Path.Combine(dead, "copy.vterrain"), "left by a crash");
+                SceneDataFiles.SweepStale();
+                t.False(Directory.Exists(dead), "the next editor deletes what a crashed one left");
+            }
+            finally { ProjectData.Current = previous; SceneDataFiles.Clear(); }
         }
 
         [Test]

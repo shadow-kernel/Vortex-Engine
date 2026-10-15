@@ -24,10 +24,13 @@ namespace Editor.Core.Services
         public bool DiscardedChanges { get; internal set; }
         /// <summary>Undo and redo steps that acted on the discarded state and were dropped.</summary>
         public int UndoStepsDropped { get; internal set; }
-        /// <summary>Terrain, foliage and area files put back to the last save (absolute paths).</summary>
+        /// <summary>Terrain, foliage and area files put back to the last save — one made since then removed, with its .vmeta
+        /// (absolute paths).</summary>
         public System.Collections.Generic.IReadOnlyList<string> DataFilesRestored { get; internal set; } = Array.Empty<string>();
         /// <summary>Data files written since the save that stayed: another loaded scene uses them too.</summary>
         public System.Collections.Generic.IReadOnlyList<string> DataFilesKept { get; internal set; } = Array.Empty<string>();
+        /// <summary>Data files the editor wrote that changed on disk since (a git pull, another program): left as they are.</summary>
+        public System.Collections.Generic.IReadOnlyList<string> DataFilesChangedOnDisk { get; internal set; } = Array.Empty<string>();
 
         internal static SceneReloadResult Refused(string why) => new SceneReloadResult { Error = why };
     }
@@ -148,7 +151,7 @@ namespace Editor.Core.Services
             if (p.Blocked != null) return p;
             p.Unsaved = HasUnsavedChanges(scene);
             p.DataFiles = SceneDataFiles.Pending(scene);
-            p.Differs = p.DataFiles.Count > 0 || !SameAsFile(scene, disk);
+            p.Differs = p.DataFiles.Count > 0 || !MatchesFile(scene, disk);
             if (!p.Differs) return p;
             p.UndoSteps = UndoStepsOf(scene);
             p.Blocked = Conflicts(scene, disk);
@@ -174,8 +177,12 @@ namespace Editor.Core.Services
             if (blocked != null)
                 return SceneReloadResult.Refused(blocked);
             var pending = SceneDataFiles.Pending(scene);
-            if (pending.Count == 0 && SameAsFile(scene, disk))
-                return new SceneReloadResult { Unchanged = true };   // the scene is its file: nothing to read, no step to drop
+            if (pending.Count == 0 && MatchesFile(scene, disk))
+            {
+                // the scene is its file: nothing to read, no step to drop — and nothing unsaved, whatever the flag said
+                scene.NoteFileState();
+                return new SceneReloadResult { Unchanged = true };
+            }
             string conflict = Conflicts(scene, disk);
             if (conflict != null)
                 return SceneReloadResult.Refused(conflict);
@@ -193,8 +200,9 @@ namespace Editor.Core.Services
             var elsewhere = UsedElsewhere(scene);
             var paths = SceneDataFiles.PathsOf(scene);
             paths.UnionWith(SceneDataFiles.PathsOf(file));
+            paths.UnionWith(SceneDataFiles.OwnedBy(scene));   // made for an entity that is gone again: removed unless used elsewhere
             paths.ExceptWith(elsewhere);
-            var restored = SceneDataFiles.Restore(paths);
+            var restored = SceneDataFiles.Restore(paths, out var changedOnDisk);
             Guid oldId = scene.Id;
             scene.ReplaceContent(file);
             var project = scene.Project ?? ProjectData.Current;
@@ -206,17 +214,20 @@ namespace Editor.Core.Services
             {
                 Reloaded = true, DiscardedChanges = changed, UndoStepsDropped = dropped,
                 DataFilesRestored = restored, DataFilesKept = pending.Where(p => elsewhere.Contains(p)).ToList(),
+                DataFilesChangedOnDisk = changedOnDisk,
             };
         }
 
         /// <summary>
         /// Whether the scene has unsaved changes (#411) — the one answer list_scenes, scene_outline, open_scene and File ▸ Revert
-        /// Scene give: edits since it was read or saved (<see cref="Scene.IsDirty"/>, which every undo step that touches the scene
-        /// sets — see <see cref="SceneDirtyTracker"/>), terrain or foliage data not written yet, or data files written since the
-        /// save. A file changed on disk is another question: <see cref="FileChangedOnDisk"/>.
+        /// Scene give: the scene in memory is not what it was when it was read or saved (<see cref="Scene.MatchesBaseline"/>,
+        /// compared as this engine writes it — exact whichever way an edit came, and an edit taken back by hand is none), terrain
+        /// or foliage data not written yet, or data files written since the save. Not <see cref="Scene.IsDirty"/>, a fast hint
+        /// that edits without an undo step can miss. A file changed on disk is another question: <see cref="FileChangedOnDisk"/>.
+        /// Serializes the scene (a few ms; ~50 ms for 10,000 entities).
         /// </summary>
         public bool HasUnsavedChanges(Scene scene)
-            => scene != null && scene.IsLoaded && (scene.IsDirty || HasUnsavedData(scene) || SceneDataFiles.Pending(scene).Count > 0);
+            => scene != null && scene.IsLoaded && (HasUnsavedData(scene) || SceneDataFiles.Pending(scene).Count > 0 || !scene.MatchesBaseline());
 
         /// <summary>Whether the scene's file was changed on disk (a git checkout, another program) since the editor read or wrote
         /// it: the scene in memory does not show that version.</summary>
@@ -238,10 +249,22 @@ namespace Editor.Core.Services
             return null;
         }
 
-        /// <summary>The scene in memory is byte for byte what its file holds.</summary>
-        private static bool SameAsFile(Scene scene, byte[] disk)
+        /// <summary>
+        /// The scene in memory is what its file holds, both as this engine writes them (#411 review): a file written by an older
+        /// engine and not touched since matches. While the file is the one the editor read or wrote, the content noted then
+        /// answers; a file changed on disk is read and written again by this engine to compare.
+        /// </summary>
+        private static bool MatchesFile(Scene scene, byte[] disk)
         {
-            try { return !HasUnsavedData(scene) && DataSerializer.ToBinary(scene).AsSpan().SequenceEqual(disk); }
+            if (HasUnsavedData(scene)) return false;
+            if (scene.HasBaseline && !scene.FileChangedOnDisk()) return scene.MatchesBaseline();
+            try
+            {
+                var mine = DataSerializer.ToBinary(scene);
+                if (mine.AsSpan().SequenceEqual(disk)) return true;
+                var file = DataSerializer.FromBinary<Scene>(disk);
+                return file != null && mine.AsSpan().SequenceEqual(DataSerializer.ToBinary(file));
+            }
             catch { return false; }
         }
 

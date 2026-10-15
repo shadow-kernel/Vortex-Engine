@@ -85,10 +85,13 @@ namespace Editor.Core.Data
         public bool EnsureAuthoredActiveFlags()
         {
             if (ActiveFlagsVersion >= 1) return false;
+            // part of reading an old file, not an edit: a scene that was its file still is (#411 review)
+            bool asRead = _baseline != null && MatchesBaseline();
             ActiveFlagsVersion = 1;
             void On(GameEntity e) { e.SetActiveFlagOnly(true); if (e.Children != null) foreach (var c in e.Children) On(c); }
             if (_entities != null)
                 foreach (var entity in _entities) On(entity);   // the caller syncs the engine right after
+            if (asRead) _baseline = ContentHash();
             return true;
         }
 
@@ -295,8 +298,9 @@ namespace Editor.Core.Data
             // the editor's view travels with the scene: whoever opens it next starts where it was saved from
             try { if (ReferenceEquals(ProjectData.Current?.ActiveScene, this)) Services.EditorViewState.Capture(this); } catch { }
             bool created = !File.Exists(FilePath);
-            Serialization.DataSerializer.SaveAsBinary(this, FilePath);
-            NoteFileState();
+            var data = Serialization.DataSerializer.ToBinary(this);
+            File.WriteAllBytes(FilePath, data);
+            NoteFileState(data);
             Services.PlaySession.NoteWrite(FilePath, created);   // a scene saved while playing may refer to data files play created (#423)
         }
 
@@ -575,12 +579,20 @@ namespace Editor.Core.Data
 
         private long _stampLength = -1;
         private DateTime _stampTimeUtc;
+        private byte[] _baseline;   // SHA-256 of the content as this engine writes it, at the last read, save or revert
+
+        /// <summary>How often the scene was read from or written to its file in this session — a save while playing shows here
+        /// (<see cref="Services.PlaySnapshot"/>).</summary>
+        internal int FileStateVersion { get; private set; }
 
         /// <summary>The scene was just read from or written to its file (#411): nothing is unsaved, the file's size and time are
-        /// what <see cref="FileChangedOnDisk"/> compares with, and its data files are the baseline of a revert now.</summary>
-        internal void NoteFileState()
+        /// what <see cref="FileChangedOnDisk"/> compares with, its content as this engine writes it is what
+        /// <see cref="MatchesBaseline"/> compares with (<paramref name="written"/>: the bytes just written), and its data files
+        /// are the baseline of a revert now.</summary>
+        internal void NoteFileState(byte[] written = null)
         {
             IsDirty = false;
+            FileStateVersion++;
             try
             {
                 var fi = string.IsNullOrEmpty(FilePath) ? null : new FileInfo(FilePath);
@@ -588,7 +600,27 @@ namespace Editor.Core.Data
                 else _stampLength = -1;
             }
             catch { _stampLength = -1; }
+            try { _baseline = written != null ? System.Security.Cryptography.SHA256.HashData(written) : ContentHash(); }
+            catch { _baseline = null; }
             try { Services.SceneDataFiles.Forget(this); } catch { }
+        }
+
+        private byte[] ContentHash() => System.Security.Cryptography.SHA256.HashData(Serialization.DataSerializer.ToBinary(this));
+
+        /// <summary>Whether the scene knows the content of its file: it was read from or written to it in this session.</summary>
+        internal bool HasBaseline => _baseline != null;
+
+        /// <summary>
+        /// Whether the scene in memory is what it was when the editor last read, saved or reverted it (#411 review) — compared as
+        /// this engine writes it, so a file written by an older engine and not touched since matches, and an edit taken back by
+        /// hand matches again. Exact for every edit, whichever way it came: an inspector row, a gizmo, a tool, a script. False
+        /// when the scene was never read from or written to a file.
+        /// </summary>
+        internal bool MatchesBaseline()
+        {
+            if (_baseline == null) return false;
+            try { return ContentHash().AsSpan().SequenceEqual(_baseline); }
+            catch { return false; }
         }
 
         /// <summary>Whether the scene's file was changed on disk (a git checkout, another program) since the editor read or wrote

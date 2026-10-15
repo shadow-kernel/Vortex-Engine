@@ -373,6 +373,10 @@ namespace VortexEditor.Claude
             // while the game runs every change says what Stop does with it — set here, once, for every tool (#423)
             if (playingAtStart && PlayModeService.Instance.IsPlaying && !def.ReadOnly && !dryRun && !result.IsError)
                 result = PlayModeNote(result, startUtc);
+            // a value a tool set directly makes no undo step to mark the scene: the scenes of the entities the call touched are
+            // unsaved now (#411 review) — undo steps mark theirs themselves (SceneDirtyTracker)
+            if (!def.ReadOnly && !dryRun && !result.IsError && !PlayModeService.Instance.IsPlaying)
+                foreach (var s in ToolContext.TouchedScenes) if (s != null && s.IsLoaded) s.IsDirty = true;
             op.Entities = ToolContext.Touched;
             op.Files = dryRun || result.IsError ? new List<FileChange>() : ToolContext.Files;
             op.Result = result.Summary();

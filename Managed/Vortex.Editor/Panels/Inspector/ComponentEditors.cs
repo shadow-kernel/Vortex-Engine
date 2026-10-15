@@ -97,6 +97,14 @@ namespace VortexEditor.Panels.Inspector
 
         internal static void Dirty() { SceneRenderService.RuntimeDirty = true; }
 
+        /// <summary>An inspector edit changed <paramref name="e"/>: its scene has unsaved changes (#411 review) — rows set values
+        /// directly, without an undo step. Not while playing (Stop puts the scenes back) and not for a prefab template.</summary>
+        internal static void MarkUnsaved(GameEntity e)
+        {
+            if (e?.Scene == null || PlayModeService.Instance.IsPlaying || !IsSceneEntity(e)) return;
+            e.Scene.IsDirty = true;
+        }
+
         /// <summary>True when the entity lives in a scene; false for an isolated prefab template (the Prefab Editor).</summary>
         public static bool IsSceneEntity(GameEntity e) => e != null && Shell.Prefab.PrefabWorkflow.IsInScene(e);
 
