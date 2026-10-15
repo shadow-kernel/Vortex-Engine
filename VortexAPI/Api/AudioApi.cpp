@@ -86,6 +86,81 @@ EDITOR_INTERFACE void AudioSeekVoice(u64 handle, d64 seconds)
 	runtime::audio::voice_seek(handle, seconds);
 }
 
+// ---- adaptive music (#437): a .vmusic's stems mixed sample-locked in one voice ------------
+
+// Plays `count` stems as one music voice (priority 0, never pitched). Frames are at the engine rate (AudioGetDspTime):
+// the loop region [loop_start, loop_end) (loop_end 0 = the longest stem), the start frame, and start_time — the
+// mixer frame the music begins on (0 = now). 0 = a stem could not be opened.
+EDITOR_INTERFACE u64 AudioPlayMusic(const char** stems, s32 count, const f32* state_gains, const f32* param_gains,
+	u64 loop_start, u64 loop_end, u64 start_frame, s32 loop, s32 stream, s32 out_bus, f32 volume, u64 start_time)
+{
+	if (!stems || count <= 0) return runtime::audio::invalid_voice;
+	runtime::audio::music_desc desc{};
+	desc.stems = stems;
+	desc.stem_count = (u32)count;
+	desc.state_gains = state_gains;
+	desc.param_gains = param_gains;
+	desc.loop_start = loop_start;
+	desc.loop_end = loop_end;
+	desc.start_frame = start_frame;
+	desc.loop = loop != 0;
+	desc.stream = stream != 0;
+	runtime::audio::voice_params params{};
+	params.volume = volume;
+	params.priority = 0;				// the music channel is never stolen
+	params.bus = out_bus;
+	params.start_time = start_time;
+	return runtime::audio::voice_play_music(desc, params);
+}
+
+// Ramp one gain stage (0 = the state's stem volumes, 1 = the parameter mapping's) of every stem to `gains`, beginning
+// exactly when the music has played `at_frame` frames (0 = next mix), over `ramp_frames`.
+EDITOR_INTERFACE void AudioMusicSchedule(u64 handle, s32 stage, const f32* gains, s32 count, u64 at_frame, u64 ramp_frames)
+{
+	if (!gains || count <= 0) return;
+	runtime::audio::voice_music_schedule(handle, stage == 1 ? runtime::audio::music_stage::parameter : runtime::audio::music_stage::state,
+		gains, (u32)count, at_frame, ramp_frames);
+}
+
+// A stinger: the clip mixed once into the music from its frame `at_frame`. 0 = could not be opened / no free slot.
+EDITOR_INTERFACE s32 AudioMusicPlayStinger(u64 handle, const char* path, f32 volume, u64 at_frame)
+{
+	return runtime::audio::voice_music_stinger(handle, path, volume, at_frame) ? 1 : 0;
+}
+
+// The music's clock, mirrored by Editor.DllWrapper.VortexAudio.MusicClock (blittable, this field order).
+struct AudioMusicClockData
+{
+	u64 played, position, loops, loop_start, loop_end, length, last_state_frame;
+	d64 seconds_since_mix;
+	s32 sample_rate;
+	s32 stalled;
+};
+
+EDITOR_INTERFACE s32 AudioMusicGetClock(u64 handle, AudioMusicClockData* out)
+{
+	if (!out) return 0;
+	runtime::audio::music_clock c{};
+	if (!runtime::audio::voice_music_clock(handle, &c)) { *out = AudioMusicClockData{}; return 0; }
+	out->played = c.played;
+	out->position = c.position;
+	out->loops = c.loops;
+	out->loop_start = c.loop_start;
+	out->loop_end = c.loop_end;
+	out->length = c.length;
+	out->last_state_frame = c.last_state_frame;
+	out->seconds_since_mix = c.seconds_since_mix;
+	out->sample_rate = (s32)c.sample_rate;
+	out->stalled = c.stalled ? 1 : 0;
+	return 1;
+}
+
+// One stem's gain (state x parameter) after the last mix; -1 = no such stem / not a music voice.
+EDITOR_INTERFACE f32 AudioMusicGetStemGain(u64 handle, s32 stem)
+{
+	return stem < 0 ? -1.0f : runtime::audio::voice_music_stem_gain(handle, (u32)stem);
+}
+
 // Steam Audio v2 (issue #21): project master switch + occlusion geometry. Both no-op unless phonon.dll loads.
 EDITOR_INTERFACE void AudioSteamSetEnabled(s32 enabled)
 {

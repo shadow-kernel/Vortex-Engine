@@ -33,6 +33,7 @@ namespace VortexEditor.Shell
         public static void MaterialEditor(string fullPath) => MaterialEditorWindow.Open(fullPath);
         public static void PrefabEditor(string fullPath) => PrefabEditorWindow.Open(fullPath);
         public static void SoundContainerEditor(string fullPath) => SoundContainerEditorWindow.Open(fullPath);
+        public static void AdaptiveMusicEditor(string fullPath) => AdaptiveMusicEditorWindow.Open(fullPath);
         public static void UiEditor(string fullPath) => UiEditorWindow.Open(fullPath);
         public static void AnimationEditor(string fullPath) => AnimationEditorWindow.Open(fullPath);
         public static void VfxEditor(string fullPath) => VfxEditorWindow.Open(fullPath);
@@ -67,6 +68,7 @@ namespace VortexEditor.Shell
                 case ".vmat": MaterialEditor(fullPath); return true;
                 case ".ventity": case ".vprefab": PrefabEditor(fullPath); return true;
                 case ".vsndc": SoundContainerEditor(fullPath); return true;
+                case ".vmusic": AdaptiveMusicEditor(fullPath); return true;
                 case ".vui": UiEditor(fullPath); return true;
                 case ".vanim": AnimationEditor(fullPath); return true;
                 case ".vfx": VfxEditor(fullPath); return true;

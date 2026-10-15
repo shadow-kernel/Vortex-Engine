@@ -88,6 +88,11 @@ namespace Editor.Core.Services
 
             _musicVolume = 1f;
             _musicCurrentClip = null;
+            _musicAdaptive = null;
+            _failedMusic.Clear();          // a .vmusic fixed between two runs plays in the next (#437)
+            _warnedMusicCalls.Clear();
+            _tickClock.Restart();
+            _lastTickSeconds = 0;
 
             // Project mixer state (bus volumes/mutes + duck rules) — identical in editor play mode and the shipped
             // game (the config ships packed in the .vpak and loads through AssetVfs there). Then, in a SHIPPED game
@@ -242,6 +247,7 @@ namespace Editor.Core.Services
             _musicCurrent = VortexAudio.InvalidVoice;
             _musicPrevious = VortexAudio.InvalidVoice;
             _musicCurrentClip = null;
+            _musicAdaptive = null;
             foreach (var s in _oneShots) VortexAudio.StopVoice(s.Handle);
             _oneShots.Clear();
             _warnedInaudibleFades.Clear();
@@ -518,7 +524,7 @@ namespace Editor.Core.Services
 
         private (double Seconds, int Rate) ClipFacts(string clip)
         {
-            if (string.IsNullOrEmpty(clip) || Core.Audio.SoundContainerService.IsContainerPath(clip)) return (0, 0);
+            if (string.IsNullOrEmpty(clip) || Core.Audio.SoundContainerService.IsContainerPath(clip) || Core.Audio.AdaptiveMusic.IsMusicPath(clip)) return (0, 0);
             if (_clipFacts.TryGetValue(clip, out var facts)) return facts;
             facts = (0, 0);
             try
@@ -682,6 +688,11 @@ namespace Editor.Core.Services
         private ulong _musicPrevious = VortexAudio.InvalidVoice;
         private string _musicCurrentClip;     // same-clip guard: Play/CrossFade per frame must not restart
         private float _musicVolume = 1f;      // user target volume
+        /// <summary>The current track's driver when it is adaptive music (.vmusic, #437) — states, parameters, stingers,
+        /// beats; null for a plain clip.</summary>
+        private Core.Audio.AdaptiveMusicPlayer _musicAdaptive;
+        private readonly System.Diagnostics.Stopwatch _tickClock = new System.Diagnostics.Stopwatch();
+        private double _lastTickSeconds;
 
         public float MusicVolume
         {
@@ -689,7 +700,8 @@ namespace Editor.Core.Services
             set
             {
                 _musicVolume = value < 0f ? 0f : (value > 1f ? 1f : value);
-                VortexAudio.SetVoiceVolume(_musicCurrent, _musicVolume); // envelope multiplies on top
+                // envelope multiplies on top; a .vmusic keeps its own volume under the channel's (#437)
+                VortexAudio.SetVoiceVolume(_musicCurrent, _musicVolume * (_musicAdaptive != null ? Math.Max(0f, _musicAdaptive.Music.Volume) : 1f));
             }
         }
 
@@ -739,22 +751,35 @@ namespace Editor.Core.Services
             if (string.Equals(clip, _musicCurrentClip, StringComparison.OrdinalIgnoreCase) && MusicIsPlaying)
                 return; // already the current track — per-frame calls must not restart the stream
 
-            var path = ResolveClipPath(clip);
-            if (path == null) return;
-
             // Start the NEW track first — if it can't start (undecodable file), the
             // currently playing music keeps playing instead of fading into silence.
-            var h = VortexAudio.PlayVoice(path, _musicVolume, 1f, 0f, loop, 0, stream: true, bus: VortexAudio.BusMusic);
-            if (h == VortexAudio.InvalidVoice)
+            ulong h;
+            Core.Audio.AdaptiveMusicPlayer adaptive = null;
+            if (Core.Audio.AdaptiveMusic.IsMusicPath(clip))
             {
-                _failedPaths.Add(clip);
-                System.Diagnostics.Debug.WriteLine("[Audio] music failed to start: '" + clip + "'");
-                return;
+                // adaptive music (#437): the .vmusic's stems as one sample-locked voice, driven by Audio.Music.SetState …
+                if (_failedMusic.Contains(clip)) return;   // per frame Play calls must not reload a broken file every frame
+                adaptive = StartAdaptiveMusic(clip);
+                if (adaptive == null) return;
+                h = adaptive.Handle;
+            }
+            else
+            {
+                var path = ResolveClipPath(clip);
+                if (path == null) return;
+                h = VortexAudio.PlayVoice(path, _musicVolume, 1f, 0f, loop, 0, stream: true, bus: VortexAudio.BusMusic);
+                if (h == VortexAudio.InvalidVoice)
+                {
+                    _failedPaths.Add(clip);
+                    System.Diagnostics.Debug.WriteLine("[Audio] music failed to start: '" + clip + "'");
+                    return;
+                }
             }
 
             SwapMusicToPrevious(fadeOutSeconds);
             _musicCurrent = h;
             _musicCurrentClip = clip;
+            _musicAdaptive = adaptive;
             if (fadeInSeconds > 0f)
             {
                 VortexAudio.FadeVoice(h, 0f, 0f);            // envelope starts silent
@@ -765,6 +790,7 @@ namespace Editor.Core.Services
         public void MusicStop(float fadeOutSeconds = 0f)
         {
             _musicCurrentClip = null;
+            _musicAdaptive = null;   // a fading-out .vmusic delivers no more beats and takes no more states
             if (fadeOutSeconds <= 0f)
             {
                 // Immediate means IMMEDIATE — including an outgoing crossfade track.
@@ -798,7 +824,102 @@ namespace Editor.Core.Services
             // Reap the fading-out handle once the native envelope released it.
             if (_musicPrevious != VortexAudio.InvalidVoice && !VortexAudio.IsVoiceValid(_musicPrevious))
                 _musicPrevious = VortexAudio.InvalidVoice;
+
+            // adaptive music (#437): deliver the beats this tick is nearest to — OnBar / OnBeat of the scripts that have them
+            double nowSeconds = _tickClock.Elapsed.TotalSeconds;
+            double dt = nowSeconds - _lastTickSeconds;
+            _lastTickSeconds = nowSeconds;
+            if (_musicAdaptive == null) return;
+            if (!VortexAudio.IsVoiceValid(_musicAdaptive.Handle)) { _musicAdaptive = null; return; }   // a one-shot .vmusic ended
+            _musicAdaptive.Tick(dt, _dispatchBeat ??= (beat, bar, isBar) => Editor.Scripting.ScriptRuntime.Instance.DispatchMusicBeat(beat, bar, isBar));
         }
+
+        private Action<int, int, bool> _dispatchBeat;
+
+        /// <summary>The .vmusic of a music path: the project file, or — in a shipped game — its pak entry.</summary>
+        private Core.Audio.AdaptiveMusic LoadMusicDefinition(string clip)
+        {
+            try
+            {
+                if (Path.IsPathRooted(clip) && File.Exists(clip)) return Core.Audio.AdaptiveMusic.Load(clip);
+                var root = ProjectData.Current?.Path;
+                if (!string.IsNullOrEmpty(root))
+                {
+                    var full = Path.Combine(root, clip);
+                    if (File.Exists(full)) return Core.Audio.AdaptiveMusic.Load(full);
+                }
+                if (AssetVfs.TryGetBytes(clip, out var bytes)) return Core.Audio.AdaptiveMusic.FromJson(System.Text.Encoding.UTF8.GetString(bytes));
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] music definition unreadable: '" + clip + "': " + ex.Message); }
+            return null;
+        }
+
+        /// <summary>Starts a .vmusic on the music bus (#437); null — and one Console warning saying why — when it cannot play.</summary>
+        private Core.Audio.AdaptiveMusicPlayer StartAdaptiveMusic(string clip)
+        {
+            var def = LoadMusicDefinition(clip);
+            string error = def == null ? "the file was not found or is not a .vmusic" : null;
+            var player = def != null ? Core.Audio.AdaptiveMusicPlayer.Start(def, ResolveClipPath, VortexAudio.BusMusic, _musicVolume, out error) : null;
+            if (player == null)
+            {
+                _failedMusic.Add(clip);
+                AudioFail("[Audio] music '" + clip + "' cannot play: " + error);
+                WarnMusicOnce(clip + "|play", "Audio.Music.Play: '" + clip + "' cannot play — " + error + ".");
+            }
+            return player;
+        }
+
+        /// <summary>.vmusic files that could not play this session (retried in the next one).</summary>
+        private readonly HashSet<string> _failedMusic = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // ---- adaptive music script surface (Vortex.Audio.Music, #437) ------------------------------------------------
+
+        private readonly HashSet<string> _warnedMusicCalls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private void WarnMusicOnce(string key, string message)
+        {
+            if (_warnedMusicCalls.Add(key)) ConsoleService.Instance.LogWarning("[Audio] " + message);
+        }
+
+        public bool MusicSetState(string state)
+        {
+            var m = _musicAdaptive;
+            if (m == null)
+            {
+                WarnMusicOnce("nomusic:SetState", "Audio.Music.SetState(\"" + state + "\"): no adaptive music plays — start a .vmusic with Audio.Music.Play first.");
+                return false;
+            }
+            if (m.SetState(state)) return true;
+            var names = new List<string>();
+            foreach (var s in m.Music.States) names.Add(s.Name);
+            WarnMusicOnce(_musicCurrentClip + "|state|" + state, "Audio.Music.SetState(\"" + state + "\"): '" + Path.GetFileName(_musicCurrentClip) +
+                "' has no such state (states: " + (names.Count > 0 ? string.Join(", ", names) : "none") + ").");
+            return false;
+        }
+
+        public string MusicState => _musicAdaptive?.State ?? "";
+
+        public void MusicSetParameter(string name, float value) => _musicAdaptive?.SetParameter(name, value);
+
+        public float MusicGetParameter(string name) => _musicAdaptive?.GetParameter(name) ?? 0f;
+
+        public bool MusicPlayStinger(string name)
+        {
+            var m = _musicAdaptive;
+            if (m == null) return false;
+            if (m.PlayStinger(name)) return true;
+            if (m.Music.FindStinger(name) == null)
+                WarnMusicOnce(_musicCurrentClip + "|stinger|" + name, "Audio.Music.PlayStinger(\"" + name + "\"): '" + Path.GetFileName(_musicCurrentClip) + "' has no such stinger.");
+            return false;
+        }
+
+        public float MusicBpm => _musicAdaptive?.Music.Bpm ?? 0f;
+        public int MusicBeatsPerBar => _musicAdaptive?.Music.BeatsPerBar ?? 0;
+        public int MusicBeat => _musicAdaptive?.CurrentBeat ?? -1;
+        public int MusicBar => _musicAdaptive?.CurrentBar ?? -1;
+
+        /// <summary>Diagnostics (smoke checks, the editor): the adaptive music playing now, or null.</summary>
+        internal Core.Audio.AdaptiveMusicPlayer AdaptiveMusicForDiagnostics => _musicAdaptive;
 
         private void CollectRecursive(GameEntity e)
         {

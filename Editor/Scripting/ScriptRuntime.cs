@@ -1098,6 +1098,46 @@ namespace Editor.Scripting
             }
         }
 
+        /// <summary>Adaptive music (#437): a beat of the playing .vmusic reached the mixer — OnBar (on a bar line) and then
+        /// OnBeat for every live behaviour that overrides them; a behaviour that overrides neither is not called at all.</summary>
+        internal void DispatchMusicBeat(int beat, int bar, bool isBar)
+        {
+            if (!_active) return;
+            for (int i = 0; i < _behaviours.Count; i++)   // by index: a callback may spawn (appended) or destroy (marked)
+            {
+                var b = _behaviours[i];
+                if (!IsLive(b)) continue;
+                int callbacks = MusicCallbacks(b.GetType());
+                if (callbacks == 0) continue;
+                if (isBar && (callbacks & 2) != 0)
+                {
+                    try { b.OnBar(bar); }
+                    catch (Exception ex) { LogScriptError("OnBar", b, ex); }
+                }
+                if ((callbacks & 1) != 0 && IsLive(b))
+                {
+                    try { b.OnBeat(beat); }
+                    catch (Exception ex) { LogScriptError("OnBeat", b, ex); }
+                }
+            }
+        }
+
+        private static readonly Dictionary<Type, int> _musicCallbacks = new Dictionary<Type, int>();
+
+        /// <summary>1 = the class overrides OnBeat, 2 = OnBar (cached per class: the reflection runs once).</summary>
+        internal static int MusicCallbacks(Type t)
+        {
+            if (_musicCallbacks.TryGetValue(t, out int mask)) return mask;
+            bool Overrides(string name)
+            {
+                var m = t.GetMethod(name, BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(int) }, null);
+                return m != null && m.DeclaringType != typeof(Vortex.VortexBehaviour);
+            }
+            mask = (Overrides("OnBeat") ? 1 : 0) | (Overrides("OnBar") ? 2 : 0);
+            _musicCallbacks[t] = mask;
+            return mask;
+        }
+
         /// <summary>The behaviours whose EntityId is <paramref name="handle"/> — all of an entity's share one (#408). An
         /// entity's other handle (one handed out before its scripts started, e.g. a NavAgent's) resolves to none, exactly
         /// like the per-behaviour handle map this replaced.</summary>

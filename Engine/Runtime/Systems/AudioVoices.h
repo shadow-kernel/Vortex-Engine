@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Common/CommonHeaders.h"
+#include "AudioMusic.h"
 
 // Voice management (issue #7): a fixed, preallocated pool of playback voices on
 // top of the AudioEngine core, with priority-driven stealing when the pool is
@@ -91,6 +92,18 @@ namespace vortex::runtime::audio {
 	// voices alike (a streamed voice is silent while its stream refills from the new spot). Clamped to the clip,
 	// wrapped for a looping voice; seeking a one-shot to its end finishes it. Safe no-op for a stale handle.
 	void voice_seek(voice_handle handle, d64 seconds);
+
+	// Adaptive music (#437): a stem group (AudioMusic.h) played as ONE voice — routed through its bus, faded, paused,
+	// sought and stopped like any voice (it never pitches: a music frame is a mixer frame, and it stays 2D and dry).
+	// The voice owns the group. Uses params.volume / priority / bus / start_time; desc.loop decides whether it ends.
+	// invalid_voice when a stem cannot be opened (checked before a slot is taken, so it never steals) or every voice
+	// outranks it.
+	voice_handle voice_play_music(const music_desc& desc, const voice_params& params);
+	// The music_* calls on a music voice's group; safe no-ops (false / -1) for any other or stale handle.
+	void voice_music_schedule(voice_handle handle, music_stage stage, const f32* gains, u32 count, u64 at_frame, u64 ramp_frames);
+	bool voice_music_stinger(voice_handle handle, const char* path, f32 volume, u64 at_frame);
+	bool voice_music_clock(voice_handle handle, music_clock* out);
+	f32 voice_music_stem_gain(voice_handle handle, u32 stem);
 
 	// Fade envelope (issue #17): a sample-accurate multiplier ON TOP of the voice
 	// volume (final gain = volume x bus x envelope — no write conflicts, no zipper).

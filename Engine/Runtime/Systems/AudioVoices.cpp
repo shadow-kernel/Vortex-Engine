@@ -38,6 +38,8 @@ namespace vortex::runtime::audio {
 			// Set when streaming a registered in-memory blob: the sound reads through
 			// this decoder (decode-on-demand); released together with the sound.
 			ma_decoder*	stream_decoder{ nullptr };
+			// Adaptive music (#437): the stem group this voice plays; destroyed after the sound.
+			music_group* music{ nullptr };
 			// Reverb send: sound -> splitter -> (bus 0: dry to the mixer group,
 			// bus 1: wet send into the global reverb node, gain = reverbZoneMix x
 			// listener zone weight). Only built while the reverb node exists.
@@ -221,10 +223,41 @@ namespace vortex::runtime::audio {
 				delete slot.stream_decoder;
 				slot.stream_decoder = nullptr;
 			}
+			if (slot.music)
+			{
+				music_destroy(slot.music);   // the sound no longer reads it
+				slot.music = nullptr;
+			}
 			slot.in_use = false;
 			slot.paused = false;
 			slot.fade_stop_pending = false;
 			++slot.generation;
+		}
+
+		// A free slot, else the steal victim — the least important voice (highest priority value), ties broken by the
+		// quietest — when it is at most as important as the request. nullptr: everything playing outranks it. Must be
+		// called with g_voices_mutex held.
+		voice_slot* acquire_slot(s32 priority)
+		{
+			for (voice_slot& slot : g_slots)
+			{
+				if (!slot.in_use) return &slot;
+			}
+			voice_slot* victim = nullptr;
+			for (voice_slot& slot : g_slots)
+			{
+				if (slot.priority < priority) continue;	// more important than request
+				if (!victim
+					|| slot.priority > victim->priority
+					|| (slot.priority == victim->priority && slot.volume < victim->volume))
+				{
+					victim = &slot;
+				}
+			}
+			if (!victim) return nullptr;
+			release_slot(*victim);
+			++g_stolen_total;
+			return victim;
 		}
 	}
 
@@ -259,6 +292,7 @@ namespace vortex::runtime::audio {
 		for (voice_slot& slot : g_slots)
 		{
 			if (!slot.in_use) continue;
+			if (slot.music) music_update(slot.music);   // frees finished stingers (#437)
 
 			// Looping voices never hit at_end; paused voices hold their position.
 			if (!slot.looping && ma_sound_at_end(&slot.sound))
@@ -327,33 +361,10 @@ namespace vortex::runtime::audio {
 		std::lock_guard<std::mutex> lock(g_voices_mutex);
 		if (g_slots.empty()) return invalid_voice;
 
-		// Free slot first; otherwise pick the steal victim: least important voice
-		// (max priority value), ties broken by quietest. Only steal when the victim
-		// is at most as important as the request (victim.priority >= request).
-		voice_slot* target = nullptr;
-		for (voice_slot& slot : g_slots)
-		{
-			if (!slot.in_use) { target = &slot; break; }
-		}
-
-		if (!target)
-		{
-			voice_slot* victim = nullptr;
-			for (voice_slot& slot : g_slots)
-			{
-				if (slot.priority < params.priority) continue;	// more important than request
-				if (!victim
-					|| slot.priority > victim->priority
-					|| (slot.priority == victim->priority && slot.volume < victim->volume))
-				{
-					victim = &slot;
-				}
-			}
-			if (!victim) return invalid_voice;	// everything playing outranks the request
-			release_slot(*victim);
-			++g_stolen_total;
-			target = victim;
-		}
+		// Free slot first; otherwise steal the least important voice if it is at most
+		// as important as the request (victim.priority >= request).
+		voice_slot* target = acquire_slot(params.priority);
+		if (!target) return invalid_voice;	// everything playing outranks the request
 
 		// No MA_SOUND_FLAG_NO_SPATIALIZATION: the spatializer is toggled at runtime
 		// per the AudioSource's spatial blend (flag would bake 2D at init).
@@ -677,6 +688,84 @@ namespace vortex::runtime::audio {
 		// miniaudio hands the target to the mixing thread, which seeks before its next read — no read/seek race; a
 		// streamed clip refills from the new spot on the resource manager's job thread meanwhile
 		ma_sound_seek_to_pcm_frame(&slot->sound, frame);
+	}
+
+	voice_handle voice_play_music(const music_desc& desc, const voice_params& params)
+	{
+		ma_engine* engine = internal_engine();
+		if (!engine) return invalid_voice;
+		// Open every stem BEFORE a slot is taken: a stem that cannot be opened must never steal a live voice.
+		music_group* group = music_create(desc);
+		if (!group) return invalid_voice;
+
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		voice_slot* target = g_slots.empty() ? nullptr : acquire_slot(params.priority);
+		if (!target)
+		{
+			music_destroy(group);
+			return invalid_voice;
+		}
+
+		ma_sound_group* bus = (ma_sound_group*)mixer_group(mixer_bus_from_index(params.bus));
+		// NO_PITCH: no resampler between the group and the mixer — a music frame is exactly a mixer frame, the
+		// premise of every frame the C# side schedules on
+		const ma_result result = ma_sound_init_from_data_source(engine, music_data_source(group), MA_SOUND_FLAG_NO_PITCH, bus, &target->sound);
+		if (result != MA_SUCCESS)
+		{
+			internal_log("WARNING: music voice init failed (%s)", ma_result_description(result));
+			music_destroy(group);
+			return invalid_voice;
+		}
+		target->music = group;
+		target->splitter_alive = false;		// music stays dry: no reverb send
+		target->in_use = true;
+		target->paused = false;
+		target->priority = params.priority;
+		target->volume = params.volume < 0.0f ? 0.0f : params.volume;
+		target->looping = desc.loop;		// a one-shot music is reaped when the group reports its end
+		target->position[0] = target->position[1] = target->position[2] = 0.0f;
+		target->spatial = voice_spatial{};
+		target->correction = 1.0f;
+		target->has_last_push = false;
+		target->fade_stop_pending = false;
+		apply_spatial(*target);				// blend 0: plain 2D
+		ma_sound_set_volume(&target->sound, target->volume);
+		if (params.start_time > 0) ma_sound_set_start_time_in_pcm_frames(&target->sound, params.start_time);
+		ma_sound_start(&target->sound);
+
+		const u32 index = (u32)(target - g_slots.data());
+		internal_log("voice %u started: music, %u stems (vol %.2f, loop %d)", index, desc.stem_count, target->volume, desc.loop ? 1 : 0);
+		return make_handle(index, target->generation);
+	}
+
+	void voice_music_schedule(voice_handle handle, music_stage stage, const f32* gains, u32 count, u64 at_frame, u64 ramp_frames)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		if (voice_slot* slot = resolve(handle))
+			if (slot->music) music_schedule(slot->music, stage, gains, count, at_frame, ramp_frames);
+	}
+
+	bool voice_music_stinger(voice_handle handle, const char* path, f32 volume, u64 at_frame)
+	{
+		// decode the stinger into the cache before the lock — the slot only opens a view of it
+		if (!path || !*path || !preload(path)) return false;
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		voice_slot* slot = resolve(handle);
+		return slot && slot->music && music_play_stinger(slot->music, path, volume, at_frame);
+	}
+
+	bool voice_music_clock(voice_handle handle, music_clock* out)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		voice_slot* slot = resolve(handle);
+		return slot && slot->music && music_get_clock(slot->music, out);
+	}
+
+	f32 voice_music_stem_gain(voice_handle handle, u32 stem)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		voice_slot* slot = resolve(handle);
+		return slot && slot->music ? music_stem_gain(slot->music, stem) : -1.0f;
 	}
 
 	void voice_set_spatial(voice_handle handle, const voice_spatial& spatial)

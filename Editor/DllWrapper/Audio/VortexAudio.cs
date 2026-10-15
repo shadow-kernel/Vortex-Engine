@@ -66,6 +66,46 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioSeekVoice(ulong handle, double seconds);
 
+        // stems: UTF-8 path pointers (the classic marshaller has no UTF-8 string arrays — PlayMusic builds them)
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern ulong AudioPlayMusic(IntPtr[] stems, int count,
+            float[] stateGains, float[] paramGains, ulong loopStart, ulong loopEnd, ulong startFrame, int loop, int stream, int outBus, float volume, ulong startTime);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioMusicSchedule(ulong handle, int stage, float[] gains, int count, ulong atFrame, ulong rampFrames);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioMusicPlayStinger(ulong handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, float volume, ulong atFrame);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioMusicGetClock(ulong handle, out MusicClock clock);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern float AudioMusicGetStemGain(ulong handle, int stem);
+
+        /// <summary>The clock of a music voice (#437) — mirrors the native AudioMusicClockData field for field.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MusicClock
+        {
+            /// <summary>Frames the music has played: monotonic, the clock schedules run on.</summary>
+            public ulong Played;
+            /// <summary>Where in the stems it is (frames at SampleRate), wrapping in the loop region.</summary>
+            public ulong Position;
+            /// <summary>Completed passes through the loop region.</summary>
+            public ulong Loops;
+            public ulong LoopStart, LoopEnd, Length;
+            /// <summary>Played at which the last state schedule began; ulong.MaxValue = none yet.</summary>
+            public ulong LastStateFrame;
+            /// <summary>Wall time since the mixer last read the music.</summary>
+            public double SecondsSinceMix;
+            public int SampleRate;
+            /// <summary>1 = the last mix waited for a stream to refill (every stem waits together).</summary>
+            public int Stalled;
+        }
+
+        /// <summary>Gain stages of a music voice's stems (#437): the state's volumes and the parameter mapping's.</summary>
+        public const int MusicStageState = 0, MusicStageParameter = 1;
+
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioSteamSetEnabled(int enabled);
 
@@ -209,6 +249,49 @@ namespace Editor.DllWrapper
         {
             if (handle != InvalidVoice) AudioSeekVoice(handle, double.IsNaN(seconds) || seconds < 0 ? 0 : seconds);
         }
+
+        /// <summary>Adaptive music (#437): plays stems (resolved clip paths) mixed sample-locked as ONE voice at priority 0,
+        /// never pitched. Frames are at the engine rate (<see cref="GetDspTime"/>): the loop region (end 0 = the longest
+        /// stem), the start frame, and the mixer frame the music begins on (0 = now). InvalidVoice when a stem cannot be
+        /// opened.</summary>
+        public static ulong PlayMusic(string[] stems, float[] stateGains, float[] paramGains, ulong loopStart, ulong loopEnd, ulong startFrame,
+            bool loop, bool stream, int bus, float volume, ulong startTime = 0)
+        {
+            if (stems == null || stems.Length == 0 || Array.Exists(stems, string.IsNullOrEmpty)) return InvalidVoice;
+            var utf8 = new IntPtr[stems.Length];
+            try
+            {
+                for (int i = 0; i < stems.Length; i++) utf8[i] = Marshal.StringToCoTaskMemUTF8(stems[i]);
+                return AudioPlayMusic(utf8, stems.Length, stateGains, paramGains, loopStart, loopEnd, startFrame, loop ? 1 : 0, stream ? 1 : 0, bus, volume, startTime);
+            }
+            finally
+            {
+                foreach (var p in utf8) if (p != IntPtr.Zero) Marshal.FreeCoTaskMem(p);
+            }
+        }
+
+        /// <summary>Ramp a gain stage (<see cref="MusicStageState"/> / <see cref="MusicStageParameter"/>) of every stem of a
+        /// music voice to <paramref name="gains"/> over <paramref name="rampFrames"/>, beginning exactly when the music has
+        /// played <paramref name="atFrame"/> frames (0 = its next mix). Replaces a schedule of that stage not begun yet.</summary>
+        public static void MusicSchedule(ulong handle, int stage, float[] gains, ulong atFrame, ulong rampFrames)
+        {
+            if (handle != InvalidVoice && gains != null && gains.Length > 0) AudioMusicSchedule(handle, stage, gains, gains.Length, atFrame, rampFrames);
+        }
+
+        /// <summary>Mix a clip once into a music voice from its frame <paramref name="atFrame"/> (a stinger). False when it
+        /// cannot be opened or four stingers already play.</summary>
+        public static bool MusicPlayStinger(ulong handle, string path, float volume, ulong atFrame)
+            => handle != InvalidVoice && !string.IsNullOrEmpty(path) && AudioMusicPlayStinger(handle, path, volume, atFrame) != 0;
+
+        public static bool GetMusicClock(ulong handle, out MusicClock clock)
+        {
+            clock = default;
+            return handle != InvalidVoice && AudioMusicGetClock(handle, out clock) != 0;
+        }
+
+        /// <summary>One stem's gain (state × parameter) after the last mix; -1 for no such stem / not a music voice.</summary>
+        public static float GetMusicStemGain(ulong handle, int stem)
+            => handle != InvalidVoice ? AudioMusicGetStemGain(handle, stem) : -1f;
 
         /// <summary>Steam Audio v2 (#21) project master switch. Off by default; turning it on lazily initializes
         /// HRTF + occlusion if phonon.dll is present next to the app. Safe no-op when the DLL is missing.</summary>

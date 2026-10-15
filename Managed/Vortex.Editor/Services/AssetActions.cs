@@ -384,6 +384,7 @@ namespace VortexEditor.Services
                     case ".vscene": return OpenScene(full);
                     case ".cs": EditorCommands.OpenInIde(full); return true;
                     case ".vsndc": EditorWindows.SoundContainerEditor(full); return true;
+                    case ".vmusic": EditorWindows.AdaptiveMusicEditor(full); return true;
                     case ".vanim": EditorWindows.AnimationEditor(full); return true;
                     case ".vmat": EditorWindows.MaterialEditor(full); return true;
                     case ".vui": EditorWindows.UiEditor(full); return true;

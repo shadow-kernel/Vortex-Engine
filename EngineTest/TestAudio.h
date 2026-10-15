@@ -76,6 +76,9 @@ public:
 		// -- playback position, seeking, scheduled starts (issue #465) ----------------
 		run_position_tests();
 
+		// -- adaptive music: sample-locked stem groups (issue #437) ---------------------
+		run_music_tests();
+
 		// -- mixer buses + ducking (issue #13) ---------------------------------------
 		run_mixer_tests(wav_path);
 
@@ -431,6 +434,168 @@ private:
 		std::remove(clip.c_str());
 	}
 
+	// Renders `frames` of a music group in mixer-sized blocks; returns the largest |sample| from frame `skip` on.
+	static f32 render_peak(runtime::audio::music_group* g, u64 frames, u64 skip = 0, std::vector<f32>* keep = nullptr)
+	{
+		std::vector<f32> block(480 * 2);
+		f32 peak = 0.0f;
+		for (u64 done = 0; done < frames;)
+		{
+			const u64 n = frames - done < 480 ? frames - done : 480;
+			runtime::audio::music_render(g, block.data(), n);
+			for (u64 f = 0; f < n; ++f)
+			{
+				if (keep) { keep->push_back(block[f * 2]); }
+				if (done + f < skip) continue;
+				const f32 v = std::fabs(block[f * 2]) > std::fabs(block[f * 2 + 1]) ? std::fabs(block[f * 2]) : std::fabs(block[f * 2 + 1]);
+				if (v > peak) peak = v;
+			}
+			done += n;
+		}
+		return peak;
+	}
+
+	// Adaptive music (issue #437): the stems of a group share one cursor — B = -A cancels to digital silence for
+	// ten minutes of looping, so a drift of a single sample would show — a state schedule begins on its exact frame,
+	// a stinger on its exact frame, streamed stems stay together through page refills, and the group plays as one
+	// voice on the music bus. Stems are written at the engine rate, so the resource manager passes them unconverted.
+	void run_music_tests()
+	{
+		using namespace runtime::audio;
+		const u32 rate = engine_sample_rate();
+		const u64 loop = (u64)rate * 4;   // a 4 s loop (two bars of 4/4 at 120 BPM)
+		std::vector<float> a((size_t)loop), b((size_t)loop + rate / 2), shot(2000, 0.25f);
+		for (size_t i = 0; i < a.size(); ++i)
+			a[i] = 0.3f * sinf((float)i * 220.0f * 2.0f * 3.14159265f / (float)rate) + ((i % (rate / 2)) < 64 ? 0.4f : 0.0f);   // tone + clicks
+		for (size_t i = 0; i < b.size(); ++i)
+			b[i] = i < a.size() ? -a[i] : 0.2f * sinf((float)i * 330.0f * 2.0f * 3.14159265f / (float)rate);   // -A, then a tail past the loop
+		const std::string pa = write_wav_samples("vortex_music_a.wav", rate, a);
+		const std::string pb = write_wav_samples("vortex_music_b.wav", rate, b);
+		const std::string pshot = write_wav_samples("vortex_music_stinger.wav", rate, shot);
+		const char* stems[] = { pa.c_str(), pb.c_str() };
+		const f32 solo[] = { 1.0f, 0.0f }, both[] = { 1.0f, 1.0f }, none[] = { 0.0f, 0.0f };
+
+		music_desc d{};
+		d.stems = stems;
+		d.stem_count = 2;
+		d.state_gains = solo;
+		d.loop_end = loop;
+		music_group* g = music_create(d);
+		music_group* ref = music_create(d);   // the same music with B muted for good: the switch is measured against it
+		check("a music group opens its stems", g != nullptr && ref != nullptr);
+		if (!g || !ref) { music_destroy(g); music_destroy(ref); return; }
+		check("a stem plays alone while the other is muted", render_peak(g, rate / 2) > 0.25f && render_peak(ref, rate / 2) > 0.25f);
+
+		// a state switch begins on its exact frame: B ramps in from frame F
+		music_clock c{};
+		music_get_clock(g, &c);
+		const u64 start = c.played;
+		music_schedule(g, music_stage::state, both, 2, start + 777, 64);
+		std::vector<f32> mixed, alone;
+		render_peak(g, 2048, 0, &mixed);
+		render_peak(ref, 2048, 0, &alone);
+		long long first_diff = -1;
+		for (size_t i = 0; i < mixed.size() && first_diff < 0; ++i) if (mixed[i] != alone[i]) first_diff = (long long)i;
+		music_get_clock(g, &c);
+		std::printf("[info] state switch scheduled for frame +777 began at +%lld (clock: %llu)\n", first_diff, (unsigned long long)(c.last_state_frame - start));
+		check("a scheduled state switch begins on its exact frame", first_diff == 777 && c.last_state_frame == start + 777);
+		f32 step = 0.0f;
+		for (size_t i = 778; i < 777 + 64 && i < mixed.size(); ++i)
+		{
+			const f32 dv = std::fabs((mixed[i] - alone[i]) - (mixed[i - 1] - alone[i - 1]));
+			if (dv > step) step = dv;
+		}
+		check("the switch ramps (no click: B's level moves in small steps)", step < 0.05f);
+
+		// sample lock: A + (-A) = silence for ten minutes of looping (150 passes; B is 0.5 s longer than the loop)
+		const u64 ten_minutes = (u64)rate * 600;
+		music_get_clock(g, &c);
+		const auto mix_t0 = std::chrono::steady_clock::now();
+		const f32 residue = render_peak(g, ten_minutes - (c.played - start));
+		const double mix_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - mix_t0).count();
+		music_get_clock(g, &c);
+		std::printf("[info] 10 min of looping: %llu passes, largest residue of A + (-A) %.9f; mixing cost %.1f us per 10 ms of two-stem music (%.0fx real time, this build)\n",
+			(unsigned long long)c.loops, residue, mix_ms * 1000.0 / 60000.0, 600000.0 / (mix_ms > 0 ? mix_ms : 1));
+		check("two stems stay sample-aligned for 10 minutes of looping", residue == 0.0f && c.loops >= 149);
+
+		// a stinger begins on its exact frame
+		music_schedule(g, music_stage::state, none, 2, 0, 64);
+		render_peak(g, 1024);
+		music_get_clock(g, &c);
+		check("a stinger is accepted", music_play_stinger(g, pshot.c_str(), 1.0f, c.played + 333));
+		std::vector<f32> hit;
+		render_peak(g, 1024, 0, &hit);
+		long long first_hit = -1;
+		for (size_t i = 0; i < hit.size() && first_hit < 0; ++i) if (hit[i] != 0.0f) first_hit = (long long)i;
+		check("a stinger begins on its exact frame", first_hit == 333 && std::fabs(hit[400] - 0.25f) < 1e-4f);
+		render_peak(g, 4096);
+		music_update(g);
+		bool all_free = true;
+		for (u32 i = 0; i < music_max_stingers; ++i) all_free = all_free && music_play_stinger(g, pshot.c_str(), 0.0f, 0);
+		check("finished stingers free their slots", all_free);
+		music_destroy(g);
+		music_destroy(ref);
+
+		// streamed stems (one length) stay together through page refills, rendered at ~4x real time
+		const std::string pb2 = write_wav_samples("vortex_music_b2.wav", rate, std::vector<float>(b.begin(), b.begin() + (std::ptrdiff_t)loop));
+		const char* streamed[] = { pa.c_str(), pb2.c_str() };
+		music_desc ds{};
+		ds.stems = streamed;
+		ds.stem_count = 2;
+		ds.state_gains = both;
+		ds.stream = true;
+		music_group* s = music_create(ds);
+		check("a streamed music group opens", s != nullptr);
+		if (s)
+		{
+			std::vector<f32> block(1024 * 2);
+			f32 peak = 0.0f;
+			u32 stalls = 0;
+			for (u64 played = 0; played < (u64)rate * 12;)
+			{
+				music_render(s, block.data(), 1024);
+				for (f32 v : block) peak = std::fabs(v) > peak ? std::fabs(v) : peak;
+				music_get_clock(s, &c);
+				if (c.stalled) ++stalls;
+				played = c.played;
+				std::this_thread::sleep_for(std::chrono::microseconds(5300));
+			}
+			std::printf("[info] streamed stems: %llu passes, %u stalled mixes, largest residue %.9f\n", (unsigned long long)c.loops, stalls, peak);
+			check("streamed stems stay sample-aligned through refills and loops", peak == 0.0f && c.loops >= 2);
+			music_destroy(s);
+		}
+
+		// the group as one voice on the music bus: A alone is loud, A + (-A) is silent; the voice reports its position
+		voice_params vp{};
+		vp.bus = (s32)bus::music;
+		vp.priority = 0;
+		d.state_gains = solo;
+		voice_handle v = voice_play_music(d, vp);
+		tick_seconds(0.5f);
+		f32 rms_solo = 0;
+		mixer_get_bus_levels(bus::music, nullptr, &rms_solo);
+		voice_music_schedule(v, music_stage::state, both, 2, 0, 64);
+		tick_seconds(0.8f);
+		f32 rms_null = 0;
+		mixer_get_bus_levels(bus::music, nullptr, &rms_null);
+		u64 cursor = 0, length = 0;
+		u32 voice_rate = 0;
+		const bool pos = voice_get_position(v, &cursor, &length, &voice_rate);
+		const bool clock = voice_music_clock(v, &c);
+		std::printf("[info] music voice: bus rms %.4f with one stem, %.6f with A + (-A); position %llu of %llu\n", rms_solo, rms_null,
+			(unsigned long long)cursor, (unsigned long long)length);
+		check("a music voice plays on the music bus", v != invalid_voice && rms_solo > 0.05f);
+		check("the music voice's stems cancel on the bus (sample-locked through the mixer)", rms_null < 0.002f);
+		check("a music voice reports its clock and position", pos && clock && c.played > rate / 2 && voice_rate == rate && cursor < loop && length == b.size());
+		voice_stop(v);
+		check("a stale music handle is a safe no-op", !voice_music_clock(v, &c) && voice_music_stem_gain(v, 0) < 0.0f);
+
+		std::remove(pa.c_str());
+		std::remove(pb.c_str());
+		std::remove(pb2.c_str());
+		std::remove(pshot.c_str());
+	}
+
 	// Fades (issue #17): the envelope must actually change the mixed level (bus
 	// meters), FadeOut must release the voice back to the pool.
 	void run_fade_tests(const std::string& wav)
@@ -754,6 +919,34 @@ private:
 		const uint16_t format_pcm = 1;
 		const uint32_t fmt_size = 16;
 
+		FILE* f = nullptr;
+		if (fopen_s(&f, path.c_str(), "wb") != 0 || !f) return {};
+		fwrite("RIFF", 1, 4, f); fwrite(&riff_size, 4, 1, f); fwrite("WAVE", 1, 4, f);
+		fwrite("fmt ", 1, 4, f); fwrite(&fmt_size, 4, 1, f);
+		fwrite(&format_pcm, 2, 1, f); fwrite(&channels, 2, 1, f);
+		fwrite(&sample_rate, 4, 1, f); fwrite(&byte_rate, 4, 1, f);
+		fwrite(&block_align, 2, 1, f); fwrite(&bits, 2, 1, f);
+		fwrite("data", 1, 4, f); fwrite(&data_size, 4, 1, f);
+		fwrite(pcm.data(), 1, data_size, f);
+		fclose(f);
+		return path;
+	}
+
+	// 16-bit mono RIFF wav of the given samples (-1..1, kept inside +-32767 so a negated stem is the exact negation).
+	std::string write_wav_samples(const char* name, uint32_t sample_rate, const std::vector<float>& samples)
+	{
+		const std::string path = temp_path(name);
+		const uint32_t frames = (uint32_t)samples.size();
+		std::vector<int16_t> pcm(frames);
+		for (uint32_t i = 0; i < frames; ++i)
+		{
+			float s = samples[i] > 1.0f ? 1.0f : (samples[i] < -1.0f ? -1.0f : samples[i]);
+			pcm[i] = (int16_t)std::lround(s * 32767.0f);   // round half away from zero: round(-x) == -round(x)
+		}
+		const uint32_t data_size = frames * sizeof(int16_t);
+		const uint32_t riff_size = 36 + data_size;
+		const uint16_t channels = 1, bits = 16, block_align = 2, format_pcm = 1;
+		const uint32_t byte_rate = sample_rate * block_align, fmt_size = 16;
 		FILE* f = nullptr;
 		if (fopen_s(&f, path.c_str(), "wb") != 0 || !f) return {};
 		fwrite("RIFF", 1, 4, f); fwrite(&riff_size, 4, 1, f); fwrite("WAVE", 1, 4, f);
