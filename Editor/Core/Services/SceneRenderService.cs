@@ -886,22 +886,38 @@ namespace Editor.Core.Services
             }
         }
 
+        /// <summary>The whole last <see cref="SubmitScene"/> (lights, decals, terrain, foliage, water, meshes) in ms, and what it
+        /// allocated on the calling thread (#361) — the bench and the player's FPS line read them.</summary>
+        public static double LastSceneSubmitMs;
+        public static long LastSceneSubmitAllocBytes;
+        /// <summary>The phases of the last SubmitScene in ms: lights, decals, terrain, foliage, water, meshes.</summary>
+        public static readonly double[] LastSubmitPhaseMs = new double[6];
+        /// <summary>SubmitScene calls so far — a frame counter for measurements.</summary>
+        public static long SubmitCount;
+
         public void SubmitScene(Data.Scene scene)
         {
             if (scene == null || scene.Entities == null) return;
+            long alloc0 = GC.GetAllocatedBytesForCurrentThread();
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp(), t = t0;
+            void Phase(int i) { long now = System.Diagnostics.Stopwatch.GetTimestamp(); LastSubmitPhaseMs[i] = (now - t) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; t = now; }
 
             // Clear and submit all lights first
-            SubmitSceneLights(scene);
-            Decals.DecalService.Submit(scene, IsPlayLike);   // #120: the scene's Decal components + spawned decals, like the lights
-            Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike);   // #124: the terrains' LOD chunks (built / rebuilt here)
-            Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike);   // #125: painted foliage through the instancing path
-            Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike);   // #200: water surfaces into the transparent pass
+            SubmitSceneLights(scene); Phase(0);
+            Decals.DecalService.Submit(scene, IsPlayLike); Phase(1);   // #120: the scene's Decal components + spawned decals, like the lights
+            Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike); Phase(2);   // #124: the terrains' LOD chunks (built / rebuilt here)
+            Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike); Phase(3);   // #125: painted foliage through the instancing path
+            Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike); Phase(4);   // #200: water surfaces into the transparent pass
 
             var swSubmit = System.Diagnostics.Stopwatch.StartNew();
             if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
             else SubmitSceneFull(scene);
             swSubmit.Stop();
+            Phase(5);
             LastSubmitMs = swSubmit.Elapsed.TotalMilliseconds; LastSubmitMeshes = _submitN;
+            LastSceneSubmitMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            LastSceneSubmitAllocBytes = GC.GetAllocatedBytesForCurrentThread() - alloc0;
+            SubmitCount++;
             // a slow submit is either the first one (it imports every model) or a scene too big for the per-frame
             // re-submit (#364 A) — say so, at most once every 10 s
             if (swSubmit.ElapsedMilliseconds > 500 && (DateTime.UtcNow - _slowSubmitLogAt).TotalSeconds > 10)

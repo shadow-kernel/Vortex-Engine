@@ -113,6 +113,7 @@ namespace vortex::graphics::dx12
 		auto& reg = ResourceRegistry::instance();
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) { fx_only(); return; }
+		const auto t_cull = instancing::Clock::now();   // sort + cull + pack of this view (#361); the draw recording is not counted
 
 		if (m_worker_count == 0)
 		{
@@ -181,6 +182,7 @@ namespace vortex::graphics::dx12
 
 		// Sort by (material, mesh, distance): identical (mesh+material) objects become ADJACENT so each run
 		// draws as ONE instanced call (fewer draw calls); distance is the tiebreaker for partial early-Z within a run.
+		const auto t_sort = instancing::Clock::now();
 		if (needRebuild)
 		{
 			const DirectX::XMFLOAT3 eye = m_camera_position;
@@ -284,6 +286,10 @@ namespace vortex::graphics::dx12
 		}
 		m_queue_dirty = false;
 		}
+		const float sort_ms = needRebuild ? instancing::ms_since(t_sort) : 0.0f;
+		m_cpu_stats.sort_ms += sort_ms;
+		if (needRebuild) m_cpu_stats.sorted += (u32)objectCount;
+		m_cpu_stats.queue = (u32)objectCount;
 		const size_t runN = m_draw_runs.size();
 		m_instances_tested += (int)objectCount;
 
@@ -446,6 +452,7 @@ namespace vortex::graphics::dx12
 
 		if (!m_geo_lod_enabled)
 			for (size_t r = 0; r < runN; ++r) m_draw_runs[r].visible = counters[r].load(std::memory_order_relaxed);
+		m_cpu_stats.cull_ms += instancing::ms_since(t_cull) - sort_ms;
 
 		// Fill the per-run object constants + bind the material's texture tables. Shared by the opaque
 		// loop and the sorted transparent pass (#33) — identical material state, different PSO/order.

@@ -893,6 +893,8 @@ namespace vortex::graphics::sdlgpu
 		// ParticleService callback, or the automatic world-0 update) step it before anything is gathered.
 		m_particles.begin_frame();
 		::vortex::particles::begin_frame();
+		// the queue's CPU time of the frame that just finished (incl. any offscreen view rendered since) (#361)
+		m_cpu_stats.next_frame(m_cpu_stats_last);
 		swap_render_queue();
 
 		m_frame_count++;

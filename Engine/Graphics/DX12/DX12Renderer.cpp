@@ -285,6 +285,7 @@ namespace vortex::graphics::dx12
 
 	void DX12Renderer::swap_render_queue()
 	{
+		instancing::ScopedMs timed(m_cpu_stats.swap_ms);
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		// Nothing new submitted this frame -> KEEP last frame's render queue (reuse it). This lets the game
 		// submit a static scene ONCE and re-render it every frame with only the camera changing — a big CPU
@@ -691,6 +692,8 @@ namespace vortex::graphics::dx12
 
 		DX12Streamline::instance().frame_marker(2 /*eRenderSubmitStart*/); // FG/Reflex latency marker (no-op if FG off)
 
+		// the queue's CPU time of the frame that just finished (incl. any offscreen view rendered since) (#361)
+		m_cpu_stats.next_frame(m_cpu_stats_last);
 		// Swap render queues (thread-safe) and clear submit queue for next frame
 		swap_render_queue();
 		

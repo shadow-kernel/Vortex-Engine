@@ -629,6 +629,19 @@ EDITOR_INTERFACE int GetInstancesDrawn()
 	return graphics::Renderer::instance().get_instances_drawn();
 }
 
+// What the scene queue cost the CPU in the last frame (#361): out[0] swap ms (submitted items into the render queue),
+// out[1] sort + draw-run build ms, out[2] cull + instance pack ms (all views), out[3] shadow caster ms, out[4] items
+// sorted, out[5] items in the render queue, out[6] the frame's index (counts up). Returns how many values it wrote.
+EDITOR_INTERFACE int GetRenderCpuStats(float* out, int count)
+{
+	if (!out || count <= 0) return 0;
+	const auto& s = graphics::Renderer::instance().cpu_stats();
+	const float v[7] = { s.swap_ms, s.sort_ms, s.cull_ms, s.shadow_ms, (float)s.sorted, (float)s.queue, (float)s.frame };
+	const int n = count < 7 ? count : 7;
+	for (int i = 0; i < n; ++i) out[i] = v[i];
+	return n;
+}
+
 // The bone-palette budget of the main view's last frame (#415): bone matrices in the GPU palette buffer (one copy per
 // character, its submeshes share it), the buffer's capacity, and the skinned draws in view that had no room for their
 // palette and were drawn in the bind pose (the farthest / off-screen characters).

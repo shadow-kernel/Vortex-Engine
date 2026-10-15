@@ -245,6 +245,7 @@ namespace vortex::graphics::sdlgpu
 	{
 		using namespace DirectX;
 		(void)view;
+		instancing::ScopedMs timed(m_cpu_stats.shadow_ms);
 		m_shadow_spot_count = 0; m_csm_count = 0; m_shadow_point_count = 0;
 		m_shadow_segs.clear(); m_shadow_tiles_spot.clear(); m_shadow_tiles_csm.clear(); m_shadow_tiles_point.clear();
 		m_shadow_staging.clear();

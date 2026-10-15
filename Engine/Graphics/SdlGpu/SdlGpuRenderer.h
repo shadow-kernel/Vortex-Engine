@@ -25,6 +25,7 @@
 #include "../Volumetrics/Volumetrics.h"
 #include "../Skinning/BonePalettes.h"
 #include "../Lighting/LightSelection.h"
+#include "../Instancing/RenderQueue.h"
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <memory>
@@ -350,6 +351,8 @@ namespace vortex::graphics::sdlgpu
 		int get_vertex_count() const { return m_vertex_count; }
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
+		// What the scene queue cost the CPU in the last frame (#361): swap, sort + draw runs, cull + pack, shadow casters.
+		const instancing::CpuStats& cpu_stats() const { return m_cpu_stats_last; }
 		// The frame budgets of the main view: bone matrices in the GPU palette buffer / its capacity, and the skinned draws in
 		// view that had no room for their palette (drawn in the bind pose, #415); the point / spot lights submitted and holding
 		// a shader slot, and the lights that got or gave up a slot in the last frame (#416).
@@ -817,6 +820,7 @@ namespace vortex::graphics::sdlgpu
 		u32 m_seen_mesh_generation{ 0 };   // ResourceRegistry::mesh_generation() the cached draw runs were built against
 		bool m_mt_enabled{ true }, m_mt_force{ false }, m_mt_active{ false };
 		u32 m_gizmo_instance_base{ 0 };
+		instancing::CpuStats m_cpu_stats, m_cpu_stats_last;   // this frame's (accumulating) and the last finished frame's (#361)
 
 		// camera / lights / look
 		DirectX::XMFLOAT3 m_camera_position{ 0.0f, 5.0f, -10.0f };

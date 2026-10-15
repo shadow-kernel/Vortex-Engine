@@ -536,6 +536,20 @@ namespace Editor.DllWrapper
         public static int InstancesTested { get { try { return GetInstancesTested(); } catch { return 0; } } }
         /// <summary>Instances that survived culling and were drawn this frame.</summary>
         public static int InstancesDrawn { get { try { return GetInstancesDrawn(); } catch { return 0; } } }
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetRenderCpuStats")]
+        private static extern int GetRenderCpuStatsNative(float[] values, int count);
+
+        /// <summary>What the scene queue cost the CPU in the last frame (#361): [0] swap ms, [1] sort + draw-run build ms,
+        /// [2] cull + instance pack ms (all views), [3] shadow caster ms, [4] items sorted, [5] items in the render queue,
+        /// [6] the frame's index (counts up). False with an older engine library.</summary>
+        public static bool TryGetRenderCpuStats(float[] values)
+        {
+            if (values == null || values.Length == 0) return false;
+            try { return GetRenderCpuStatsNative(values, values.Length) > 0; }
+            catch (System.EntryPointNotFoundException) { return false; }
+            catch (System.DllNotFoundException) { return false; }
+        }
         /// <summary>Generic render-distance cull in world units (0 = disabled). From the game's graphics settings.</summary>
         public static void RenderDistance(float distance) { try { SetRenderDistance(distance); } catch { } }
         /// <summary>Density LOD: thin distant instances (1/2 beyond mid, 1/4 beyond far world units).</summary>

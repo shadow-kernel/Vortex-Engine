@@ -17,6 +17,7 @@
 #include "../Decals/Decals.h"
 #include "../Skinning/BonePalettes.h"   // the palette stage + per-view budget shared with the SDL GPU backend (#415)
 #include "../Lighting/LightSelection.h"  // the light budget shared with the SDL GPU backend (#416)
+#include "../Instancing/RenderQueue.h"     // the scene queue's CPU stats, shared with the SDL GPU backend (#361)
 #include "DX12UpscalePipeline.h"
 #include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
@@ -457,6 +458,8 @@ namespace vortex::graphics::dx12
 		// Cull stats (per frame): instances examined vs actually drawn — proves cull effectiveness on big maps.
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
+		// What the scene queue cost the CPU in the last frame (#361): swap, sort + draw runs, cull + pack, shadow casters.
+		const instancing::CpuStats& cpu_stats() const { return m_cpu_stats_last; }
 		// The frame budgets of the main view: bone matrices in the GPU palette buffer / its capacity, and the skinned draws in
 		// view that had no room for their palette (drawn in the bind pose, #415); the point / spot lights submitted and holding
 		// a shader slot, and the lights that got or gave up a slot in the last frame (#416).
@@ -878,6 +881,7 @@ namespace vortex::graphics::dx12
 		int  m_mt_threshold{ 2048 };          // min instances before parallelizing
 		u32  m_worker_count{ 0 };             // lazily computed = clamp(hw_concurrency-1, 1, 8)
 		CullWorkerPool m_cull_pool;           // persistent workers (NEVER spawn threads per frame — debugger death)
+		instancing::CpuStats m_cpu_stats, m_cpu_stats_last;   // this frame's (accumulating) and the last finished frame's (#361)
 
 		// Camera
 		DirectX::XMFLOAT3 m_camera_position{ 0.0f, 3.0f, -8.0f };

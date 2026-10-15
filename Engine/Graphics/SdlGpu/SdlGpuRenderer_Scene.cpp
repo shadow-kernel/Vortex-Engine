@@ -153,6 +153,7 @@ namespace vortex::graphics::sdlgpu
 
 	void SdlGpuRenderer::swap_render_queue()
 	{
+		instancing::ScopedMs timed(m_cpu_stats.swap_ms);
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		// Gizmos are re-submitted every frame by the editor: swap unconditionally (empty = no gizmo).
 		m_gizmo_render.swap(m_gizmo_submit); m_gizmo_submit.clear();
@@ -384,6 +385,7 @@ namespace vortex::graphics::sdlgpu
 	void SdlGpuRenderer::prepare_scene(const FrameView& view)
 	{
 		using namespace DirectX;
+		instancing::ScopedMs timed(m_cpu_stats.cull_ms);   // the sort's share is moved to sort_ms below
 		auto& reg = ResourceRegistry::instance();
 		m_instance_staging.clear();
 		m_instance_count = 0;
@@ -409,8 +411,10 @@ namespace vortex::graphics::sdlgpu
 		m_mt_active = false;
 
 		const bool needRebuild = m_queue_dirty || (m_draw_runs.empty() && objectCount > 0);
+		m_cpu_stats.queue = (u32)objectCount;
 		if (needRebuild && objectCount > 0)
 		{
+			const auto t_sort = instancing::Clock::now();
 			const XMFLOAT3 eye = view.eye;
 			std::sort(m_render_queue.begin(), m_render_queue.end(), [&eye](const RenderItem& a, const RenderItem& b)
 			{
@@ -477,6 +481,10 @@ namespace vortex::graphics::sdlgpu
 				i = j;
 			}
 			m_queue_dirty = false;
+			const float sort_ms = instancing::ms_since(t_sort);
+			m_cpu_stats.sort_ms += sort_ms;
+			m_cpu_stats.cull_ms -= sort_ms;
+			m_cpu_stats.sorted += (u32)objectCount;
 		}
 
 		const size_t runN = m_draw_runs.size();
