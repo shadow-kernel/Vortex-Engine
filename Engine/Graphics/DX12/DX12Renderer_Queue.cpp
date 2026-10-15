@@ -231,7 +231,81 @@ namespace vortex::graphics::dx12
 		m_submit_queue.clear();
 		m_bone_submit.clear();
 		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
+		m_retained.clear(); m_queue_retained_valid = false;
 	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Retained instances (#361) — the same as the SDL GPU backend (SdlGpuRenderer_Scene.cpp)
+	// ---------------------------------------------------------------------------------------------
+	void DX12Renderer::apply_instance_ops(const instancing::InstanceOp* ops, u32 count)
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_retained.apply(ops, count);
+	}
+
+	u32 DX12Renderer::instance_epoch()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		return m_retained.epoch();
+	}
+
+	void DX12Renderer::clear_instances()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_retained.clear();
+		m_queue_retained_valid = false;
+	}
+
+	void DX12Renderer::mark_frame_submit()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_frame_submitted = true;
+	}
+
+	void DX12Renderer::set_instances_visible(bool visible)
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_retained_visible = visible;
+	}
+
+	instancing::Sync DX12Renderer::sync_retained()
+	{
+		// a mesh was destroyed: when the instances drew it, they all go and the scene sends them again (it notices the epoch)
+		auto& reg = ResourceRegistry::instance();
+		const u32 gen = reg.mesh_generation();
+		if (m_retained_drop || gen != m_retained_mesh_generation)
+		{
+			m_retained_mesh_generation = gen;
+			if (m_retained_drop || m_retained.uses_dead_mesh([&reg](id::id_type m) { Mesh* p = reg.get_mesh(m); return p && p->is_valid(); }))
+			{
+				m_retained.clear();
+				m_queue_retained_valid = false;
+			}
+			m_retained_drop = false;
+		}
+		const auto t_sort = instancing::Clock::now();
+		instancing::Sync sync = m_retained.settle(m_camera_position);
+		if (sync == instancing::Sync::Layout) { m_retained_eye = m_camera_position; m_retained_refresh_frame = m_cpu_stats.frame; }
+		else if (m_retained.count() > 1 && m_cpu_stats.frame - m_retained_refresh_frame > 30)
+		{
+			// the nearest-first order inside the runs follows the camera once it moved far (partial early-Z)
+			const float dx = m_camera_position.x - m_retained_eye.x, dy = m_camera_position.y - m_retained_eye.y, dz = m_camera_position.z - m_retained_eye.z;
+			if (dx * dx + dy * dy + dz * dz > 64.0f)
+			{
+				sync = m_retained.refresh_distance(m_camera_position);
+				m_retained_eye = m_camera_position;
+				m_retained_refresh_frame = m_cpu_stats.frame;
+			}
+		}
+		if (sync == instancing::Sync::Layout || sync == instancing::Sync::Reordered)
+		{
+			const float ms = instancing::ms_since(t_sort);
+			m_cpu_stats.sort_ms += ms; m_cpu_stats.swap_ms -= ms;
+			m_cpu_stats.sorted += (u32)m_retained.count();
+		}
+		return sync;
+	}
+
 
 	// #364 A: everything submitted between these two calls is RETAINED across frames (the static scene); an empty pass
 	// clears the retained set. Per-frame submits outside the pass are the dynamic entities, merged in at the swap.

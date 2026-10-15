@@ -492,6 +492,40 @@ EDITOR_INTERFACE void EndStaticScene()
 	graphics::Renderer::instance().end_static_scene();
 }
 
+// #361: retained instances — the scene's persistent rigid meshes, changed by a handle the scene assigns. ops = count x 112
+// bytes (Graphics/Instancing/RenderQueue.h InstanceOp: handle, kind 0 set / 1 move / 2 remove, mesh, material, layer,
+// 16 floats world, 4 floats tint). Returns the store's epoch: a new value means the renderer dropped every instance (scene
+// switch, a mesh they drew was destroyed) and the scene sends its instances again.
+EDITOR_INTERFACE unsigned int ApplyRenderInstances(const void* ops, int count)
+{
+	auto& r = graphics::Renderer::instance();
+	if (ops && count > 0) r.apply_instance_ops(static_cast<const graphics::instancing::InstanceOp*>(ops), static_cast<u32>(count));
+	return r.instance_epoch();
+}
+
+EDITOR_INTERFACE unsigned int RenderInstancesEpoch()
+{
+	return graphics::Renderer::instance().instance_epoch();
+}
+
+EDITOR_INTERFACE void ClearRenderInstances()
+{
+	graphics::Renderer::instance().clear_instances();
+}
+
+// The frame's own submits (skinned characters, terrain, foliage, water …) replace the last frame's at the next swap even
+// when this frame submitted none — called at the start of every scene submit.
+EDITOR_INTERFACE void MarkFrameSubmit()
+{
+	graphics::Renderer::instance().mark_frame_submit();
+}
+
+// Previews render their own items only: hidden, the retained instances stay out of the render queue until shown again.
+EDITOR_INTERFACE void SetRenderInstancesVisible(bool visible)
+{
+	graphics::Renderer::instance().set_instances_visible(visible);
+}
+
 // #175: the first-person layer's own field of view (degrees; world FOV never distorts the viewmodel).
 EDITOR_INTERFACE void SetViewmodelFOV(float fov_degrees)
 {

@@ -53,6 +53,84 @@ namespace vortex::graphics::dx12
 	}
 
 
+	// The (mesh, material) runs over [begin, end) of the sorted render queue, each with its mesh bounds precomputed; the
+	// caller gives each a worst-case instance-VB slab (vbBase = the item count before it) once all runs are built. Items
+	// whose key one of the runs [join_first, join_last) has join it (#361): the pack goes by m_item_run, so a run's items
+	// need not be adjacent in the queue.
+	void DX12Renderer::build_runs(size_t begin, size_t end, size_t join_first, size_t join_last)
+	{
+		auto& reg = ResourceRegistry::instance();
+		size_t i = begin;
+		while (i < end)
+		{
+			const auto idMesh = m_render_queue[i].mesh_id;
+			const auto idMat = m_render_queue[i].material_id;
+			const u32 idLayer = m_render_queue[i].layer;
+			const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
+			const u32 idMirrored = m_render_queue[i].mirrored;
+			size_t j = i;
+			if (skinnedRun)
+				j = i + 1;   // each skinned item is its OWN run (needs its own bone palette bound)
+			else
+				// Layer in the break condition (#175): a world item and a viewmodel item sharing
+				// mesh+material must never merge into one run (correct by construction, not just by sort).
+				while (j < end && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
+					&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer
+					&& m_render_queue[j].mirrored == idMirrored) ++j;
+			u32 cnt = (u32)(j - i);
+			if (!skinnedRun && join_first < join_last)
+			{
+				const u32 hit = instancing::find_run(m_draw_runs, join_first, join_last, m_render_queue[i]);
+				if (hit != instancing::NO_RUN)
+				{
+					m_draw_runs[hit].count += cnt;
+					for (size_t k = i; k < j; ++k) m_item_run[k] = hit;
+					i = j;
+					continue;
+				}
+			}
+			Mesh* meshp = reg.get_mesh(idMesh);
+			float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
+			if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
+			DrawRun run{};
+			run.layer = idLayer;
+			run.mirrored = idMirrored != 0;
+			run.start = i; run.count = cnt; run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
+			run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
+			run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
+			float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
+			run.localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
+			run.vbBase = 0; run.visible = 0;
+			if (skinnedRun)
+			{
+				run.skinned = true;
+				run.boneOffset = m_render_queue[i].bone_offset;
+				run.boneCount = m_render_queue[i].bone_count;
+				run.palette = m_render_queue[i].palette;
+				run.localR *= 2.0f;   // animated poses leave the bind-pose bounds — inflate the cull sphere
+			}
+			if (m_geo_lod_enabled && !skinnedRun)
+			{
+				const auto* chain = reg.get_lod_chain(idMesh);
+				if (chain && chain->lod_count > 1)
+				{
+					run.lodLevels = chain->lod_count;
+					for (u32 L = 0; L < chain->lod_count && L < 4; ++L) run.lodMesh[L] = chain->lods[L];
+					// thresholds scale with the mesh's radius (#360): a crate thins out at 40 m, a building at 800 m
+					const float radius = run.localR > 0.5f ? run.localR : 0.5f;
+					const float t1 = m_lod_mid * radius, t2 = m_lod_far * radius, t3 = m_lod_far * 1.8f * radius;
+					run.lodT1sq = t1 * t1;
+					run.lodT2sq = t2 * t2;
+					run.lodT3sq = t3 * t3;
+				}
+			}
+			u32 ri = (u32)m_draw_runs.size();
+			m_draw_runs.push_back(run);
+			for (size_t k = i; k < j; ++k) m_item_run[k] = ri;
+			i = j;
+		}
+	}
+
 	void DX12Renderer::render_3d_scene()
 	{
 		m_scene_color_srv = {}; m_scene_depth_srv = {};   // the transparent pass copies them below (#200)
@@ -111,6 +189,33 @@ namespace vortex::graphics::dx12
 		};
 
 		auto& reg = ResourceRegistry::instance();
+		// A mesh was destroyed since the draw runs were built (preview renders, asset reloads, runtime Destroy): the cached runs
+		// hold raw Mesh pointers and the kept queue may still name the dead mesh — drop those items and rebuild, instead of
+		// drawing through freed memory. The queue now lives across frames (#361), so this can no longer wait for a re-submit.
+		// A retained instance among them makes the next swap drop the whole store; the scene sees the new epoch and sends its
+		// instances again. Same as the SDL GPU backend's prepare_scene.
+		if (const u32 gen = reg.mesh_generation(); gen != m_seen_mesh_generation)
+		{
+			m_seen_mesh_generation = gen;
+			size_t kept = 0, keptRetained = 0;
+			for (size_t k = 0; k < m_render_queue.size(); ++k)
+			{
+				Mesh* m = reg.get_mesh(m_render_queue[k].mesh_id);
+				if (m == nullptr || !m->is_valid()) continue;
+				if (k < m_queue_retained) ++keptRetained;
+				if (kept != k) m_render_queue[kept] = m_render_queue[k];
+				++kept;
+			}
+			if (keptRetained != (std::min)(m_queue_retained, m_render_queue.size()))
+			{
+				m_queue_retained = keptRetained;
+				m_queue_retained_valid = false;
+				m_retained_drop = true;
+			}
+			m_render_queue.resize(kept);
+			m_draw_runs.clear();
+			m_queue_dirty = true;
+		}
 		size_t objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 		if (objectCount == 0) { fx_only(); return; }
 		const auto t_cull = instancing::Clock::now();   // sort + cull + pack of this view (#361); the draw recording is not counted
@@ -168,38 +273,22 @@ namespace vortex::graphics::dx12
 			if (m_mt_enabled && m_worker_count > 1)
 				m_cull_pool.run(m_worker_count, N, cullRange);
 			else cullRange(0, N);
-			size_t w = 0;
-			for (size_t k = 0; k < N; ++k) if (vis[k]) { if (w != k) m_render_queue[w] = m_render_queue[k]; ++w; }
+			size_t w = 0, keptRetained = 0;
+			for (size_t k = 0; k < N; ++k) if (vis[k]) { if (k < m_queue_retained) ++keptRetained; if (w != k) m_render_queue[w] = m_render_queue[k]; ++w; }
 			m_render_queue.resize(w);
+			// the retained part shrank inside the queue: the next swap copies it whole again (#361)
+			if (keptRetained != m_queue_retained) { m_queue_retained = keptRetained; m_queue_retained_valid = false; }
 			objectCount = (std::min)(m_render_queue.size(), static_cast<size_t>(MAX_RENDER_OBJECTS));
 			if (objectCount == 0) { fx_only(); return; }
 		}
 
-		// Rebuild the sorted (material,mesh) layout + run table ONLY when the submit queue changed (or the pre-cull
-		// mutated it). A static map with a moving camera reuses the cached layout — the per-frame cull+pack still
-		// runs (frustum-dependent), but the O(n log n) sort + O(n) run-build are skipped.
+		// Rebuild the run table ONLY when the queue changed (or the pre-cull mutated it). A static map with a moving camera
+		// reuses the cached layout — the per-frame cull+pack still runs (frustum-dependent), but the run build is skipped.
+		// Nothing is sorted here (#361): the queue is [the retained instances][the frame's own submits], each part sorted by
+		// (layer, material, mesh, winding, distance) in the swap, so identical (mesh+material) objects are ADJACENT and each
+		// run draws as ONE instanced call; a frame that only moved retained instances keeps the runs.
 		bool needRebuild = m_queue_dirty || preCullRan || m_draw_runs.empty();
-
-		// Sort by (material, mesh, distance): identical (mesh+material) objects become ADJACENT so each run
-		// draws as ONE instanced call (fewer draw calls); distance is the tiebreaker for partial early-Z within a run.
 		const auto t_sort = instancing::Clock::now();
-		if (needRebuild)
-		{
-			const DirectX::XMFLOAT3 eye = m_camera_position;
-			std::sort(m_render_queue.begin(), m_render_queue.end(),
-				[&eye](const RenderItem& a, const RenderItem& b)
-				{
-					// Layer is the PRIMARY key (#175): viewmodel runs cluster at the TAIL so the record
-					// loop can draw [0, vmStart) as the world pass and [vmStart, N) after the depth clear.
-					if (a.layer != b.layer) return a.layer < b.layer;
-					if (a.material_id != b.material_id) return a.material_id < b.material_id;
-					if (a.mesh_id != b.mesh_id) return a.mesh_id < b.mesh_id;
-					if (a.mirrored != b.mirrored) return a.mirrored < b.mirrored;
-					float ax = a.world_matrix._41 - eye.x, ay = a.world_matrix._42 - eye.y, az = a.world_matrix._43 - eye.z;
-					float bx = b.world_matrix._41 - eye.x, by = b.world_matrix._42 - eye.y, bz = b.world_matrix._43 - eye.z;
-					return (ax * ax + ay * ay + az * az) < (bx * bx + by * by + bz * bz);
-				});
-		}
 
 		// Frustum culling: build the 6 view planes once; objects fully outside are skipped (no draw, no
 		// vertex work). The biggest 2026-standard CPU win — don't render what the camera can't see.
@@ -221,74 +310,33 @@ namespace vortex::graphics::dx12
 		using namespace DirectX;
 		if (needRebuild)
 		{
-		m_draw_runs.clear();
-		m_item_run.resize(objectCount);
-		{
-			u32 vbBase = 0; size_t i = 0;
-			while (i < objectCount)
+			// layer by layer across both parts of the queue, so the viewmodel runs still form the tail (#175, #361); a frame
+			// item whose key the retained part of its layer has joins that run
+			m_draw_runs.clear();
+			m_item_run.resize(objectCount);
+			const size_t split = (std::min)(m_queue_retained, objectCount);
+			size_t ra = 0, fa = split;
+			while (ra < split || fa < objectCount)
 			{
-				const auto idMesh = m_render_queue[i].mesh_id;
-				const auto idMat = m_render_queue[i].material_id;
-				const u32 idLayer = m_render_queue[i].layer;
-				const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
-				const u32 idMirrored = m_render_queue[i].mirrored;
-				size_t j = i;
-				if (skinnedRun)
-					j = i + 1;   // each skinned item is its OWN run (needs its own bone palette bound)
-				else
-					// Layer in the break condition (#175): a world item and a viewmodel item sharing
-					// mesh+material must never merge into one run (correct by construction, not just by sort).
-					while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
-						&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer
-						&& m_render_queue[j].mirrored == idMirrored) ++j;
-				u32 cnt = (u32)(j - i);
-				Mesh* meshp = reg.get_mesh(idMesh);
-				float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
-				if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
-				DrawRun run{};
-				run.layer = idLayer;
-				run.mirrored = idMirrored != 0;
-				run.start = i; run.count = cnt; run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
-				run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
-				run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
-				float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
-				run.localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
-				run.vbBase = vbBase; run.visible = 0;
-				if (skinnedRun)
-				{
-					run.skinned = true;
-					run.boneOffset = m_render_queue[i].bone_offset;
-					run.boneCount = m_render_queue[i].bone_count;
-					run.palette = m_render_queue[i].palette;
-					run.localR *= 2.0f;   // animated poses leave the bind-pose bounds — inflate the cull sphere
-				}
-				if (m_geo_lod_enabled && !skinnedRun)
-				{
-					const auto* chain = reg.get_lod_chain(idMesh);
-					if (chain && chain->lod_count > 1)
-					{
-						run.lodLevels = chain->lod_count;
-						for (u32 L = 0; L < chain->lod_count && L < 4; ++L) run.lodMesh[L] = chain->lods[L];
-						// thresholds scale with the mesh's radius (#360): a crate thins out at 40 m, a building at 800 m
-						const float radius = run.localR > 0.5f ? run.localR : 0.5f;
-						const float t1 = m_lod_mid * radius, t2 = m_lod_far * radius, t3 = m_lod_far * 1.8f * radius;
-						run.lodT1sq = t1 * t1;
-						run.lodT2sq = t2 * t2;
-						run.lodT3sq = t3 * t3;
-					}
-				}
-				u32 ri = (u32)m_draw_runs.size();
-				m_draw_runs.push_back(run);
-				for (size_t k = i; k < j; ++k) m_item_run[k] = ri;
-				vbBase += cnt;
-				i = j;
+				const u32 layer = (std::min)(ra < split ? m_render_queue[ra].layer : 0xFFFFFFFFu, fa < objectCount ? m_render_queue[fa].layer : 0xFFFFFFFFu);
+				size_t re = ra;
+				while (re < split && m_render_queue[re].layer == layer) ++re;
+				const size_t joinFirst = m_draw_runs.size();
+				build_runs(ra, re, joinFirst, joinFirst);
+				const size_t joinLast = m_draw_runs.size();
+				ra = re;
+				size_t fe = fa;
+				while (fe < objectCount && m_render_queue[fe].layer == layer) ++fe;
+				build_runs(fa, fe, joinFirst, joinLast);
+				fa = fe;
 			}
-		}
-		m_queue_dirty = false;
+			// each run's worst-case slab: its item count (joined items included)
+			u32 vbBase = 0;
+			for (auto& run : m_draw_runs) { run.vbBase = vbBase; vbBase += run.count; }
+			m_queue_dirty = false;
 		}
 		const float sort_ms = needRebuild ? instancing::ms_since(t_sort) : 0.0f;
 		m_cpu_stats.sort_ms += sort_ms;
-		if (needRebuild) m_cpu_stats.sorted += (u32)objectCount;
 		m_cpu_stats.queue = (u32)objectCount;
 		const size_t runN = m_draw_runs.size();
 		m_instances_tested += (int)objectCount;

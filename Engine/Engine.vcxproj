@@ -51,7 +51,7 @@
     <ClInclude Include="Graphics\DX12\DX12Streamline.h" />
     <ClInclude Include="Graphics\DX12\DX12UpscalePipeline.h" />
     <ClInclude Include="Graphics\DX12\DX12PostFxChain.h" />
-    <ClInclude Include="Graphics\DX12\CullWorkerPool.h" />
+    <ClInclude Include="Graphics\Instancing\CullWorkerPool.h" />
     <ClInclude Include="Graphics\DX12\UIOverlay.h" />
     <ClInclude Include="Graphics\DX12\DX12Swapchain.h" />
     <ClInclude Include="Graphics\Geometry\ConeGenerator.h" />
@@ -82,6 +82,7 @@
     <ClInclude Include="Graphics\ViewFrustum.h" />
     <ClInclude Include="Graphics\Lighting\LightSelection.h" />
     <ClInclude Include="Graphics\Skinning\BonePalettes.h" />
+    <ClInclude Include="Graphics\Instancing\RenderQueue.h" />
     <ClInclude Include="Runtime\AssetDatabase.h" />
     <ClInclude Include="Runtime\AssetManifest.h" />
     <ClInclude Include="Runtime\GameHost.h" />

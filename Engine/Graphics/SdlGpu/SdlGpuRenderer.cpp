@@ -816,6 +816,7 @@ namespace vortex::graphics::sdlgpu
 	{
 		if (!m_device) return;
 		wait_idle();
+		m_cull_pool.shutdown();   // the cull workers (#361)
 		destroy_postfx_resources();
 		destroy_shadow_resources();
 		m_overlay.shutdown();
@@ -831,6 +832,7 @@ namespace vortex::graphics::sdlgpu
 			std::lock_guard<std::mutex> lock(m_queue_mutex);
 			m_render_queue.clear(); m_submit_queue.clear();
 		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
+			m_retained.clear(); m_frame_scratch.clear(); m_queue_retained = 0; m_queue_retained_valid = false;
 			m_gizmo_render.clear(); m_gizmo_submit.clear(); m_gizmo_wire_render.clear(); m_gizmo_wire_submit.clear();
 		}
 		m_custom_shaders.clear();
@@ -1083,6 +1085,8 @@ namespace vortex::graphics::sdlgpu
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		m_render_queue.clear(); m_submit_queue.clear();
 		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
+		// the retained instances go too (#361): the scene sees the new epoch and sends what it still shows
+		m_retained.clear(); m_frame_scratch.clear(); m_queue_retained = 0; m_queue_retained_valid = false; m_frame_submitted = false;
 		m_bone_submit.clear(); m_bone_render.clear();
 		m_bone_upload_pending = false;
 		m_queue_dirty = true;

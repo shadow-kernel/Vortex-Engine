@@ -66,7 +66,7 @@ set(VORTEX_ENGINE_SDLGPU_SOURCES
 )
 
 set(VORTEX_ENGINE_DX12_SOURCES
-	Graphics/DX12/CullWorkerPool.h
+	Graphics/Instancing/CullWorkerPool.h
 	Graphics/DX12/DX12CommandQueue.cpp
 	Graphics/DX12/DX12Core.cpp
 	Graphics/DX12/DX12DepthBuffer.cpp

@@ -28,6 +28,8 @@ namespace VortexEditor.Shell
     /// <item>VORTEX_PERF_BENCH=run measures every scene in VORTEX_PERF_BENCH_SCENES (default: those three) — edit mode idle,
     /// edit mode with one entity dragged every frame, play, and play with one static entity moved every frame (a scripted
     /// door) — and logs one "BENCH …" line per phase.</item>
+    /// <item>VORTEX_PERF_BENCH=mtcull: crowds of the project's smallest model (the stress test) from 2,000 to 200,000
+    /// instances, the renderer's cull + pack with the multithreading off and forced on — where it starts to pay.</item>
     /// </list>
     /// The standalone player logs the same figures in its FPS line (see PlayerHost).
     /// </summary>
@@ -46,6 +48,7 @@ namespace VortexEditor.Shell
             var project = ProjectData.Current;
             if (project == null) { log.LogError("bench: no project"); return false; }
             if (mode.Equals("generate", StringComparison.OrdinalIgnoreCase)) return Generate(project);
+            if (mode.Equals("mtcull", StringComparison.OrdinalIgnoreCase)) return await MultithreadedCull(project);
 
             string list = Environment.GetEnvironmentVariable("VORTEX_PERF_BENCH_SCENES");
             var names = string.IsNullOrWhiteSpace(list) ? DefaultScenes : list.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
@@ -112,6 +115,49 @@ namespace VortexEditor.Shell
             {
                 SceneRenderService.HideEditorOverlays = false;
                 if (PlayModeService.Instance.IsPlaying) EditorCommands.Stop();
+            }
+        }
+
+        /// <summary>The crossover of the multithreaded cull + pack (#361): the same crowd culled on one thread and on the workers.</summary>
+        private static async Task<bool> MultithreadedCull(ProjectData project)
+        {
+            var log = ConsoleService.Instance;
+            string assets = Path.Combine(project.Path, "Assets");
+            string model = Directory.Exists(assets)
+                ? Directory.EnumerateFiles(assets, "*.*", SearchOption.AllDirectories)
+                    .Where(f => new[] { ".glb", ".gltf", ".fbx", ".obj" }.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .OrderBy(f => new FileInfo(f).Length).FirstOrDefault()
+                : null;
+            if (model == null) { log.LogError("bench: no model for the crowd"); return false; }
+            SceneRenderService.HideEditorOverlays = true;
+            try
+            {
+                foreach (int n in new[] { 2000, 5000, 10000, 20000, 50000, 100000, 200000 })
+                {
+                    StressTestService.Start(model, n);
+                    EditorViewportSession.RequestResubmit();
+                    await SmokeRegistry.Settle(1500);
+                    foreach (bool mt in new[] { false, true, false, true })
+                    {
+                        VortexAPI.Multithreading(mt);
+                        VortexAPI.MultithreadingForce(mt);
+                        await SmokeRegistry.Settle(300);
+                        var s = await Collect(2f, null);
+                        log.Log("BENCH mtcull instances=" + n + " mt=" + (mt ? "on" : "off") + " active=" + VortexAPI.MultithreadingActive
+                            + " fps=" + (s.Frames / Math.Max(0.001, s.Seconds)).ToString("0.0", CultureInfo.InvariantCulture)
+                            + " native_cull=" + (s.Cull / Math.Max(1, s.Frames)).ToString("0.000", CultureInfo.InvariantCulture)
+                            + " drawn=" + VortexAPI.InstancesDrawn + "/" + VortexAPI.InstancesTested);
+                    }
+                }
+                return true;
+            }
+            finally
+            {
+                StressTestService.Stop();
+                VortexAPI.Multithreading(true);
+                VortexAPI.MultithreadingForce(false);
+                SceneRenderService.HideEditorOverlays = false;
+                EditorViewportSession.RequestResubmit();
             }
         }
 

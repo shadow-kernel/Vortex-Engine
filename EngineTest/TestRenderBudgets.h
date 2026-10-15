@@ -2,6 +2,7 @@
 
 #include "../Engine/Graphics/Skinning/BonePalettes.h"
 #include "../Engine/Graphics/Lighting/LightSelection.h"
+#include "../Engine/Graphics/Instancing/RenderQueue.h"
 
 #include "Test.h"
 
@@ -21,7 +22,10 @@ using namespace vortex::graphics;
 //   * the light budget (#416): beyond 16 point / 8 spot lights the choice holds still (hysteresis), changes fade where
 //     they would show, a fast turn or a cut is lit right at once, a light the game switches on shows at once, the spot
 //     cone and the view frustum count, shadow maps stay put (within the budget: the first casters, as before) and a view
-//     rendered now and then never stops half-faded.
+//     rendered now and then never stops half-faded;
+//   * the retained instances of the render queue (#361): created, moved, re-coloured and removed by handle, moved ones
+//     updated in place without a new layout, new keys merged into the sorted rest, a winding flip or another material
+//     moves an instance to another run, a cleared store says so through its epoch.
 // Prints "ALL PASSED" or "FAILURES!" and exits non-zero on a failure.
 class engine_test : public test
 {
@@ -42,6 +46,12 @@ public:
 		lights_fast_turn();
 		lights_shadow_maps_stay();
 		lights_preview_settles();
+		retained_moves_in_place();
+		retained_layout_changes();
+		retained_merge_and_distance();
+		retained_epoch_and_dead_meshes();
+		retained_queue_assembly();
+		frame_items_join_retained_runs();
 		std::printf(m_failures ? "FAILURES!\n" : "ALL PASSED\n");
 	}
 
@@ -692,5 +702,240 @@ private:
 		for (const auto& [id, l] : lit) full = full && l.fade == 1.0f;
 		check(settled_still && busy && renders <= 12, "a view that renders every 100 ms is unsettled while a light fades and settles within ~1 s");
 		check(busy_again && full, "a render after more than 0.25 s finishes every fade at once: the view is settled");
+	}
+
+	// ---------------------------------------------------------------------------------------- retained instances (#361)
+
+	// the fields of the backends' RenderItem the queue reads
+	struct QueueItem
+	{
+		vortex::id::id_type mesh_id{ vortex::id::invalid_id };
+		vortex::id::id_type material_id{ vortex::id::invalid_id };
+		DirectX::XMFLOAT4X4 world_matrix;
+		DirectX::XMFLOAT4 color{ 1.0f, 1.0f, 1.0f, 1.0f };
+		u32 bone_offset{ 0xFFFFFFFFu }, bone_count{ 0 }, palette{ 0xFFFFFFFFu };
+		u32 layer{ 0 }, mirrored{ 0 };
+	};
+	using Retained = instancing::RetainedInstances<QueueItem>;
+
+	static instancing::InstanceOp op(u32 handle, u32 kind, u64 mesh, u64 material, float x, float y = 0.0f, float z = 0.0f, float scale_x = 1.0f, u32 layer = 0)
+	{
+		instancing::InstanceOp o{};
+		o.handle = handle; o.kind = kind; o.mesh = mesh; o.material = material; o.layer = layer;
+		for (int i = 0; i < 16; ++i) o.world[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+		o.world[0] = scale_x;
+		o.world[12] = x; o.world[13] = y; o.world[14] = z;
+		o.color[0] = o.color[1] = o.color[2] = o.color[3] = 1.0f;
+		return o;
+	}
+
+	// the store in queue order: (mesh, material, x) per instance
+	static std::vector<std::vector<float>> contents(const Retained& r)
+	{
+		std::vector<std::vector<float>> v;
+		for (size_t i = 0; i < r.count(); ++i) v.push_back({ (float)r.at(i).mesh_id, (float)r.at(i).material_id, r.at(i).world_matrix._41 });
+		return v;
+	}
+
+	static bool sorted_by_key(const Retained& r)
+	{
+		for (size_t i = 1; i < r.count(); ++i) if (instancing::key_less(r.at(i), r.at(i - 1))) return false;
+		return true;
+	}
+
+	void retained_moves_in_place()
+	{
+		std::printf("retained instances: a moved or re-coloured instance is updated in place, the layout stays (#361)\n");
+		Retained r;
+		const DirectX::XMFLOAT3 eye{ 0, 0, 0 };
+		std::vector<instancing::InstanceOp> ops = { op(0, instancing::OP_SET, 7, 3, 5), op(1, instancing::OP_SET, 7, 3, 1), op(2, instancing::OP_SET, 9, 3, 2) };
+		r.apply(ops.data(), (u32)ops.size());
+		const bool first = r.settle(eye) == instancing::Sync::Layout;
+		const auto before = contents(r);
+		check(first && r.count() == 3 && sorted_by_key(r), "three new instances: one layout, sorted by key");
+		check(before[0][2] == 1.0f && before[1][2] == 5.0f, "inside a key the nearer instance comes first");
+		const bool quiet = r.settle(eye) == instancing::Sync::None;
+
+		auto move = op(1, instancing::OP_MOVE, 0, 0, 3);   // mesh / material ignored by a move
+		move.color[0] = 0.25f;
+		r.apply(&move, 1);
+		const instancing::Sync s = r.settle(eye);
+		bool found = false;
+		for (u32 p : r.patched())
+			if (r.at(p).world_matrix._41 == 3.0f && r.at(p).color.x == 0.25f && r.at(p).mesh_id == 7 && r.at(p).material_id == 3) found = true;
+		check(quiet, "nothing applied: settle reports nothing");
+		check(s == instancing::Sync::Patched && found, "a move is a patch of its position: new matrix and tint, same mesh and material");
+		r.clear_patched();
+		auto same = op(2, instancing::OP_SET, 9, 3, 8);   // a SET with the same key is a patch as well
+		r.apply(&same, 1);
+		check(r.settle(eye) == instancing::Sync::Patched && r.count() == 3, "a SET that keeps mesh, material and layer patches in place too");
+		auto unknown = op(40, instancing::OP_MOVE, 0, 0, 1);
+		r.clear_patched();
+		r.apply(&unknown, 1);
+		check(r.settle(eye) == instancing::Sync::None && r.count() == 3, "a move of an instance that was never created is ignored");
+	}
+
+	void retained_layout_changes()
+	{
+		std::printf("retained instances: another key, a winding flip or a removal changes the layout (#361)\n");
+		Retained r;
+		const DirectX::XMFLOAT3 eye{ 0, 0, 0 };
+		std::vector<instancing::InstanceOp> ops;
+		for (u32 h = 0; h < 6; ++h) ops.push_back(op(h, instancing::OP_SET, 1 + h % 2, 4, (float)h));
+		r.apply(ops.data(), (u32)ops.size());
+		r.settle(eye);
+		auto recolour = op(3, instancing::OP_SET, 2, 5, 3);   // another material: another run
+		r.apply(&recolour, 1);
+		const bool layout1 = r.settle(eye) == instancing::Sync::Layout;
+		size_t mat5 = 0;
+		for (size_t i = 0; i < r.count(); ++i) if (r.at(i).material_id == 5) ++mat5;
+		check(layout1 && r.count() == 6 && mat5 == 1 && sorted_by_key(r), "a new material moves the instance to its own run, nothing doubled");
+
+		auto flip = op(0, instancing::OP_MOVE, 0, 0, 0, 0, 0, -1.0f);   // negative scale: the winding flips (#334)
+		r.apply(&flip, 1);
+		const bool layout2 = r.settle(eye) == instancing::Sync::Layout;
+		size_t mirrored = 0;
+		for (size_t i = 0; i < r.count(); ++i) mirrored += r.at(i).mirrored;
+		check(layout2 && mirrored == 1 && sorted_by_key(r), "a move that mirrors the instance changes its run (the winding is part of the key)");
+
+		auto gone = op(4, instancing::OP_REMOVE, 0, 0, 0);
+		auto again = op(4, instancing::OP_REMOVE, 0, 0, 0);
+		r.apply(&gone, 1); r.apply(&again, 1);
+		const bool layout3 = r.settle(eye) == instancing::Sync::Layout;
+		bool has4 = false;
+		for (size_t i = 0; i < r.count(); ++i) if (r.at(i).world_matrix._41 == 4.0f) has4 = true;
+		check(layout3 && r.count() == 5 && !has4 && r.size() == 5, "a removed instance leaves (removing it twice is harmless)");
+
+		auto back = op(4, instancing::OP_SET, 1, 4, 44);   // the handle is reused
+		auto vm = op(9, instancing::OP_SET, 1, 4, 9, 0, 0, 1.0f, 1);   // the first-person layer sorts behind the world
+		r.apply(&back, 1); r.apply(&vm, 1);
+		r.settle(eye);
+		check(r.count() == 7 && r.at(r.count() - 1).layer == 1 && sorted_by_key(r), "a reused handle comes back; the viewmodel layer forms the tail (#175)");
+	}
+
+	void retained_merge_and_distance()
+	{
+		std::printf("retained instances: new ones merge into the sorted rest; the distance order follows the camera (#361)\n");
+		Retained r;
+		DirectX::XMFLOAT3 eye{ 0, 0, 0 };
+		std::vector<instancing::InstanceOp> ops;
+		u32 h = 0;
+		for (int i = 0; i < 400; ++i) ops.push_back(op(h++, instancing::OP_SET, 1 + (u64)(i % 5), 1 + (u64)(i % 3), (float)((i * 37) % 101)));
+		r.apply(ops.data(), (u32)ops.size());
+		r.settle(eye);
+		ops.clear();
+		for (int i = 0; i < 50; ++i) ops.push_back(op(h++, instancing::OP_SET, 1 + (u64)(i % 7), 1 + (u64)(i % 3), (float)i));
+		for (u32 k = 0; k < 400; k += 3) ops.push_back(op(k, instancing::OP_REMOVE, 0, 0, 0));
+		r.apply(ops.data(), (u32)ops.size());
+		r.settle(eye);
+		const size_t expected = 400 + 50 - (400 + 2) / 3;
+		check(r.count() == expected && sorted_by_key(r), "50 new + 134 removed instances: every live one present, sorted by key");
+
+		eye = { 200, 0, 0 };   // the camera moved far: inside each key the nearest instance first again
+		const bool reordered = r.refresh_distance(eye) == instancing::Sync::Reordered;
+		bool near_first = true;
+		for (size_t i = 1; i < r.count(); ++i)
+			if (instancing::same_key(r.at(i), r.at(i - 1)) && std::fabs(r.at(i).world_matrix._41 - 200.0f) < std::fabs(r.at(i - 1).world_matrix._41 - 200.0f)) near_first = false;
+		check(reordered && near_first && r.count() == expected && sorted_by_key(r), "a distance refresh keeps the keys and runs, nearest first inside each");
+	}
+
+	void retained_epoch_and_dead_meshes()
+	{
+		std::printf("retained instances: clearing bumps the epoch; a destroyed mesh is noticed (#361)\n");
+		Retained r;
+		const DirectX::XMFLOAT3 eye{ 0, 0, 0 };
+		std::vector<instancing::InstanceOp> ops = { op(0, instancing::OP_SET, 11, 1, 0), op(1, instancing::OP_SET, 12, 1, 0), op(5000000, instancing::OP_SET, 13, 1, 0) };
+		r.apply(ops.data(), (u32)ops.size());
+		r.settle(eye);
+		check(r.count() == 2, "a handle beyond the limit is ignored");
+		check(!r.uses_dead_mesh([](vortex::id::id_type m) { return m != 99; }), "no instance draws a destroyed mesh");
+		check(r.uses_dead_mesh([](vortex::id::id_type m) { return m != 12; }), "an instance of a destroyed mesh is found");
+		const u32 e0 = r.epoch();
+		r.clear();
+		const bool empty = r.settle(eye) == instancing::Sync::Layout && r.count() == 0;
+		auto move = op(0, instancing::OP_MOVE, 0, 0, 1);
+		r.apply(&move, 1);
+		check(r.epoch() == e0 + 1 && empty && r.settle(eye) == instancing::Sync::None && r.count() == 0, "a cleared store has a new epoch and ignores moves until the scene sends its instances again");
+	}
+
+	void retained_queue_assembly()
+	{
+		std::printf("render queue: [the retained instances][the frame's own submits]; a move reaches it on every kind of frame (#361)\n");
+		Retained r;
+		const DirectX::XMFLOAT3 eye{ 0, 0, 0 };
+		std::vector<QueueItem> queue, scratch, frame(2);
+		frame[0].mesh_id = 50; frame[0].material_id = 1; frame[0].world_matrix._41 = 100.0f;
+		frame[1].mesh_id = 51; frame[1].material_id = 1; frame[1].world_matrix._41 = 101.0f;
+		size_t retainedPart = 0; bool valid = false;
+		// a swap: the retained part brought up to date, then (frame_changed) the frame's submits appended as the tail
+		auto swap = [&](bool frame_changed, bool visible, const std::vector<QueueItem>& items)
+		{
+			const bool rebuild = instancing::assemble_retained(queue, r, r.settle(eye), frame_changed, visible, retainedPart, valid, scratch);
+			if (frame_changed) queue.insert(queue.end(), items.begin(), items.end());
+			return rebuild;
+		};
+		std::vector<instancing::InstanceOp> ops = { op(0, instancing::OP_SET, 7, 3, 5), op(1, instancing::OP_SET, 7, 3, 1), op(2, instancing::OP_SET, 9, 3, 2) };
+		r.apply(ops.data(), (u32)ops.size());
+		bool rebuild = swap(true, true, frame);
+		check(rebuild && queue.size() == 5 && retainedPart == 3 && valid && queue[3].mesh_id == 50 && queue[4].mesh_id == 51,
+			"first frame: three retained instances, then the frame's two submits; the runs are built");
+
+		// a move on a frame that also changed its own submits (in play: every frame) — the move must not be lost
+		auto move = op(1, instancing::OP_MOVE, 0, 0, 3);
+		r.apply(&move, 1);
+		frame[1].world_matrix._41 = 111.0f;
+		swap(true, true, frame);
+		bool moved = false;
+		for (size_t i = 0; i < retainedPart; ++i) if (queue[i].world_matrix._41 == 3.0f) moved = true;
+		check(moved && queue.size() == 5 && queue[4].world_matrix._41 == 111.0f, "a move and new frame submits in one frame: both reach the queue");
+
+		// a move alone: patched in place, the runs and the frame part stay
+		auto again = op(1, instancing::OP_MOVE, 0, 0, 4);
+		r.apply(&again, 1);
+		rebuild = swap(false, true, frame);
+		moved = false;
+		for (size_t i = 0; i < retainedPart; ++i) if (queue[i].world_matrix._41 == 4.0f) moved = true;
+		check(moved && !rebuild && queue.size() == 5 && queue[4].world_matrix._41 == 111.0f, "a move alone is written in place and keeps the runs");
+
+		// a new instance without new frame submits: the kept frame part moves behind the new retained part
+		auto added = op(3, instancing::OP_SET, 8, 3, 6);
+		r.apply(&added, 1);
+		rebuild = swap(false, true, frame);
+		check(rebuild && queue.size() == 6 && retainedPart == 4 && queue[4].mesh_id == 50 && queue[5].world_matrix._41 == 111.0f,
+			"a layout change keeps the frame's submits behind the retained part");
+
+		// hidden (a preview renders its own items), then visible again
+		std::vector<QueueItem> preview(1);
+		preview[0].mesh_id = 60;
+		swap(true, false, preview);
+		check(queue.size() == 1 && queue[0].mesh_id == 60 && retainedPart == 0, "hidden: the queue holds the preview's items only");
+		rebuild = swap(true, true, frame);
+		check(rebuild && queue.size() == 6 && retainedPart == 4, "visible again: every retained instance is back in front of the frame's submits");
+
+		// the render pass shrank the retained part (a destroyed mesh): the next frame copies it whole
+		queue.erase(queue.begin());
+		retainedPart = 3; valid = false;
+		rebuild = swap(false, true, frame);
+		check(rebuild && queue.size() == 6 && retainedPart == 4 && valid && queue[5].world_matrix._41 == 111.0f, "an invalid retained part is copied again");
+	}
+
+	void frame_items_join_retained_runs()
+	{
+		std::printf("draw runs: a frame item of a key the retained part has joins its run (#361)\n");
+		struct Run { vortex::id::id_type mesh, mat; bool mirrored; bool skinned; u32 layer; };
+		// one layer's retained runs in key order (material, mesh, winding) — and a skinned run, which is never joined
+		const std::vector<Run> runs = { { 4, 1, false, false, 0 }, { 9, 1, false, false, 0 }, { 9, 1, true, false, 0 }, { 2, 3, false, false, 0 }, { 7, 5, false, true, 0 } };
+		auto item = [](vortex::id::id_type mesh, vortex::id::id_type mat, u32 mirrored)
+		{
+			QueueItem q; q.mesh_id = mesh; q.material_id = mat; q.mirrored = mirrored; q.layer = 0; return q;
+		};
+		check(instancing::find_run(runs, 0, 4, item(9, 1, 0)) == 1 && instancing::find_run(runs, 0, 4, item(9, 1, 1)) == 2
+			&& instancing::find_run(runs, 0, 4, item(2, 3, 0)) == 3 && instancing::find_run(runs, 0, 4, item(4, 1, 0)) == 0,
+			"the run of the same material, mesh and winding is found");
+		check(instancing::find_run(runs, 0, 4, item(5, 1, 0)) == instancing::NO_RUN && instancing::find_run(runs, 0, 4, item(4, 2, 0)) == instancing::NO_RUN
+			&& instancing::find_run(runs, 0, 0, item(9, 1, 0)) == instancing::NO_RUN, "another key (or no runs to join) makes a run of its own");
+		QueueItem vm = item(9, 1, 0); vm.layer = 1;
+		check(instancing::find_run(runs, 0, 4, vm) == instancing::NO_RUN && instancing::find_run(runs, 4, 5, item(7, 5, 0)) == instancing::NO_RUN,
+			"never a run of another layer, never a skinned run");
 	}
 };
