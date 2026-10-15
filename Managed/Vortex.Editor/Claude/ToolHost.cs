@@ -214,6 +214,18 @@ namespace VortexEditor.Claude
     {
         private static readonly SemaphoreSlim Gate = new SemaphoreSlim(1, 1);
 
+        /// <summary>For a tool that waits for the running game (send_input): <paramref name="wait"/> runs without the
+        /// one-call-at-a-time lock, so exit_play_mode, get_script_state and the rest are not queued behind a sequence that
+        /// plays for a minute (#457 review). The lock is taken again before the tool goes on, also when the wait throws.
+        /// Only for a tool without an undo group (ManagesUndo) that leaves ToolContext alone afterwards — another call's
+        /// context comes and goes meanwhile.</summary>
+        internal static async Task WaitOutsideLock(Func<Task> wait)
+        {
+            Gate.Release();
+            try { await wait(); }
+            finally { await Gate.WaitAsync(); }
+        }
+
         public static Task<ToolResult> CallAsync(string name, IReadOnlyDictionary<string, JsonElement> args, string origin, CancellationToken ct = default)
             => CallAsync(name, args?.ToDictionary(kv => kv.Key, kv => (object)kv.Value), origin, ct);
 

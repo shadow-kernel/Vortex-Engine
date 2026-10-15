@@ -17,6 +17,8 @@ namespace VortexEditor
             UiThread.Poster = a => Dispatcher.UIThread.Post(a);
             UiThread.CheckAccess = () => Dispatcher.UIThread.CheckAccess();
             NativeLoader.Register();
+            // the editor plays the game from its project: the project's Play-mode saves setting picks the save folder (#458)
+            Vortex.Save.PlaysFromProject = true;
             // particle frame driver: effects with "Preview in editor" run in the Scene view before the first Play
             try { Editor.Core.Services.Particles.ParticleService.EnsureRegistered(); } catch { }
 

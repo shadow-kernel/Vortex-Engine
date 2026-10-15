@@ -99,7 +99,8 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int NavGetBakeNotes([In, Out] byte[] output, int maxBytes);
 
-        /// <summary>Replaces the loaded navmesh (every agent is dropped). 0 = rejected (not a .vnav / wrong version).</summary>
+        /// <summary>Replaces the loaded navmesh (every agent is dropped). 0 = rejected (not a .vnav / an unknown version);
+        /// version 1 files (32-bit poly refs, before #517) are converted on load.</summary>
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int NavLoad(byte[] data, int size);
 

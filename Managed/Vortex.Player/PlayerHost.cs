@@ -35,7 +35,9 @@ namespace Vortex.Player
         private static PlayerOptions _options;
         private static double _runSeconds;
         private static bool _captured;
-        private static InputScript _script;
+        private static bool _scripted;        // --input: the timed commands play through HostInput.Simulated (#457)
+        private static string _captureDir;
+        private static readonly Action<string> _captureTo = CaptureTo;   // one delegate, not one per tick
         private static readonly Editor.Core.Viewport.DebugFreeCamera _debugCam = new Editor.Core.Viewport.DebugFreeCamera();
         private static bool _fullscreenApplied;
         private static Editor.Core.Data.Scene _sceneToStart;   // the scripts start in the first tick, once the window exists
@@ -68,12 +70,22 @@ namespace Vortex.Player
                 if (!File.Exists(options.InputScriptPath)) { Console.Error.WriteLine("input script not found: " + options.InputScriptPath); return 2; }
                 string capDir = options.CaptureDir ?? (!string.IsNullOrEmpty(options.CapturePath) ? Path.GetDirectoryName(Path.GetFullPath(options.CapturePath)) : Path.GetTempPath());
                 Directory.CreateDirectory(capDir);
-                _script = InputScript.Load(options.InputScriptPath, capDir, plainNamesOnly: options.CaptureDir != null);
-                Log("input script: " + _script.Count + " commands, captures -> " + capDir);
+                _captureDir = capDir;
+                _plainCaptures = options.CaptureDir != null;   // run_player's own folder: plain file names only (#463 review)
+                // the editor's send_input plays the same commands (#457): one parser, one simulated input layer
+                var problems = new System.Collections.Generic.List<string>();
+                var warnings = new System.Collections.Generic.List<string>();
+                var commands = InputScript.ParseFile(options.InputScriptPath, problems, warnings);
+                foreach (var p in problems) Log("input script: skipped " + p);
+                foreach (var w in warnings) Log("input script: " + w);
+                HostInput.Simulated.Enqueue(commands, 0);
+                _scripted = true;
+                Log("input script: " + commands.Count + " commands, captures -> " + capDir);
             }
-            // Scripted keys are OR-ed with the physical keyboard; a scripted run counts as focused so gameplay input is live.
-            HostInput.KeyDown = vk => (_script != null && _script.IsDown(vk)) || VortexAPI.GameHostKeyDown(vk);
-            HostInput.WindowFocused = () => _script != null || VortexAPI.GameHostHasFocus();
+            // Scripted keys are OR-ed with the physical keyboard (HostInput.Simulated); a scripted run counts as focused so
+            // gameplay input is live.
+            HostInput.KeyDown = vk => VortexAPI.GameHostKeyDown(vk);
+            HostInput.WindowFocused = () => _scripted || VortexAPI.GameHostHasFocus();
             HostInput.Gamepad = GamepadInput.Poll;   // DualSense HID / XInput on Windows, SDL3 on macOS + Linux
 
             Log("boot: exe=" + exeDir);
@@ -142,6 +154,9 @@ namespace Vortex.Player
             string projDir = !string.IsNullOrEmpty(options.ProjectPath) ? Path.GetFullPath(options.ProjectPath)
                 : (!string.IsNullOrEmpty(debugProjectPath) && Directory.Exists(debugProjectPath) ? debugProjectPath : exeDir);
             if (!string.IsNullOrEmpty(options.ProjectPath)) PlayModeService.Instance.IsReleaseMode = false;
+            // --project is a play test from the project (the editor's "Play in Standalone Player", automated runs): the
+            // project's Play-mode saves setting picks the save folder, as in editor play; an exported game keeps its own (#458)
+            Vortex.Save.PlaysFromProject = !string.IsNullOrEmpty(options.ProjectPath);
 
             Console.WriteLine("Vortex Player — loading " + projDir);
             var project = ProjectService.Instance.LoadProjectFromPath(projDir);
@@ -315,12 +330,18 @@ namespace Vortex.Player
                     if (_runSeconds >= _options.ExitAfterSeconds) { Log("exit-after reached"); VortexAPI.RequestGameHostExit(); }
                 }
 
+                // the --input file's commands of this tick (#457): keys and mouse buttons count as held through HostInput, the
+                // mouse movement, wheel notches and UI cursor are added below — the same layer the editor's send_input plays into
+                var sim = HostInput.Simulated;
+                var (sdx, sdy, sscroll) = sim.Advance(_runSeconds, _captureTo);
+                if (sim.ExitRequested) { Log("input script: exit"); VortexAPI.RequestGameHostExit(); }
+
                 bool playing = PlayModeService.Instance.State == PlayState.Playing;
                 int cw = Math.Max(1, VortexAPI.GameHostClientWidth());
                 int ch = Math.Max(1, VortexAPI.GameHostClientHeight());
-                float mx = VortexAPI.GameHostMouseX();
-                float my = VortexAPI.GameHostMouseY();
-                bool down = VortexAPI.GameHostMouseDown();
+                float mx = sim.HasCursor ? sim.CursorX : VortexAPI.GameHostMouseX();
+                float my = sim.HasCursor ? sim.CursorY : VortexAPI.GameHostMouseY();
+                bool down = VortexAPI.GameHostMouseDown() || sim.IsDown(0x01);
                 bool pressed = down && !_lmbPrev; _lmbPrev = down;
 
                 bool f12 = VortexAPI.GameHostKeyDown(0x7B);
@@ -347,13 +368,9 @@ namespace Vortex.Player
                     Vortex.Input.MouseDeltaX = dxl; Vortex.Input.MouseDeltaY = dyl;
                 }
                 else { Vortex.Input.MouseDeltaX = 0f; Vortex.Input.MouseDeltaY = 0f; }
-
-                if (_script != null)
-                {
-                    var (sdx, sdy) = _script.Advance(_runSeconds, dt, path => { VortexAPI.CaptureFrame(path); Log("capture -> " + path); });
-                    Vortex.Input.MouseDeltaX += sdx; Vortex.Input.MouseDeltaY += sdy;
-                    if (_script.ExitRequested) { Log("input script: exit"); VortexAPI.RequestGameHostExit(); }
-                }
+                // the scripted movement and wheel, kept apart from the physical ones: they drive the game unfocused too (#457);
+                // a menu screen takes the wheel, as it takes the physical one
+                Vortex.Input.SetSimulated(sdx, sdy, (playing && !VuiStack.Instance.HasActiveScreens) ? sscroll : 0f);
 
                 // Debug free-fly camera (P / Caps Lock) - development runs only, stripped from a shipped Release.
                 _debugCam.PreScripts(ProjectData.Current?.ActiveScene, playing && !PlayModeService.Instance.IsReleaseMode, true);
@@ -364,6 +381,8 @@ namespace Vortex.Player
                 // frame is still seen by Input.GetKey / GetKeyDown for this tick; the UI reads the same events below
                 _keyCount = 0;
                 for (int k; _keyCount < _vuiKeyBuf.Length && (k = VortexAPI.GameHostNextKeyPressed()) > 0;) { _vuiKeyBuf[_keyCount++] = k; HostInput.NotifyKeyDown(k); }
+                var scripted = sim.PressedThisTick;   // scripted keys reach the menus too
+                for (int i = 0; i < scripted.Count && _keyCount < _vuiKeyBuf.Length; i++) _vuiKeyBuf[_keyCount++] = scripted[i];
 
                 // the window's client size and mouse are in points (SDL) / client units (Win32) — the UI's point space, as in
                 // the editor's play view; the pixel density turns them into pixels (UI.Scale, #454)
@@ -425,6 +444,32 @@ namespace Vortex.Player
                 }
             }
             catch (Exception ex) { Log("[Tick] " + ex); }
+        }
+
+        /// <summary>At most this many captures in a run given its capture folder (#463 review).</summary>
+        private const int MaxScriptCaptures = 200;
+        private static bool _plainCaptures;
+        private static int _captures;
+
+        /// <summary>A <c>capture</c> command of the --input file: a frame into the capture directory. A run given its capture
+        /// folder (--capture-dir, as run_player starts it) takes plain file names only — no folder, no rooted path, no ".." — and
+        /// at most <see cref="MaxScriptCaptures"/>, so a script writes nowhere else and cannot fill the disk (#463 review).</summary>
+        private static void CaptureTo(string file)
+        {
+            string path;
+            if (_plainCaptures)
+            {
+                if (!Editor.Core.Services.Build.PlayerRun.IsPlainFileName(file)) { Console.Error.WriteLine("[WARN] capture refused: '" + file + "' is no plain file name"); return; }
+                if (++_captures > MaxScriptCaptures)
+                {
+                    if (_captures == MaxScriptCaptures + 1) Console.Error.WriteLine("[WARN] capture refused: more than " + MaxScriptCaptures + " captures");
+                    return;
+                }
+                path = Path.Combine(_captureDir, file);
+            }
+            else path = Path.IsPathRooted(file) ? file : Path.Combine(_captureDir ?? Path.GetTempPath(), file);
+            VortexAPI.CaptureFrame(path);
+            Log("capture -> " + path);
         }
 
         private static VuiInput BuildVuiInput(float mx, float my, bool down, bool pressed)
