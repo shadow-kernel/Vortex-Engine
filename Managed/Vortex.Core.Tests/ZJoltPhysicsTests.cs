@@ -320,8 +320,9 @@ namespace VortexTests
         }
 
         /// <summary>#407 review: a Nav Agent whose model became a ragdoll leaves the crowd — its capsule (removed by
-        /// Ragdoll.Activate) does not come back from the crowd's MoveCharacter and the crowd stops writing its pose — and
-        /// rejoins where the body lies once the ragdoll is over.</summary>
+        /// Ragdoll.Activate) does not come back from the crowd's MoveCharacter, the crowd stops writing its pose, and
+        /// SetDestination / Warp refuse it (they used to put it back into the crowd for one tick) — and rejoins at its own
+        /// position (where it went down) once the ragdoll is over, its destination kept.</summary>
         [Test]
         public static void RagdolledNavAgentsLeaveTheCrowd(TestContext t)
         {
@@ -353,6 +354,11 @@ namespace VortexTests
                 Run(30);
                 t.Equal(0, Capsules(), "a ragdolled agent's capsule does not come back");
                 t.True(Math.Abs(bot.Transform.LocalPosition.X - x0) < 1e-4f, "… and the crowd no longer moves the body (x = " + bot.Transform.LocalPosition.X + ")");
+                t.False(NavigationService.SetDestination(bot, new Vector3(-8f, 0, 0)), "SetDestination refuses a limp agent");
+                t.False(NavigationService.Warp(bot, new Vector3(0f, 0, 5f)), "… and so does Warp");
+                Run(5);
+                t.True(Capsules() == 0 && Math.Abs(bot.Transform.LocalPosition.X - x0) < 1e-4f && Math.Abs(bot.Transform.LocalPosition.Z) < 1e-4f,
+                       "… nothing came back: no capsule, the body did not move");
 
                 RagdollService.TestMarkActive(model, false);
                 Run(30);
