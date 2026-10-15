@@ -146,6 +146,9 @@ namespace Editor.DllWrapper
         private static extern void AudioFadeVoice(ulong handle, float target, float seconds, int stopWhenDone);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioFadeVoiceFrom(ulong handle, float from, float target, float seconds, int stopWhenDone);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int AudioRegisterClipData([MarshalAs(UnmanagedType.LPUTF8Str)] string name,
             byte[] data, ulong size);
 
@@ -337,6 +340,14 @@ namespace Editor.DllWrapper
         public static void FadeVoice(ulong handle, float target, float seconds, bool stopWhenDone = false)
         {
             if (handle != InvalidVoice) AudioFadeVoice(handle, target, seconds, stopWhenDone ? 1 : 0);
+        }
+
+        /// <summary>The same fade from an explicit start level (a fade-in from silence): one request with both ends, so it
+        /// cannot collapse with a snap issued in the same frame — miniaudio keeps one pending fade per voice, and a snap to
+        /// 0 followed by a fade "from the current level" used to start at full volume.</summary>
+        public static void FadeVoiceFrom(ulong handle, float from, float target, float seconds, bool stopWhenDone = false)
+        {
+            if (handle != InvalidVoice) AudioFadeVoiceFrom(handle, from, target, seconds, stopWhenDone ? 1 : 0);
         }
 
         /// <summary>Hands an encoded audio blob (e.g. a .vpak entry) to the native engine;

@@ -110,6 +110,9 @@ namespace vortex::runtime::audio {
 	// target 0..1; starting a new fade retargets smoothly from the CURRENT value.
 	// stop_when_done releases the voice once the fade completes (FadeOut semantics).
 	void voice_fade(voice_handle handle, f32 target, f32 seconds, bool stop_when_done);
+	// The same fade with an explicit start level 0..1 (a fade-in from silence): one request with both ends, so it
+	// cannot collapse with a snap issued in the same frame (miniaudio keeps one pending fade per sound).
+	void voice_fade_from(voice_handle handle, f32 from, f32 target, f32 seconds, bool stop_when_done);
 
 	// Stats for diagnostics and the future mixer window meters.
 	u32 voices_active_count();

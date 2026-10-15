@@ -553,9 +553,10 @@ namespace Editor.Core.Services
             ScriptPlay(source);
             var b = FindBinding(source);
             if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
-            VortexAudio.FadeVoice(b.Handle, 0f, 0f);          // snap envelope to 0
             BeginAudibleFade(b, 1f, "FadeIn");                // just (re)started: at Volume 0 it fades in to full volume (#404)
-            VortexAudio.FadeVoice(b.Handle, 1f, seconds);     // glide up
+            // one request from 0 up: a snap to 0 and a fade "from the current level" issued in the same frame collapsed into
+            // a fade from full volume (miniaudio keeps one pending fade per voice)
+            VortexAudio.FadeVoiceFrom(b.Handle, 0f, 1f, seconds);
         }
 
         /// <summary>FadeOut: ramp to silence, then stop and free the voice natively.</summary>
@@ -574,8 +575,9 @@ namespace Editor.Core.Services
         {
             var b = FindBinding(source);
             if (b == null || b.Handle == VortexAudio.InvalidVoice) return;
-            BeginAudibleFade(b, target, "FadeTo");            // the "start silent, then fade in" idiom takes the level over (#404)
-            VortexAudio.FadeVoice(b.Handle, target, seconds);
+            // the "start silent, then fade in" idiom takes the level over (#404) — and then fades up from silence
+            if (BeginAudibleFade(b, target, "FadeTo")) VortexAudio.FadeVoiceFrom(b.Handle, 0f, target, seconds);
+            else VortexAudio.FadeVoice(b.Handle, target, seconds);
         }
 
         /// <summary>What a fade towards <paramref name="target"/> does with the source's own level (#404). The envelope
@@ -598,23 +600,27 @@ namespace Editor.Core.Services
         /// <summary>Sources whose fade could not be heard (Volume 0 or Mute) — warned once per play session.</summary>
         private readonly HashSet<AudioSource> _warnedInaudibleFades = new HashSet<AudioSource>();
 
-        private void BeginAudibleFade(SourceBinding b, float target, string what)
+        /// <summary>True when the fade takes the level over: the envelope is at 0 and the caller's fade must start there.</summary>
+        private bool BeginAudibleFade(SourceBinding b, float target, string what)
         {
             var plan = PlanFade(b.Source, target, b.FreshStart);
             if (plan == FadeStart.TakesOverLevel)
             {
-                // silent first (the envelope at 0), so raising Volume can never click; Stop restores the authored Volume
+                // silent first (the envelope at 0), so raising Volume can never click; Stop restores the authored Volume.
+                // The caller's fade replaces this snap if the mixer has not taken it yet — so it starts from 0 itself.
                 VortexAudio.FadeVoice(b.Handle, 0f, 0f);
                 b.Source.Volume = 1f;
                 VortexAudio.SetVoiceVolume(b.Handle, b.RolledVolumeScale);
+                return true;
             }
-            else if ((plan == FadeStart.Muted || plan == FadeStart.SilentVolume) && _warnedInaudibleFades.Add(b.Source))
+            if ((plan == FadeStart.Muted || plan == FadeStart.SilentVolume) && _warnedInaudibleFades.Add(b.Source))
             {
                 ConsoleService.Instance.LogWarning("[Audio] " + what + " on '" + (b.Entity?.Name ?? "?") + "' cannot be heard: " +
                     (plan == FadeStart.Muted ? "its Audio Source is muted (Mute) — the fade envelope multiplies the source's level."
                                              : "its Volume is 0 — the fade envelope multiplies the source's level. (To start silent and fade in: " +
                                                "Volume = 0, Play() and the fade in the same frame.)"));
             }
+            return false;
         }
 
         /// <summary>An in-flight one-shot: its voice and its own reverb mix (#496) — the per-frame send is that mix x the
@@ -790,11 +796,9 @@ namespace Editor.Core.Services
             _musicCurrent = h;
             _musicCurrentClip = clip;
             _musicAdaptive = adaptive;
-            if (fadeInSeconds > 0f)
-            {
-                VortexAudio.FadeVoice(h, 0f, 0f);            // envelope starts silent
-                VortexAudio.FadeVoice(h, 1f, fadeInSeconds); // native sample-accurate ramp
-            }
+            // native sample-accurate ramp from silence — one request with both ends (#465 review: a snap to 0 followed by a
+            // fade from the current level collapsed into one fade from full volume)
+            if (fadeInSeconds > 0f) VortexAudio.FadeVoiceFrom(h, 0f, 1f, fadeInSeconds);
         }
 
         public void MusicStop(float fadeOutSeconds = 0f)

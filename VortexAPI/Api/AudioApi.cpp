@@ -243,6 +243,13 @@ EDITOR_INTERFACE void AudioFadeVoice(u64 handle, f32 target, f32 seconds, s32 st
 	runtime::audio::voice_fade(handle, target, seconds, stop_when_done != 0);
 }
 
+// The same with an explicit start level (a fade-in from silence) — one request, so a fade-in issued right after
+// the voice started begins at `from` instead of collapsing into a fade from the current level.
+EDITOR_INTERFACE void AudioFadeVoiceFrom(u64 handle, f32 from, f32 target, f32 seconds, s32 stop_when_done)
+{
+	runtime::audio::voice_fade_from(handle, from, target, seconds, stop_when_done != 0);
+}
+
 // Hands a .vpak audio entry to the native engine — the name then plays exactly
 // like a file path (both decoded and streaming voices). Data is copied natively.
 EDITOR_INTERFACE s32 AudioRegisterClipData(const char* name, const void* data, u64 size)

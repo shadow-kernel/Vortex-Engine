@@ -98,11 +98,33 @@ namespace VortexEditor.Shell.Audio
                 await Task.Delay(300);   // the warnings reach the Console on the UI thread
                 int Warnings(GameEntity e) => log.Entries.Count(x => x.Message != null && x.Message.Contains("cannot be heard") && x.Message.Contains("'" + e.Name + "'"));
                 int mutedWarnings = Warnings(muted), radioWarnings = Warnings(radio);
+                bool fadeTo = Math.Abs(src.Volume - 1f) < 1e-6f && svc.ScriptIsPlaying(src);
+
+                // #465 review: a fade-in starts silent. Music.Play with a 4 s fade, 0.15 s in, against the same track at full
+                // level — the old "snap to 0, then fade from the current level" pair collapsed into one fade from full volume
+                float full = -1f, early = -1f;
+                if (device)
+                {
+                    svc.ScriptStop(src); svc.ScriptStop(radioSrc); svc.ScriptStop(mutedSrc);
+                    await Task.Delay(800);   // the meter's history drains
+                    svc.MusicPlay(Clip, 0f);
+                    await Task.Delay(300);
+                    VortexAudio.GetBusLevels(VortexAudio.BusMusic, out _, out full);
+                    svc.MusicStop();
+                    await Task.Delay(800);
+                    svc.MusicPlay(Clip, 4f);
+                    await Task.Delay(150);
+                    VortexAudio.GetBusLevels(VortexAudio.BusMusic, out _, out early);
+                    svc.MusicStop();
+                }
+                bool fadeInSilent = !device || (full > 0.02f && early < full * 0.25f);
+
                 log.Log("fade from silence: music bus peak " + peak.ToString("0.000") + " (device=" + device + "), Volume now " + src.Volume +
-                        ", playing=" + svc.ScriptIsPlaying(src) + "; radio Volume " + radioSrc.Volume + "; warnings muted=" + mutedWarnings +
-                        " radio=" + radioWarnings + ", documented=" + documented);
-                return documented && Math.Abs(src.Volume - 1f) < 1e-6f && svc.ScriptIsPlaying(src) && (peak > 0.05f || !device)
-                       && radioSrc.Volume == 0f && mutedWarnings == 1 && radioWarnings == 1;
+                        ", playing=" + fadeTo + "; radio Volume " + radioSrc.Volume + "; warnings muted=" + mutedWarnings +
+                        " radio=" + radioWarnings + ", documented=" + documented + "; Music.Play fade-in 0.15 s in: rms " + early.ToString("0.000") +
+                        " vs " + full.ToString("0.000") + " at full level");
+                return documented && fadeTo && (peak > 0.05f || !device)
+                       && radioSrc.Volume == 0f && mutedWarnings == 1 && radioWarnings == 1 && fadeInSilent;
             }
             catch (Exception ex) { log.LogError("fade from silence: " + ex.Message); return false; }
             finally

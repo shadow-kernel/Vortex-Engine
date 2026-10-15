@@ -633,16 +633,25 @@ namespace vortex::runtime::audio {
 
 	void voice_fade(voice_handle handle, f32 target, f32 seconds, bool stop_when_done)
 	{
+		voice_fade_from(handle, -1.0f, target, seconds, stop_when_done);
+	}
+
+	void voice_fade_from(voice_handle handle, f32 from, f32 target, f32 seconds, bool stop_when_done)
+	{
 		std::lock_guard<std::mutex> lock(g_voices_mutex);
 		voice_slot* slot = resolve(handle);
 		if (!slot) return;
 
 		const f32 goal = target < 0.0f ? 0.0f : (target > 1.0f ? 1.0f : target);
 		const u64 ms = seconds <= 0.0f ? 0 : (u64)(seconds * 1000.0f);
-		// -1 start = fade from the CURRENT envelope value — retargeting an in-flight
+		// begin -1 = fade from the CURRENT envelope value — retargeting an in-flight
 		// fade glides instead of snapping. miniaudio renders this sample-accurately
-		// on the audio thread, independent of the volume property.
-		ma_sound_set_fade_in_milliseconds(&slot->sound, -1.0f, goal, ms);
+		// on the audio thread, independent of the volume property. An explicit begin is
+		// one request with both ends: miniaudio keeps ONE pending fade per sound, so a snap
+		// to 0 followed by a fade "from the current value" in the same frame became a
+		// single fade from the old level — every fade-in started at full volume (#465 review).
+		const f32 begin = from < 0.0f ? -1.0f : (from > 1.0f ? 1.0f : from);
+		ma_sound_set_fade_in_milliseconds(&slot->sound, begin, goal, ms);
 
 		if (stop_when_done)
 		{

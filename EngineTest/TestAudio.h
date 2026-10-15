@@ -751,6 +751,29 @@ private:
 	{
 		using namespace runtime::audio;
 
+		// A fade-in from silence (FadeIn, Music.Play with a fade) begins silent (#465 review): miniaudio keeps ONE pending
+		// fade per sound, so the old "snap to 0, then fade from the current level" pair issued in one frame collapsed into
+		// a fade from full volume. Measured 0.15 s into a 2 s fade-in, against the same voice at full level.
+		{
+			voice_params f{};
+			f.loop = true;
+			f.volume = 0.8f;
+			auto level_after = [&](int variant) {
+				voice_handle v = voice_play(wav.c_str(), f);
+				if (variant == 1) { voice_fade(v, 0.0f, 0.0f, false); voice_fade(v, 1.0f, 2.0f, false); }   // the old pair
+				if (variant == 2) voice_fade_from(v, 0.0f, 1.0f, 2.0f, false);
+				tick_seconds(0.15f);
+				f32 rms = 0;
+				mixer_get_bus_levels(bus::sfx, nullptr, &rms);
+				voice_stop(v);
+				tick_seconds(0.7f);   // the meter's history drains
+				return rms;
+			};
+			const f32 full = level_after(0), pair = level_after(1), from = level_after(2);
+			std::printf("[info] 0.15 s into a 2 s fade-in: full level rms %.4f, snap + fade-from-current %.4f, fade from 0 %.4f\n", full, pair, from);
+			check("a fade-in from silence starts silent (explicit start level)", full > 0.05f && from < full * 0.25f);
+		}
+
 		// FadeTo 0 drops the metered level while the voice keeps playing.
 		voice_params p{};
 		p.loop = true;
