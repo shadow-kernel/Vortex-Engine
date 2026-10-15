@@ -165,13 +165,15 @@ namespace VortexEditor.Shell
             tower.Transform.LocalScale = new Vector3(30, 60, 6);
             sun.Entity.Transform.LocalRotation = new Vector3(20, 180, 0);   // the light travels towards the camera (-z), 20° down
             sun.ShadowType = ShadowType.Hard;
-            Aim(cam, new Vector3(0, 503, 0), new Vector3(0, 500.1f, 8));
             sun.ShadowDistance = 300f;
+            Aim(cam, new Vector3(0, 503, 0), new Vector3(0, 500.1f, 8));   // re-submits the scene
             var shade300 = await CameraSkySmoke.Sample("shadow_tall_caster_300.bmp", 0.5, 0.5);
             sun.ShadowDistance = 80f;
+            EditorViewportSession.RequestResubmit();
             var at80 = await CameraSkySmoke.Sample("shadow_tall_caster_80.bmp", 0.5, 0.5);
             sun.ShadowDistance = 300f;
             tower.Transform.LocalPosition = new Vector3(0, 530.1f, 2000);   // gone: the lit reference
+            EditorViewportSession.RequestResubmit();
             var lit300 = await CameraSkySmoke.Sample("shadow_tall_caster_300_lit.bmp", 0.5, 0.5);
             log.Log("sun shadow distance tall caster: the floor 8 m ahead in the shadow of a tower 127 m away: 300 m " + CameraSkySmoke.Rgb(shade300)
                 + " (without the tower " + CameraSkySmoke.Rgb(lit300) + "), 80 m " + CameraSkySmoke.Rgb(at80));
