@@ -154,6 +154,19 @@ namespace VortexEditor.Claude.Tools
             proc.ErrorDataReceived += (s, e) => OnLine(e.Data, errClosed);
             proc.Exited += (s, e) => exited.TrySetResult(true);
             HookEditorExit();
+            // the editor may play while the game runs (other tools work meanwhile): every time it does counts, not only how it ends
+            var playClock = new Stopwatch();
+            int plays = 0;
+            void OnPlayState(object s, PlayState st)
+            {
+                lock (playClock)
+                {
+                    bool playing = st == PlayState.Playing;
+                    if (playing && !playClock.IsRunning) { plays++; playClock.Start(); }
+                    else if (!playing && playClock.IsRunning) playClock.Stop();
+                }
+            }
+            PlayModeService.Instance.StateChanged += OnPlayState;
             EditorViewportSession.ActivePreviewDialogs++;   // the editor's viewport rests: the GPU is the player's
             try
             {
@@ -182,6 +195,7 @@ namespace VortexEditor.Claude.Tools
             }
             finally
             {
+                PlayModeService.Instance.StateChanged -= OnPlayState;
                 EditorViewportSession.ActivePreviewDialogs = Math.Max(0, EditorViewportSession.ActivePreviewDialogs - 1);
                 if (ReferenceEquals(_running, proc)) _running = null;
                 try { proc.CancelOutputRead(); proc.CancelErrorRead(); } catch { }
@@ -208,7 +222,12 @@ namespace VortexEditor.Claude.Tools
             string started = logLines.FirstOrDefault(l => l.StartsWith("scene: ", StringComparison.Ordinal));
             if (started != null && !started.StartsWith("scene: " + target.Name + " entities=", StringComparison.OrdinalIgnoreCase))
                 notes.Add("The player started in another scene (" + started + "): it finds the scenes the project lists and those in Assets/Scenes — keep '" + target.Name + "' there, or Save All so the project lists it.");
-            if (PlayModeService.Instance.IsPlaying) notes.Add("The editor started playing during the run: its game shared the GPU, the numbers are low.");
+            double playedSeconds; int playCount;
+            lock (playClock) { playedSeconds = playClock.Elapsed.TotalSeconds; playCount = plays; }
+            if (playCount > 0)
+                notes.Add("The editor played during the run (" + (playCount == 1 ? "once" : playCount + " times") + ", " + playedSeconds.ToString("0.#", CultureInfo.InvariantCulture)
+                          + " s of the " + clock.Elapsed.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture) + " s): its game shared the GPU, the numbers are low"
+                          + (PlayModeService.Instance.IsPlaying ? " — and it still plays." : "."));
 
             var result = ToolResult.Json(new
             {

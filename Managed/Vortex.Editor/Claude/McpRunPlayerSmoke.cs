@@ -20,7 +20,8 @@ namespace VortexEditor.Claude
     /// and run in the standalone player over MCP with arguments, an input script, a size and a render scale. The answer comes
     /// when the player ends — not when the helper does — with exit code 0, FPS and frame times, the script's capture and the
     /// last frame (the first inline as an image), the player it ran and no engine status line counted as an error; other tools
-    /// answer meanwhile and a second run is refused; the probe read the arguments; the save game went to the run's scratch
+    /// answer meanwhile, a second run and a capture_viewport are refused, and a moment of editor play during the run is in the
+    /// answer's note; the probe read the arguments; the save game went to the run's scratch
     /// app-data folder. Refused before anything starts: a capture outside the run folder (also hidden behind a bare \r), an
     /// unknown scene, a bad argument name. A player still running at timeout_seconds is killed, and one whose parent process
     /// is gone closes itself (#463 review).
@@ -127,9 +128,13 @@ namespace VortexEditor.Claude
                 var state = await C("get_play_state", new JsonObject());
                 bool answered = asked.ElapsedMilliseconds < 3000 && !running.IsCompleted;
                 bool second = await Refused(new JsonObject { ["seconds"] = 2 }, "Another run_player");
+                // the viewport rests: a capture is refused at once instead of being written whenever it wakes up
+                var cap = await Raw("capture_viewport", new JsonObject());
+                bool capRefused = (bool?)cap["isError"] == true && McpTestClient.Text(cap).Contains("run_player is running");
                 var raw = await running;
                 if (!answered) return Fail("get_play_state waited for the run (" + asked.ElapsedMilliseconds + " ms, run done " + running.IsCompleted + ", " + state.ToJsonString() + ")");
                 if (!second) return Fail("a second run_player during the first was not refused");
+                if (!capRefused) return Fail("capture_viewport during the run must be refused at once: " + McpTestClient.Text(cap));
                 if ((bool?)raw["isError"] == true) return Fail("run_player: " + McpTestClient.Text(raw));
                 var r = JsonNode.Parse(McpTestClient.Text(raw));
                 string runDir = (string)r["run_dir"];
@@ -157,11 +162,23 @@ namespace VortexEditor.Claude
                     return Fail("the run wrote into the editor's own app data");
                 if (Vortex.Application.Args.Count != 0) return Fail("the editor's Application.Args are not empty");
 
-                // ================= killed at timeout_seconds
-                var cut = await C("run_player", new JsonObject { ["seconds"] = 30, ["timeout_seconds"] = 3 });
+                // ================= killed at timeout_seconds — and the editor played for a moment meanwhile: the answer says so
+                // although it does not play at the end (the probe's save of that play lands in the editor's app data: it goes after)
+                var cutting = C("run_player", new JsonObject { ["seconds"] = 30, ["timeout_seconds"] = 4 });
+                await Task.Delay(800);
+                bool playStarted = !cutting.IsCompleted;
+                await C("enter_play_mode", new JsonObject { ["run_seconds"] = 0.3 });
+                await C("exit_play_mode", new JsonObject());
+                bool playedDuring = playStarted && !cutting.IsCompleted;
+                var cut = await cutting;
                 runDirs.Add((string)cut["run_dir"]);
                 if ((bool?)cut["timed_out"] != true || (bool?)cut["killed"] != true || ((double?)cut["wall_seconds"] ?? 99) > 20)
                     return Fail("a player still running at timeout_seconds must be killed: " + McpTestClient.Shorten(cut.ToJsonString()));
+                if (playedDuring && !((string)cut["note"] ?? "").Contains("played during the run"))
+                    return Fail("the editor played during the run and the answer does not say so: " + cut["note"]);
+                if (Directory.Exists(ownGames))
+                    foreach (var f in Directory.GetFiles(ownGames, "save_slot*.dat", SearchOption.AllDirectories))
+                        try { if (File.ReadAllText(f).Contains("mcp_probe_act")) File.Delete(f); } catch { }
 
                 // ================= a player whose parent is gone closes itself (a killed editor leaves no run behind)
                 var parent = Process.Start(OperatingSystem.IsWindows() ? new ProcessStartInfo("cmd.exe", "/c ping -n 2 127.0.0.1") { UseShellExecute = false, CreateNoWindow = true }
