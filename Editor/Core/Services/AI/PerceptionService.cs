@@ -98,7 +98,9 @@ namespace Editor.Core.Services.AI
         {
             if (!IsRunning) return;
             if (dt < 0f) dt = 0f;
-            if (dt > 0.25f) dt = 0.25f;
+            // a hitch counts as a quarter second of game time — up to 8× that while fast-forwarding (#425)
+            float cap = 0.25f * Math.Min(8f, Math.Max(1f, GameTime.EffectiveScale));
+            if (dt > cap) dt = cap;
             _time += dt;
             _rescan -= dt;
             if (_rescan <= 0f) { _rescan = 1f; Rescan(); }

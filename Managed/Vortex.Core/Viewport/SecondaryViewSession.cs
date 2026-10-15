@@ -71,6 +71,8 @@ namespace Editor.Core.Viewport
         {
             pixels = null; pw = ph = pitch = 0;
             if (EditorViewportSession.Main == null || !EditorViewportSession.Main.IsInitialized) return false;
+            // #361: this view may look where the game camera does not — every animator poses while it shows the play world
+            if (PlayModeService.Instance.IsPlaying) Editor.Core.Animation.AnimationService.FullDetailFor(0.5f);
             if (!EnsureTarget(w, h)) return false;
             var now = DateTime.Now;
             // a light of this view still fading (the light budget, #416) keeps it rendering, so it never stops half-faded

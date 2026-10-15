@@ -130,8 +130,13 @@ namespace Editor.ECS.Components.Rendering
         public bool IsMainCamera
         {
             get => _isMainCamera;
-            set { if (SetProperty(ref _isMainCamera, value, nameof(IsMainCamera))) RenderChanges.StructureChanged(); }   // the cached main camera (#361)
+            set { if (SetProperty(ref _isMainCamera, value, nameof(IsMainCamera))) { RenderChanges.StructureChanged(); BumpMainVersion(); } }   // the cached main camera (#361)
         }
+
+        // #361: counted up whenever a camera becomes or stops being the main one — PlayCameraHelper's cached lookup rebuilds
+        private static int _mainVersion;
+        internal static int MainVersion => System.Threading.Volatile.Read(ref _mainVersion);
+        private static void BumpMainVersion() => System.Threading.Interlocked.Increment(ref _mainVersion);
 
         /// <summary>
         /// Render-Tiefe (niedrigere Werte rendern zuerst)
@@ -200,6 +205,7 @@ namespace Editor.ECS.Components.Rendering
                         _isMainCamera = true;
                     else if (value == CameraType.GameCamera)
                         _isMainCamera = false;
+                    BumpMainVersion();
                     
                     OnPropertyChanged(nameof(IconColor));
                 }

@@ -772,12 +772,18 @@ namespace Editor.Core.Services.AI
             IsRunning = false;
         }
 
+        /// <summary>The longest crowd update (game seconds), and how many of them one frame may run while fast-forwarding (#425).</summary>
+        internal const float CrowdStep = 0.1f, MaxCrowdSteps = 8f;
+
         /// <summary>One frame: register new / re-activated agents, update the crowd, move the entities.</summary>
         public static void Tick(float dt)
         {
             if (!IsRunning || !Available) return;
             if (dt < 0f) dt = 0f;
-            if (dt > 0.1f) dt = 0.1f;
+            // a hitch counts as one crowd step of game time — more while fast-forwarding (#425: up to MaxCrowdSteps, stepped
+            // below), so the crowd keeps up with the clock to a time scale of about 48 at 60 fps
+            float cap = CrowdStep * Math.Min(MaxCrowdSteps, Math.Max(1f, GameTime.EffectiveScale));
+            if (dt > cap) dt = cap;
             _rescanTimer -= dt;
             if (_rescanTimer <= 0f) { _rescanTimer = 0.5f; Rescan(); }
             if (!IsLoaded) return;
@@ -818,8 +824,12 @@ namespace Editor.Core.Services.AI
                 }
             }
 
-            // 2) the crowd: path requests, corridor following, avoidance
-            VortexAPI.NavCrowdUpdate(dt);
+            // the game is paused (time scale 0, #425): the crowd holds still — nothing to step, nothing to write back
+            if (dt <= 0f) return;
+
+            // 2) the crowd: path requests, corridor following, avoidance — in steps of at most CrowdStep (fast-forward)
+            int sub = Math.Max(1, (int)Math.Ceiling(dt / CrowdStep - 1e-4f));
+            for (int s = 0; s < sub; s++) VortexAPI.NavCrowdUpdate(dt / sub);
 
             // 3) crowd -> entities
             bool moved = false;

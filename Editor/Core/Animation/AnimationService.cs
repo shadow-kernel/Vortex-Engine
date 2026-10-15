@@ -78,6 +78,11 @@ namespace Editor.Core.Animation
             // chain runtime list is rebuilt each Step); cleared by RefreshIk on config edits.
             public Dictionary<int, Matrix4x4> IkCapturedGrips;
 
+            // ---- level of detail (#361) ----
+            public float SincePose;               // game seconds since the pose was last evaluated (grows while it is skipped)
+            public bool PoseStale;                // the clock moved on since the last pose (skipped off-screen / far away)
+            public float BoundRadius;             // the rig's bind-pose reach from the model origin (0 = not measured yet)
+
             // ---- rig-aware procedural layers (#147): hand poses, look-at, foot IK ----
             public int StepCount;                 // > 0 once the game/preview clock stepped this animator (play)
             public int LastStepTick;              // Environment.TickCount of the last Step (clock running = stepped recently)
@@ -302,6 +307,8 @@ namespace Editor.Core.Animation
             _states.Clear();
             _groups.Clear();
             HasActiveAnimators = false;
+            Lod.Reset();   // #361: a scene starts with the default level of detail
+            _animated.Clear(); _animatedScene = null; _animatedVersion = _animatedComponents = -1;
             _clips.MarkAllStale();
             _skeletons.MarkAllStale();
         }
@@ -315,11 +322,23 @@ namespace Editor.Core.Animation
 
         // ------------------------------------------------------------------ per-frame tick
 
-        /// <summary>Advance every enabled Animator in the scene. Called from ScriptRuntime.Update AFTER
+        /// <summary>Advance every enabled Animator in the scene by <paramref name="dt"/>. Called from ScriptRuntime.Update AFTER
         /// behaviours ran, so a same-frame Play() takes effect immediately.</summary>
-        public void Step(Data.Scene scene, float dt)
+        public void Step(Data.Scene scene, float dt) => Step(scene, dt, dt);
+
+        /// <summary>As <see cref="Step(Data.Scene, float)"/> with game seconds (<paramref name="dt"/>, scaled by the time scale,
+        /// #425) and real ones: an Animator with Ignore Time Scale plays by <paramref name="unscaledDt"/>.</summary>
+        public void Step(Data.Scene scene, float dt, float unscaledDt) => Step(scene, dt, unscaledDt, AnimationView.Unknown);
+
+        /// <summary>As above, from the camera the frame renders through (#361): an animator off-screen beyond
+        /// <see cref="AnimationLod.NearRadius"/> skips its pose, a far one updates it less often (<see cref="Lod"/>). An unknown
+        /// view animates everything every frame.</summary>
+        public void Step(Data.Scene scene, float dt, float unscaledDt, AnimationView view)
         {
             HasActiveAnimators = false;
+            _unscaledDt = unscaledDt;
+            _view = view;
+            PosesEvaluated = PosesSkipped = 0;
             if (scene?.Entities == null) return;
 
             // Advance sync-group master clocks FIRST — grouped members read Norm during their step.
@@ -336,16 +355,175 @@ namespace Editor.Core.Animation
                 }
             }
 
-            foreach (var e in scene.Entities) StepRecursive(e, dt);
+            // #361: the scene's animators from a list kept with the hierarchy (in hierarchy order, as the walk visited them) —
+            // the walk asked every entity for an Animator every frame, allocating an enumerator per entity
+            RefreshAnimated(scene);
+            for (int i = 0; i < _animated.Count; i++)
+            {
+                var (entity, animator) = _animated[i];
+                if (!animator.IsEnabled || !ActiveInHierarchy(entity)) continue;
+                StepEntity(entity, animator, animator.IgnoreTimeScale ? _unscaledDt : dt);
+            }
         }
 
-        private void StepRecursive(ECS.GameEntity entity, float dt)
+        private float _unscaledDt;   // this Step's real seconds (Ignore Time Scale, #425)
+        private AnimationView _view;  // this Step's camera (#361)
+
+        // ---- the scene's animators (#361): rebuilt when the entity graph changed, never per frame
+        private readonly List<(ECS.GameEntity Entity, ECS.Components.Animation.Animator Animator)> _animated = new List<(ECS.GameEntity, ECS.Components.Animation.Animator)>();
+        private Data.Scene _animatedScene;
+        private int _animatedVersion = -1, _animatedComponents = -1;
+
+        private void RefreshAnimated(Data.Scene scene)
         {
-            if (entity == null || !entity.IsActive) return;
-            var animator = entity.GetComponent<ECS.Components.Animation.Animator>();
-            if (animator != null && animator.IsEnabled) StepEntity(entity, animator, dt);
-            if (entity.Children != null)
-                foreach (var c in entity.Children) StepRecursive(c, dt);
+            int v = ECS.GameEntity.HierarchyVersion, c = ECS.GameEntity.ComponentsVersion;
+            if (ReferenceEquals(scene, _animatedScene) && v == _animatedVersion && c == _animatedComponents) return;
+            _animated.Clear();
+            for (int i = 0; i < scene.Entities.Count; i++) CollectAnimated(scene.Entities[i]);
+            _animatedScene = scene;
+            _animatedVersion = v;
+            _animatedComponents = c;
+        }
+
+        private void CollectAnimated(ECS.GameEntity e)
+        {
+            if (e == null) return;
+            var comps = e.Components;
+            for (int i = 0; i < comps.Count; i++)
+                if (comps[i] is ECS.Components.Animation.Animator a) { _animated.Add((e, a)); break; }   // the first, like GetComponent
+            var children = e.Children;
+            for (int i = 0; i < children.Count; i++) CollectAnimated(children[i]);
+        }
+
+        private static bool ActiveInHierarchy(ECS.GameEntity e)
+        {
+            for (var p = e; p != null; p = p.Parent) if (!p.IsActive) return false;
+            return true;
+        }
+
+        // ---- level of detail (#361) ----
+
+        /// <summary>The level-of-detail settings (Animation.SetLod). Back to the defaults by <see cref="ResetStates"/> (play start).</summary>
+        public AnimationLod Lod { get; } = new AnimationLod();
+
+        /// <summary>Animators whose pose was evaluated / skipped by the level of detail in the last Step (#361).</summary>
+        public int PosesEvaluated { get; private set; }
+        public int PosesSkipped { get; private set; }
+
+        /// <summary>The pose rate of an animator whose bounds (a sphere: <paramref name="center"/>, <paramref name="radius"/>) are
+        /// seen from <paramref name="view"/>: -1 = every frame, 0 = none (off-screen), n &gt; 0 = n poses per second. Pure: the
+        /// tests use it.</summary>
+        public static float PoseRate(AnimationLod lod, AnimationView view, Vector3 center, float radius)
+        {
+            if (lod == null || !lod.Enabled || !view.Known) return -1f;
+            var d = center - view.Eye;
+            float dist = d.Length();
+            if (dist <= lod.NearRadius + radius) return -1f;          // close by: seen or not (a mirror, a turn, a local light's shadow)
+            // off-screen, and its sun shadow too: no pose until either is seen again
+            if (!InView(view, d, dist, radius) && !ShadowInView(view, center, dist, radius)) return 0f;
+            // the far tiers go by apparent size: through a zoomed view (a scope) a far character is as big as a near one
+            float far = (dist - radius) * view.ZoomFactor;
+            if (far > lod.FarDistance * 2f) return lod.FarRate * 0.5f;
+            if (far > lod.FarDistance) return lod.FarRate;
+            return -1f;
+        }
+
+        /// <summary>Does the sphere touch the view? The frustum as a cone around the view axis as wide as its diagonal, plus a
+        /// margin: the pose decided this frame is drawn after the camera's last move of the frame.</summary>
+        private static bool InView(in AnimationView v, Vector3 d, float dist, float radius)
+        {
+            if (v.AllAround) return true;
+            float along = Vector3.Dot(d, v.Axis);
+            float across = MathF.Sqrt(MathF.Max(0f, dist * dist - along * along));
+            // a sphere is outside the cone when it lies wholly beyond the cone's side
+            return across * v.ConeCos - along * v.ConeSin <= radius;
+        }
+
+        /// <summary>Can the view see the character's sun shadow? Its bounds swept along the way the sunlight travels — as far
+        /// as the shadow can fall below it (<see cref="AnimationLod.ShadowDrop"/> metres down, longer the lower the sun, at
+        /// most the shadow distance) — touch the view, while it is within the shadow distance of the eye (beyond it nothing
+        /// casts). A low sun's long shadow of a character behind the camera keeps it posed: a frozen pose would slide along.</summary>
+        private static bool ShadowInView(in AnimationView v, Vector3 center, float dist, float radius)
+        {
+            if (!v.SunShadows || dist - radius > v.ShadowDistance) return false;
+            float down = Math.Max(0.02f, -v.SunDirection.Y);   // a sun at the horizon: as long as shadows get
+            float reach = Math.Min(v.ShadowDistance, (2f * radius + AnimationLod.ShadowDrop) / down);
+            float step = Math.Max(radius, 0.5f);               // spheres of the bounds' radius every radius metres cover the sweep
+            int n = Math.Min(64, (int)Math.Ceiling(reach / step));
+            for (int i = 1; i <= n; i++)
+            {
+                var p = center + v.SunDirection * (reach * i / n) - v.Eye;
+                if (InView(v, p, p.Length(), radius)) return true;
+            }
+            return false;
+        }
+
+        // ---- other views of the play world (#361 review): the level of detail only knows the game camera, so while a split
+        // or quad view, a camera preview or a capture renders, every animator poses every frame
+        private static long _fullDetailUntil;   // Stopwatch timestamp
+
+        /// <summary>Pose every animator every frame for the next <paramref name="seconds"/> (real time) — another view renders
+        /// the play world (split / quad views, a camera preview, an MCP capture). Called again while it keeps rendering.</summary>
+        public static void FullDetailFor(float seconds)
+        {
+            if (!(seconds > 0f)) return;
+            long until = System.Diagnostics.Stopwatch.GetTimestamp() + (long)(seconds * System.Diagnostics.Stopwatch.Frequency);
+            long cur;
+            do { cur = System.Threading.Interlocked.Read(ref _fullDetailUntil); if (until <= cur) return; }
+            while (System.Threading.Interlocked.CompareExchange(ref _fullDetailUntil, until, cur) != cur);
+        }
+
+        /// <summary>True while <see cref="FullDetailFor"/> holds: the view is unknown, every animator poses.</summary>
+        public static bool FullDetailRequested => System.Diagnostics.Stopwatch.GetTimestamp() < System.Threading.Interlocked.Read(ref _fullDetailUntil);
+
+        /// <summary>Is this animator's pose skipped this frame (#361)? Its time since the last pose grows by <paramref name="dt"/>.</summary>
+        private bool SkipPose(ECS.GameEntity entity, ECS.Components.Animation.Animator animator, AnimatorState state, float dt)
+        {
+            state.SincePose += dt;
+            // the first pose always comes (Activate On Start ragdolls, the first palette), and Always Animate opts out
+            if (state.StepCount <= 1 || animator.AlwaysAnimate || !_view.Known || !Lod.Enabled) return false;
+            var world = BoneSocketService.EntityWorld(entity);
+            float scale = Math.Max(new Vector3(world.M11, world.M12, world.M13).Length(), Math.Max(new Vector3(world.M21, world.M22, world.M23).Length(), new Vector3(world.M31, world.M32, world.M33).Length()));
+            if (state.BoundRadius <= 0f) state.BoundRadius = BindRadius(state.Skeleton);
+            float radius = state.BoundRadius * (scale > 0f && float.IsFinite(scale) ? scale : 1f) + AnimationLod.BoundsMargin;
+            float rate = PoseRate(Lod, _view, world.Translation, radius);
+            if (rate < 0f) return false;
+            return rate == 0f || state.SincePose < 1f / rate - 1e-4f;   // the margin: 30 per second at 60 fps is every 2nd frame, not 3rd
+        }
+
+        /// <summary>The model-space reach of a rig in its bind pose — the radius of a sphere around the model's origin that holds
+        /// every node.</summary>
+        private static float BindRadius(SkeletonDef skel)
+        {
+            float r = 0f;
+            try
+            {
+                var worlds = skel?.BindNodeWorldsCached();
+                if (worlds != null) foreach (var w in worlds) { float l = w.Translation.Length(); if (l > r && float.IsFinite(l)) r = l; }
+            }
+            catch { }
+            return r > 0f ? r : 1f;
+        }
+
+        /// <summary>A script asks for a bone (Animation.GetBoneTransform) or a ragdoll takes over: an animator whose pose the level
+        /// of detail skipped (#361) evaluates it now, so the answer is this frame's pose.</summary>
+        public void EnsurePose(ECS.GameEntity entity)
+        {
+            var owner = entity;
+            AnimatorState state = null;
+            for (var p = entity; p != null; p = p.Parent)   // the Animator may sit on an ancestor (submesh children)
+                if (_states.TryGetValue(p.Id, out state)) { owner = p; break; }
+            if (state == null || !state.PoseStale || state.Skeleton == null) return;
+            var animator = owner.GetComponent<ECS.Components.Animation.Animator>();
+            if (animator == null) return;
+            EvaluatePose(owner, animator, state, state.Playing && state.Clip != null, LayersPlaying(state));
+        }
+
+        private static bool LayersPlaying(AnimatorState state)
+        {
+            if (state.Layers == null) return false;
+            for (int i = 0; i < state.Layers.Count; i++) if (state.Layers[i].Playing && state.Layers[i].Clip != null) return true;
+            return false;
         }
 
         private void StepEntity(ECS.GameEntity entity, ECS.Components.Animation.Animator animator, float dt)
@@ -453,6 +631,26 @@ namespace Editor.Core.Animation
             state.StepCount++;
             state.LastStepTick = Environment.TickCount;
 
+            // #361 level of detail: the clock above — time, events (footsteps), fades, root-motion travel — always runs; the
+            // pose, the costly part, waits while the animator is off-screen and comes less often far away. Root motion is
+            // gameplay and moves the entity either way.
+            if (SkipPose(entity, animator, state, dt))
+            {
+                state.PoseStale = true;
+                PosesSkipped++;
+                if (animator.ApplyRootMotion && baseActive) ApplyRootMotion(entity, state);
+                Services.Physics.RagdollService.PoseSkipped(entity);   // a ragdoll later starts with how it moved meanwhile
+                return;
+            }
+            EvaluatePose(entity, animator, state, baseActive, layersActive);
+            if (animator.ApplyRootMotion && baseActive) ApplyRootMotion(entity, state);
+        }
+
+        /// <summary>The pose of this frame: the IK / hand / look-at / foot settings synced from the components, the palette and
+        /// node worlds evaluated (when anything plays or overrides the bones). The smoothing of look-at and foot IK advances by
+        /// the time since the last pose (#361: longer when the level of detail skipped some).</summary>
+        private void EvaluatePose(ECS.GameEntity entity, ECS.Components.Animation.Animator animator, AnimatorState state, bool baseActive, bool layersActive)
+        {
             // #179: refresh the runtime IK chains from the entity's TwoBoneIk components each Step so
             // inspector edits and script SetIkWeight take effect immediately.
             SyncIkChains(entity, state);
@@ -469,12 +667,15 @@ namespace Editor.Core.Animation
                                 || (state.LookCfg != null && state.LookRig != null)
                                 || (state.FootCfg != null && state.FootRig != null)
                                 || Services.Physics.RagdollService.NeedsPose(entity);   // #104: a ragdoll poses every frame
+            float sincePose = state.SincePose;
+            state.SincePose = 0f;
+            state.PoseStale = false;
             if (!baseActive && !layersActive && !overridesActive) return;
-            state.SmoothDt = dt;
+            state.SmoothDt = sincePose;
             try { state.Palette = EvaluateStatePalette(state); }
             finally { state.SmoothDt = 0f; }
             HasActiveAnimators = true;
-            if (animator.ApplyRootMotion && baseActive) ApplyRootMotion(entity, state);
+            PosesEvaluated++;
         }
 
         // ------------------------------------------------------------------ root motion (#113)
@@ -785,6 +986,22 @@ namespace Editor.Core.Animation
         public void Stop(ECS.GameEntity entity)
         {
             if (entity != null && _states.TryGetValue(entity.Id, out var s)) { s.Playing = false; s.StartHandled = true; }
+        }
+
+        /// <summary>Play <paramref name="clip"/> on <paramref name="entity"/> with the rig given directly instead of one read from
+        /// its model — the headless tests drive the clock, the time scale and the level of detail through it.</summary>
+        internal bool PlayWithRig(ECS.GameEntity entity, SkeletonDef skeleton, VortexAnimClip clip)
+        {
+            if (entity == null || skeleton == null || clip == null) return false;
+            var state = new AnimatorState { Entity = entity, Skeleton = skeleton };
+            _states[entity.Id] = state;
+            state.Clip = clip;
+            state.TrackNodes = ResolveTrackNodes(skeleton, clip);
+            state.Loop = clip.Loop;
+            state.Playing = true;
+            state.StartHandled = true;
+            state.Palette = EvaluateStatePalette(state);
+            return true;
         }
 
         // ------------------------------------------------------------------ synced groups (#174)
@@ -3136,5 +3353,76 @@ namespace Editor.Core.Animation
             var projectPath = Data.ProjectData.Current?.Path;
             return string.IsNullOrEmpty(projectPath) ? path : System.IO.Path.Combine(projectPath, path);
         }
+    }
+
+    /// <summary>The camera a frame renders through, as the animators' level of detail sees it (#361). <see cref="Unknown"/> (the
+    /// debug camera flies, another view renders, no main camera, a test without one): every animator poses every frame.</summary>
+    public readonly struct AnimationView
+    {
+        public readonly bool Known;
+        public readonly Vector3 Eye, Forward;
+        /// <summary>The widest vertical field of view the frame may render with (degrees) — the cone a character must be out of.</summary>
+        public readonly float VerticalFovDeg, Aspect;
+        /// <summary>The field of view it renders with now (degrees) — narrower through a scope: the far tiers scale with it.</summary>
+        public readonly float ZoomFovDeg;
+        /// <summary>The sun throws visible shadows (<see cref="SunDirection"/>: the way its light travels, normalized; they reach
+        /// <see cref="ShadowDistance"/> metres from the eye).</summary>
+        public readonly bool SunShadows;
+        public readonly Vector3 SunDirection;
+        public readonly float ShadowDistance;
+
+        // the view cone, worked out once per frame
+        internal readonly Vector3 Axis;
+        internal readonly float ConeCos, ConeSin, ZoomFactor;
+        internal readonly bool AllAround;
+
+        public AnimationView(Vector3 eye, Vector3 forward, float verticalFovDeg, float aspect)
+            : this(eye, forward, verticalFovDeg, aspect, verticalFovDeg, false, default, 0f) { }
+
+        public AnimationView(Vector3 eye, Vector3 forward, float verticalFovDeg, float aspect, float zoomFovDeg,
+                             bool sunShadows, Vector3 sunDirection, float shadowDistance)
+        {
+            Known = true; Eye = eye; Forward = forward; VerticalFovDeg = verticalFovDeg; Aspect = aspect;
+            Axis = forward.LengthSquared() > 1e-8f ? Vector3.Normalize(forward) : Vector3.UnitZ;
+            double tanV = Math.Tan(Math.Clamp(float.IsFinite(verticalFovDeg) ? verticalFovDeg : 60f, 1f, 170f) * Math.PI / 360.0);
+            double a = aspect > 0.05f && float.IsFinite(aspect) ? aspect : 16.0 / 9.0;
+            double half = Math.Atan(tanV * Math.Sqrt(1.0 + a * a)) + AnimationLod.ViewMarginDeg * Math.PI / 180.0;
+            AllAround = half >= Math.PI;
+            ConeCos = (float)Math.Cos(half); ConeSin = (float)Math.Sin(half);
+            // apparent size against the default 60° view; never below the unzoomed tiers (a wide view does not thin them out)
+            float zoom = zoomFovDeg > 0f && float.IsFinite(zoomFovDeg) ? Math.Clamp(zoomFovDeg, 1f, 170f) : 60f;
+            ZoomFovDeg = zoom;
+            ZoomFactor = (float)Math.Min(1.0, Math.Tan(zoom * Math.PI / 360.0) / Math.Tan(Math.PI / 6.0));
+            float sl = sunDirection.Length();
+            SunShadows = sunShadows && sl > 1e-6f && shadowDistance > 0f && float.IsFinite(shadowDistance);
+            SunDirection = SunShadows ? sunDirection / sl : default;
+            ShadowDistance = SunShadows ? shadowDistance : 0f;
+        }
+
+        public static AnimationView Unknown => default;
+    }
+
+    /// <summary>The animators' level of detail (#361, Animation.SetLod): within <see cref="NearRadius"/> of the camera every animator
+    /// poses every frame, seen or not; beyond it one outside the view — itself and its sun shadow — gets no new pose until it is
+    /// seen again, and one in view beyond <see cref="FarDistance"/> (scaled by the zoom: through a scope it counts as nearer)
+    /// poses <see cref="FarRate"/> times a second (half that beyond twice the distance). The clock, its events and root motion
+    /// always run; sockets that carry colliders, scripts, lights, particles or sound, bone queries and ragdolls take the current
+    /// pose. Defaults are chosen so nothing visible changes: 20 m, 50 m, 30 per second.</summary>
+    public sealed class AnimationLod
+    {
+        public const float DefaultNearRadius = 20f, DefaultFarDistance = 50f, DefaultFarRate = 30f;
+        /// <summary>Degrees added around the view: the pose decided in this frame's tick is drawn after the camera's last move.</summary>
+        public const float ViewMarginDeg = 15f;
+        /// <summary>Metres added to a rig's bind-pose reach: what it holds, its reach in motion.</summary>
+        public const float BoundsMargin = 1f;
+        /// <summary>How far below a character its sun shadow is looked for (m, plus its height): stairs, a ledge, a slope.</summary>
+        public const float ShadowDrop = 8f;
+
+        public bool Enabled = true;
+        public float NearRadius = DefaultNearRadius;
+        public float FarDistance = DefaultFarDistance;
+        public float FarRate = DefaultFarRate;
+
+        public void Reset() { Enabled = true; NearRadius = DefaultNearRadius; FarDistance = DefaultFarDistance; FarRate = DefaultFarRate; }
     }
 }

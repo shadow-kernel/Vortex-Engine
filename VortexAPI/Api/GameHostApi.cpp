@@ -38,6 +38,23 @@ EDITOR_INTERFACE void GameHostToggleFullscreen() { runtime::GameHost::toggle_ful
 EDITOR_INTERFACE bool GameHostIsFullscreen() { return runtime::GameHost::is_fullscreen(); }
 // Settings menu: window resolution (windowed only) + render-scale (stored; applied by the scaled-RT upscale pass).
 EDITOR_INTERFACE void GameHostSetResolution(int w, int h) { runtime::GameHost::set_resolution((uint32_t)w, (uint32_t)h); }
+// The display's modes for an options menu (#462): pixels, refresh rate (Hz) and pixel density per mode, up to max entries;
+// returns how many there are. The game window's display, the main display in the editor.
+EDITOR_INTERFACE int GameHostDisplayModes(int* widths, int* heights, float* refreshHz, float* densities, int max)
+{
+	return runtime::GameHost::display_modes(widths, heights, refreshHz, densities, max < 0 ? 0 : max);
+}
+// That display's current (desktop) mode in pixels: 1 = read, 0 = not available.
+EDITOR_INTERFACE int GameHostCurrentDisplayMode(int* width, int* height, float* refreshHz, float* density)
+{
+	int w = 0, h = 0; float hz = 0.0f, d = 1.0f;
+	bool ok = runtime::GameHost::current_display_mode(w, h, hz, d);
+	if (width) *width = w;
+	if (height) *height = h;
+	if (refreshHz) *refreshHz = hz;
+	if (density) *density = d;
+	return ok ? 1 : 0;
+}
 EDITOR_INTERFACE void SetRenderScale(float s) { graphics::Renderer::instance().set_render_scale(s); }
 EDITOR_INTERFACE float GetRenderScale() { return graphics::Renderer::instance().render_scale(); }
 

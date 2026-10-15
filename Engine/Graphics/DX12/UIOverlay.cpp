@@ -203,6 +203,15 @@ namespace vortex::graphics::dx12
 
 		m_d2dCtx->SetTarget(t.bitmap.Get());
 		m_d2dCtx->BeginDraw();
+		// The commands are in UI units — begin()'s width x height, the client units / DIPs the game lays out in (#454) — and
+		// fill the back buffer: on a scaled display (the per-monitor DPI aware game window, the editor's DIPs) one unit
+		// covers several pixels (#462). 1:1 when the units are the pixels.
+		{
+			const D3D12_RESOURCE_DESC bb = backBuffer->GetDesc();
+			const float sx = m_w > 0.0f ? (float)bb.Width / m_w : 1.0f;
+			const float sy = m_h > 0.0f ? (float)bb.Height / m_h : 1.0f;
+			m_d2dCtx->SetTransform(D2D1::Matrix3x2F::Scale(sx, sy));
+		}
 
 		int clipDepth = 0;   // balance PushAxisAlignedClip/PopAxisAlignedClip before EndDraw (D2D asserts otherwise)
 		for (const auto& c : m_cmds)
@@ -255,6 +264,7 @@ namespace vortex::graphics::dx12
 		}
 
 		while (clipDepth-- > 0) m_d2dCtx->PopAxisAlignedClip();   // safety: never leave a clip open at EndDraw
+		m_d2dCtx->SetTransform(D2D1::Matrix3x2F::Identity());
 		m_d2dCtx->EndDraw();
 		m_d2dCtx->SetTarget(nullptr);
 

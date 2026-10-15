@@ -280,8 +280,16 @@ namespace Editor.DllWrapper
         // Vertical FOV (degrees) of the live view camera — set from the game's FOV setting.
         public static void SetViewFOV(float fovDegrees)
         {
+            if (fovDegrees > 0f && fovDegrees < 180f) _viewFov = fovDegrees;
             SetViewFieldOfView(fovDegrees);
         }
+
+        private static volatile float _viewFov = float.NaN;
+
+        /// <summary>The vertical field of view (degrees) the live view last got through <see cref="SetViewFOV"/> — the main
+        /// camera's, or a script's zoom (Camera.SetFieldOfView); NaN before the first call. The animators' level of detail
+        /// scales its far distances by it (#361: through a scope, a far character is as big as a near one).</summary>
+        public static float ViewFov => _viewFov;
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetViewClipPlanes(float nearClip, float farClip);
@@ -1068,6 +1076,29 @@ namespace Editor.DllWrapper
             try { ClearLights(); } catch { }
         }
 
+        /// <summary>The sun as the renderer last got it (<see cref="SetDirectionalLightParams"/> — the scene's Directional Light,
+        /// the default sun, a script's): direction the light travels, intensity, its shadows. The animators' level of detail
+        /// keeps a character posed whose shadow may fall into the view (#361). Immutable; replaced when a value changes.</summary>
+        public sealed class SunLight
+        {
+            public readonly float DirX, DirY, DirZ, Intensity, ShadowStrength, ShadowDistance;
+            public readonly bool CastShadows;
+
+            public SunLight(float dirX, float dirY, float dirZ, float intensity, bool castShadows, float shadowStrength, float shadowDistance)
+            {
+                DirX = dirX; DirY = dirY; DirZ = dirZ; Intensity = intensity;
+                CastShadows = castShadows; ShadowStrength = shadowStrength; ShadowDistance = shadowDistance;
+            }
+
+            /// <summary>Does it throw shadows anyone can see: on, lit and dark enough, reaching somewhere.</summary>
+            public bool ShadowsVisible => CastShadows && Intensity > 0f && ShadowStrength > 0f && ShadowDistance > 0f;
+        }
+
+        private static volatile SunLight _sun;
+
+        /// <summary>The sun as last set — null before the first <see cref="SetDirectionalLightParams"/>.</summary>
+        public static SunLight LastSun => _sun;
+
         /// <summary>
         /// Set the primary directional light (sun light). Shadow params (#24): castShadows renders
         /// cascaded shadow maps for the sun — 3 stabilized ortho cascades out to shadowDistance world
@@ -1080,6 +1111,10 @@ namespace Editor.DllWrapper
             bool castShadows = false, float shadowStrength = 1.0f,
             float shadowBias = 0.0008f, float shadowDistance = 80.0f)
         {
+            var last = _sun;
+            if (last == null || last.DirX != dirX || last.DirY != dirY || last.DirZ != dirZ || last.Intensity != intensity
+                || last.CastShadows != castShadows || last.ShadowStrength != shadowStrength || last.ShadowDistance != shadowDistance)
+                _sun = new SunLight(dirX, dirY, dirZ, intensity, castShadows, shadowStrength, shadowDistance);
             try
             {
                 SetDirectionalLight(dirX, dirY, dirZ, colorR, colorG, colorB, intensity,

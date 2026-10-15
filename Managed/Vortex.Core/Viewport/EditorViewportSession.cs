@@ -269,7 +269,7 @@ namespace Editor.Core.Viewport
                     VortexAPI.UIBegin((float)uw, (float)uh);   // the same point space the scripts see (#454)
                 }
 
-                VortexAPI.StepEngineRuntime(dt);
+                VortexAPI.StepEngineRuntime(dt, GameTime.EffectiveScale);   // the fallback physics on game time (#425)
                 ReadbackPhysics();
                 // this tick's wheel notches, 0 on a tick without any (#319): the wheel event used to set ScrollDelta and
                 // nothing reset it, so a zoom or weapon-switch script kept scrolling after one notch
@@ -374,6 +374,9 @@ namespace Editor.Core.Viewport
             {
                 float t = VortexAPI.GameTime();
                 status += $"   ·   ▶ {((int)t) / 60:00}:{((int)t) % 60:00}";
+                // the game's slow motion / pause and the play menu's test multiplier (#425), when they are not 1
+                float scale = GameTime.EffectiveScale;
+                if (Math.Abs(scale - 1f) > 1e-4f) status += "   ·   Time ×" + scale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
                 status += _mouseCaptured ? "   ·   Esc releases the mouse" : "   ·   Click to capture the mouse";
             }
             else if (_gameViewMode)
@@ -844,6 +847,7 @@ namespace Editor.Core.Viewport
                 _navPrev[i] = held;
             }
             ScriptRuntime.Instance.SetUIFrame(f.W, f.H, mx, my, down, pressed, f.Scale);
+            ScriptRuntime.Instance.SetScreenPixels((int)_pixelW, (int)_pixelH);   // the play view's drawable (#462)
         }
 
         private void BeginPlaySimulation()
@@ -874,6 +878,8 @@ namespace Editor.Core.Viewport
             // the per-tick feed comes one frame later, so Start() saw zeros (first play) or the last session's size (#454)
             var f = UiFrame(_host, _pointerX, _pointerY);
             ScriptRuntime.Instance.SetUIFrame(f.W, f.H, f.MouseX, f.MouseY, false, false, f.Scale);
+            ScriptRuntime.Instance.SetScreenPixels((int)_pixelW, (int)_pixelH);   // Screen.PixelWidth is real in Start too (#462)
+            _renderScaleAtPlay = VortexAPI.GetRenderScale();                      // a script's render resolution ends with play
             ScriptRuntime.Instance.BeginPlaySession(scene);   // a new session reads the saves from disk again (#452)
         }
 
@@ -978,12 +984,16 @@ namespace Editor.Core.Viewport
                 foreach (var c in e.Children) SnapshotTransformRecursive(c);
         }
 
+        private float _renderScaleAtPlay = 1f;
+
         private void EndPlaySimulation()
         {
             if (!_simActive) return;
             _simActive = false;
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
+            // Settings.SetRenderScale / SetRenderResolution (#462) set the shared renderer's scale: the edit view gets its own back
+            if (Math.Abs(VortexAPI.GetRenderScale() - _renderScaleAtPlay) > 1e-4f) VortexAPI.SetRenderScale(_renderScaleAtPlay);
             ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
             HostInput.Simulated.Clear();                   // no simulated key stays held into editing (#457)
             Vortex.Input.SetSimulated(0f, 0f, 0f);

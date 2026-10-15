@@ -90,15 +90,21 @@ namespace Editor.Core.Services
 
         public static Editor.ECS.Components.Transform FindMainCamera(Scene scene) => FindMainCameraEntity(scene)?.Transform;
 
+        // #361: the lookup ran over the whole scene several times a frame (the play view, the audio listener fallback, the
+        // animators' level of detail) — it is remembered until the hierarchy or a camera's main flag changes
+        private static int _mainHierarchy = -1, _mainComponents = -1, _mainFlags = -1;
+
         /// <summary>The entity carrying the scene's main camera (first in hierarchy order), or null.</summary>
         public static GameEntity FindMainCameraEntity(Scene scene)
         {
             if (scene?.Entities == null) return null;
             // The lights, terrain, foliage, water and the play camera each ask every frame, and the search walked the scene up
-            // to the camera each time (#361): the answer is kept until the hierarchy changes (RenderChanges.StructureVersion —
-            // entities, components, a camera's IsMainCamera) or the scene's root list does.
+            // to the camera each time (#361): the answer is kept while neither the render structure (RenderChanges.StructureVersion,
+            // the scene's root list) nor the scene graph's versions (hierarchy, components, a camera's IsMainCamera) changed.
             var roots = scene.Entities;
-            if (ReferenceEquals(scene, _mainCamScene) && ReferenceEquals(roots, _mainCamRoots) && _mainCamVersion == RenderChanges.StructureVersion)
+            int h = GameEntity.HierarchyVersion, c = GameEntity.ComponentsVersion, m = Editor.ECS.Components.Rendering.Camera.MainVersion;
+            if (ReferenceEquals(scene, _mainCamScene) && ReferenceEquals(roots, _mainCamRoots) && _mainCamVersion == RenderChanges.StructureVersion
+                && h == _mainHierarchy && c == _mainComponents && m == _mainFlags)
                 return _mainCam;
             GameEntity found = null;
             for (int i = 0; i < roots.Count && found == null; i++) found = Rec(roots[i]);
@@ -111,6 +117,7 @@ namespace Editor.Core.Services
             _mainCamScene = scene;
             _mainCamVersion = RenderChanges.StructureVersion;
             _mainCam = found;
+            _mainHierarchy = h; _mainComponents = c; _mainFlags = m;
             return found;
         }
 

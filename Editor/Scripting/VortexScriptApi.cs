@@ -365,12 +365,25 @@ namespace Vortex
         public string Tag;
     }
 
-    /// <summary>Coroutine yield instruction: pause the coroutine for the given seconds.
-    /// <c>yield return new WaitForSeconds(2f);</c> — <c>yield return null</c> waits one frame.</summary>
+    /// <summary>Coroutine yield instruction: pause the coroutine for the given seconds of GAME time — slowed by
+    /// <see cref="Time.TimeScale"/>, and held while it is 0 (#425). <c>yield return new WaitForSeconds(2f);</c> —
+    /// <c>yield return null</c> waits one frame. For a menu that must count while the game is paused use
+    /// <see cref="WaitForSecondsRealtime"/>.</summary>
     public sealed class WaitForSeconds
     {
         internal readonly float Seconds;
+        /// <summary>Wait <paramref name="seconds"/> of game time (negative counts as 0).</summary>
         public WaitForSeconds(float seconds) { Seconds = seconds > 0f ? seconds : 0f; }
+    }
+
+    /// <summary>Coroutine yield instruction: pause the coroutine for the given REAL seconds, whatever
+    /// <see cref="Time.TimeScale"/> says (#425) — a pause menu's countdown, a hit-stop that ends on time:
+    /// <c>Time.TimeScale = 0f; yield return new WaitForSecondsRealtime(0.08f); Time.TimeScale = 1f;</c></summary>
+    public sealed class WaitForSecondsRealtime
+    {
+        internal readonly float Seconds;
+        /// <summary>Wait <paramref name="seconds"/> of real time (negative counts as 0).</summary>
+        public WaitForSecondsRealtime(float seconds) { Seconds = seconds > 0f ? seconds : 0f; }
     }
 
     /// <summary>Handle to a running coroutine (returned by <see cref="VortexBehaviour.StartCoroutine"/>).
@@ -385,10 +398,11 @@ namespace Vortex
 
     /// <summary>
     /// Base class for all gameplay behaviours — like MonoBehaviour. Override Start (called once when
-    /// play begins) and Update (called every tick). Move your entity via Position / Translate, read
-    /// input via Input.GetKey, and timing via Time.DeltaTime. For collision zones, mark a Collider as
-    /// a Trigger and override OnTriggerEnter/OnTriggerStay/OnTriggerExit (e.g. a no-fly zone, or "change
-    /// color when touched"); for solid contacts override OnCollisionEnter.
+    /// play begins) and Update (called every tick), FixedUpdate for physics at a fixed rate (#481), OnEnable / OnDisable for
+    /// the moments the entity is switched on and off (#422). Move your entity via
+    /// Position / Translate, read input via Input.GetKey, and timing via Time.DeltaTime (game time, scaled by
+    /// Time.TimeScale). For collision zones, mark a Collider as a Trigger and override OnTriggerEnter/OnTriggerStay/OnTriggerExit
+    /// (e.g. a no-fly zone, or "change color when touched"); for solid contacts override OnCollisionEnter.
     /// </summary>
     public abstract class VortexBehaviour
     {
@@ -399,6 +413,24 @@ namespace Vortex
         /// <summary>Set by the runtime when its OnDestroy is about to run (entity destroyed, play ended): from then on it
         /// gets no Start/Update/callback any more and lookups skip it; the tick list drops it between ticks.</summary>
         internal bool Destroyed;
+
+        // Lifecycle state (#422): Start ran; OnEnable was delivered and no OnDisable since; the Script component is switched off
+        // (no Update / LateUpdate / FixedUpdate while it is).
+        internal bool Started, LifecycleEnabled, ScriptDisabled;
+
+        /// <summary>The Script component's enable switch (#422, Unity's enabled): false stops Update, LateUpdate and FixedUpdate
+        /// and calls OnDisable (when the entity is active); true calls OnEnable — and Start, if this script never ran it.
+        /// Coroutines, messages, triggers and collisions keep reaching a disabled script. The Inspector's checkbox on the Script
+        /// component is the same switch. <c>Enabled = false;</c> — a turret that stops thinking.</summary>
+        public bool Enabled
+        {
+            get => !ScriptDisabled;
+            set { Editor.Scripting.ScriptRuntime.Instance.SetBehaviourEnabled(this, value); }
+        }
+
+        /// <summary>True while this script is enabled AND its entity is active in the hierarchy (itself and every ancestor) —
+        /// between OnEnable and OnDisable (Unity's isActiveAndEnabled).</summary>
+        public bool IsActiveAndEnabled => LifecycleEnabled && !Destroyed;
 
         /// <summary>The host the engine wires up so behaviours can affect the live game.</summary>
         internal static IScriptHost Host;
@@ -667,13 +699,57 @@ namespace Vortex
         /// <summary>Script handles of this entity's direct children.</summary>
         public long[] GetChildren() { return Scene.Children(EntityId); }
 
+        /// <summary>Called once before the script's first Update: at play start (after the OnEnable of every active script), or
+        /// when it is spawned, attached or first switched on while playing.</summary>
         public virtual void Start() { }
+        /// <summary>Called every tick while the script is <see cref="Enabled"/>; <paramref name="dt"/> = <see cref="Time.DeltaTime"/>,
+        /// game seconds (0 while <see cref="Time.TimeScale"/> is 0).</summary>
         public virtual void Update(float dt) { }
+
+        /// <summary>The script became active (#422): its entity is active in the hierarchy (itself and every ancestor) and the
+        /// script is <see cref="Enabled"/>. Called after the entity's colliders, physics bodies and audio were created, so
+        /// <c>Physics.HasRigidbody(EntityId)</c> is true here for a Rigidbody entity — apply the first impulse, register with a
+        /// manager, start a lane. When: at play start for an entity that is active then (before every Start); when
+        /// <see cref="Scene.SetActive"/> switches the entity or an ancestor on; for a spawned prefab inside
+        /// <see cref="Scene.Instantiate"/> (before its Start); when the script is enabled again. Once per activation: a child that
+        /// was switched off on its own gets none when its parent comes on.
+        /// <para>Lifecycle: OnEnable → Start (once) → Update / FixedUpdate / LateUpdate … → OnDisable → OnDestroy. A script on
+        /// an entity that is INACTIVE at play start still runs Start then and keeps getting Update (as before #422 — check
+        /// <see cref="IsActiveAndEnabled"/> to pause yourself); its OnEnable comes when the entity is switched on.</para></summary>
+        public virtual void OnEnable() { }
+
+        /// <summary>The script stops being active (#422): its entity or an ancestor is switched off (<see cref="Scene.SetActive"/>),
+        /// the script is disabled, or it is about to be destroyed (Scene.Destroy, play stops — then OnDestroy follows). Called
+        /// BEFORE the colliders and bodies go: they are still there inside it. Only after an OnEnable — never twice in a row,
+        /// never for a child that was already switched off on its own. While it runs, the entity being switched off already
+        /// counts as inactive: switching a child or another script on from here changes their switch, and their OnEnable
+        /// comes when the entity is switched on again; while play stops, nothing comes alive any more.</summary>
+        public virtual void OnDisable() { }
+
+        /// <summary>Runs right before each physics step (#481), with <paramref name="fixedDt"/> = <see cref="Time.FixedDeltaTime"/>
+        /// (1/60 s unless the project sets another rate): 0, 1 or several times per frame — as many times as the frame runs
+        /// physics steps (none on a short frame at a high frame rate, two on a 30 fps frame, none at all while
+        /// <see cref="Time.TimeScale"/> is 0). Put frame-rate-independent physics here — engine force, drag, downforce,
+        /// buoyancy, a hover controller: a force added here acts on exactly the step that follows, so a car handles the same
+        /// at 30 and at 144 fps. (A force added in Update acts on the next step only — once per frame, however many steps the
+        /// frame runs — so its effect depends on the frame rate.)
+        /// <para>Order in a frame: every Update → the AI tick → [FixedUpdate → physics step] × steps → LateUpdate → animation.
+        /// Inside it <see cref="Time.DeltaTime"/> is the fixed step and <see cref="Time.InFixedStep"/> is true. Contacts of a
+        /// frame's steps (OnCollisionEnter, OnTrigger*) are reported once after its last step, so the next frame's FixedUpdate
+        /// sees them. Inside FixedUpdate every dynamic body's Position and Rotation are where the simulation has it — after the
+        /// previous step, fresh for each step — so a spring or a hover controller reads the state it acts on; Update and
+        /// LateUpdate see the pose that renders, interpolated between the last two steps (whatever moved the body). A
+        /// transform a script writes here is what renders, so move kinematic things in Update.</para>
+        /// <c>public override void FixedUpdate(float fixedDt) { AddForce(Forward * EngineForce); }</c></summary>
+        public virtual void FixedUpdate(float fixedDt) { }
+
         /// <summary>Runs AFTER every behaviour's Update() this frame (Unity-style). Use it for anything that
         /// must read the FINAL state the other scripts produced this tick — most importantly a first-person
         /// VIEWMODEL that follows the camera: positioning it here (not in Update) guarantees the camera script
         /// already moved this frame, so the weapon can't lag a frame behind and jitter (worst at uncapped FPS).</summary>
         public virtual void LateUpdate(float dt) { }
+        /// <summary>Called once when the entity is destroyed (Scene.Destroy) or play stops — after OnDisable when the script was
+        /// active. Unsubscribe from Events / Areas here.</summary>
         public virtual void OnDestroy() { }
 
         /// <summary>Called when another behaviour <see cref="SendMessage"/>s this entity.</summary>
@@ -869,11 +945,69 @@ namespace Vortex
 
     }
 
-    /// <summary>Frame timing.</summary>
+    /// <summary>Frame timing and the game's clock (#425, #481). Update and LateUpdate get <see cref="DeltaTime"/> — game seconds,
+    /// scaled by <see cref="TimeScale"/>; FixedUpdate gets <see cref="FixedDeltaTime"/>. Slow motion, a pause and fast forward
+    /// are one line: <c>Time.TimeScale = 0.2f;</c> — physics, ragdolls, animators, particles and decals, the AI crowd,
+    /// coroutines and Invoke timers all follow it from that frame on. The UI keeps real time: the .vui screens and their
+    /// <c>&lt;Screen&gt;Actions</c> classes (their Update gets the unscaled dt), UI.* drawing, the dev console; so does the sound
+    /// unless <see cref="Audio.SetPitchFollowsTimeScale"/> is on. A pause menu animates with <see cref="UnscaledDeltaTime"/>:
+    /// <code>
+    /// if (Input.GetKeyDown("Escape")) Time.TimeScale = Time.TimeScale > 0f ? 0f : 1f;   // the world freezes, the menu does not
+    /// _menuFade += Time.UnscaledDeltaTime * 4f;
+    /// </code></summary>
     public static class Time
     {
-        /// <summary>Seconds since the last tick (the runtime sets this each frame).</summary>
-        public static float DeltaTime { get; internal set; }
+        private static float _deltaTime;
+
+        /// <summary>Game seconds since the last tick — the dt Update and LateUpdate get: real seconds × <see cref="TimeScale"/>,
+        /// so 0 while the game is paused (TimeScale 0). Inside FixedUpdate it is <see cref="FixedDeltaTime"/>.</summary>
+        public static float DeltaTime
+        {
+            get => Editor.Core.Services.GameTime.InFixedStep ? Editor.Core.Services.GameTime.FixedDeltaTime : _deltaTime;
+            internal set => _deltaTime = value;
+        }
+
+        /// <summary>Real seconds since the last tick, whatever <see cref="TimeScale"/> says — for menus, UI animation and
+        /// anything that must keep running while the game is paused.</summary>
+        public static float UnscaledDeltaTime => Editor.Core.Services.GameTime.UnscaledDeltaTime;
+
+        /// <summary>The speed of game time (#425): 1 = normal (the default), 0.2 = slow motion, 0 = paused, 2 = fast forward;
+        /// 0..100. Everything the engine simulates follows it in the same frame: Jolt bodies and ragdolls (the fixed steps come
+        /// more or less often, each one still <see cref="FixedDeltaTime"/> long — rendered poses stay smooth), animators,
+        /// particles and decal fades, Nav Agents and the AI's trees, coroutines (WaitForSeconds) and Invoke timers. Update
+        /// keeps being called at 0, with dt 0; FixedUpdate is not. Resets to 1 when play starts and when it stops; stays across
+        /// scene loads. Fast-forward has limits per frame: physics runs at most 32 fixed steps (0.53 s of game time at 60 Hz —
+        /// about 32× at 60 fps), the AI crowd at most 0.8 s (in 0.1 s steps) and perception 2 s; asked for more, they fall
+        /// behind the clock.
+        /// <c>Time.TimeScale = 0.3f;</c> — bullet time.</summary>
+        public static float TimeScale
+        {
+            get => Editor.Core.Services.GameTime.Scale;
+            set => Editor.Core.Services.GameTime.Scale = value;
+        }
+
+        /// <summary>Seconds of game time per physics step — the dt FixedUpdate gets (#481). From the project's Fixed Update Rate
+        /// (Project Settings ▸ General ▸ Physics; 60 per second = 1/60 s unless the project says otherwise); a script may change
+        /// it for the rest of the session (0.001..0.1; back to the project's when play stops). Up to 4 steps' worth of game time run per frame (more while
+        /// fast-forwarding); a slower frame drops the rest instead of falling further behind.</summary>
+        public static float FixedDeltaTime
+        {
+            get => Editor.Core.Services.GameTime.FixedDeltaTime;
+            set => Editor.Core.Services.GameTime.FixedDeltaTime = value;
+        }
+
+        /// <summary>True while FixedUpdate runs (#481) — code shared by Update and FixedUpdate can tell which one called it.</summary>
+        public static bool InFixedStep => Editor.Core.Services.GameTime.InFixedStep;
+
+        /// <summary>Game seconds since play started — scaled by <see cref="TimeScale"/>, so it stands still while the game is
+        /// paused (Unity's Time.time). Goes on across scene loads.</summary>
+        public static float Elapsed => (float)Editor.Core.Services.GameTime.Elapsed;
+
+        /// <summary>Real seconds since play started, whatever <see cref="TimeScale"/> says.</summary>
+        public static float UnscaledElapsed => (float)Editor.Core.Services.GameTime.UnscaledElapsed;
+
+        /// <summary>Ticks since play started (1 on the first frame's Update).</summary>
+        public static int FrameCount => Editor.Core.Services.GameTime.FrameCount;
     }
 
     /// <summary>
@@ -902,11 +1036,19 @@ namespace Vortex
         // All queries return SCRIPT HANDLES (long, 0 = not found) — the same ids used by TriggerHit,
         // RaycastHit and behaviours' EntityId. Handles stay valid for the run (until scene switch/stop).
 
-        /// <summary>Find an entity anywhere in the scene by exact name (first match; 0 = none).</summary>
+        /// <summary>Find an entity anywhere in the scene by exact name (first match in hierarchy order, inactive ones included;
+        /// 0 = none). Answered from the scene's name index (#361), not by walking the scene — cheap enough for every frame.
+        /// Renames, retags, Scene.Instantiate and Scene.Destroy update the index as they happen.</summary>
         public static long Find(string name) { return Editor.Scripting.ScriptRuntime.Instance.FindEntityHandle(name); }
 
-        /// <summary>Every entity carrying the given Tag (set in the Inspector).</summary>
+        /// <summary>Every entity carrying the given Tag (set in the Inspector), in hierarchy order — from the scene's tag index
+        /// (#361). Allocates the array it returns; the overload with a list does not.</summary>
         public static long[] FindByTag(string tag) { return Editor.Scripting.ScriptRuntime.Instance.FindEntityHandlesByTag(tag); }
+
+        /// <summary>Every entity carrying the tag, into <paramref name="results"/> (cleared first) — no allocation per call once
+        /// the list has room, for a manager that asks every frame (#361). Returns the count.
+        /// <c>Scene.FindByTag("Enemy", _enemies); foreach (var id in _enemies) …</c></summary>
+        public static int FindByTag(string tag, List<long> results) { return Editor.Scripting.ScriptRuntime.Instance.FindEntityHandlesByTag(tag, results); }
 
         /// <summary>Parent of an entity (0 = root/none).</summary>
         public static long Parent(long entity) { return Editor.Scripting.ScriptRuntime.Instance.GetParentHandle(entity); }
@@ -960,6 +1102,55 @@ namespace Vortex
         /// <summary>The .vmat currently assigned to an entity's mesh ("" = the model's own material).</summary>
         public static string MaterialOf(long entity) { return Host != null ? Host.GetEntityMaterial(entity) : ""; }
 
+        /// <summary>Give an entity's Mesh Renderer another model at runtime (#421) — a project-relative path
+        /// ("Assets/Models/wreck.glb", "Assets/Models/car.glb#submesh2") or a primitive ("Primitive:Cube", "Primitive:Sphere"):
+        /// a car swaps to its wreck, a bare entity that got a Mesh Renderer (<see cref="AddComponent"/>) starts to render. It
+        /// renders from the next frame; a body made from the mesh (a Rigidbody without colliders) is rebuilt. False without a
+        /// Mesh Renderer. Play end restores the authored mesh.</summary>
+        public static bool SetMeshOf(long entity, string meshPath)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
+            var mr = e?.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr == null) return false;
+            mr.MeshPath = string.IsNullOrEmpty(meshPath) ? meshPath : meshPath.Replace('\\', '/');
+            if (Editor.Core.Services.Physics.PhysicsService.UsesMeshAsBody(e)) Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e);
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;
+            return true;
+        }
+
+        /// <summary>The model an entity's Mesh Renderer draws ("" without one).</summary>
+        public static string MeshOf(long entity)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
+            return e?.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>()?.MeshPath ?? "";
+        }
+
+        /// <summary>Add a component to an entity while the game runs (#421), by the name the Inspector's Add Component menu
+        /// shows (any case, spaces optional): "Rigidbody", "BoxCollider", "SphereCollider", "CapsuleCollider", "MeshCollider",
+        /// "Light", "AudioSource", "MeshRenderer", "ParticleSystem", "Animator", "NavAgent", "Decal", "Area", … It joins the
+        /// engine at once: a collider or a Rigidbody rebuilds the entity's OWN body (its children keep theirs) — a scene prop
+        /// with only a collider plus a Rigidbody falls from this frame on; a Light lights the next frame (<see cref="GetLight"/>
+        /// sets it up); an Audio Source can play now (<see cref="GetAudioSource"/>); a Mesh Renderer draws once it has a mesh
+        /// (<see cref="SetMeshOf"/>). The new component has the Inspector's defaults. Runtime only: when play stops it is gone
+        /// again. False — with a Console warning saying why — for an unknown entity or type, a Transform or Script, a second
+        /// Light, Camera, Rigidbody, Mesh Renderer, Audio Source or Audio Listener (one per entity), or a (Dynamic) Rigidbody on
+        /// an entity that moves a character (<see cref="Physics.AddRigidbody"/> says why).
+        /// <c>Scene.AddComponent(lamp, "Light"); Scene.GetLight(lamp).Intensity = 8f;</c></summary>
+        public static bool AddComponent(long entity, string type)
+            { return Editor.Scripting.ScriptRuntime.Instance.AddComponentAtRuntime(entity, type) != null; }
+
+        /// <summary>Remove an entity's component while the game runs (#421) — the first one of that type ("Collider" takes the
+        /// first collider of any kind). It leaves the engine at once: without its collider or Rigidbody the entity's own body is
+        /// rebuilt (a dynamic prop becomes static, or has no body), without its Light it goes dark, without its Audio Source
+        /// the sound stops. Runtime only: play end puts it back. False — with a warning — when there is none, and for a
+        /// Transform or Script (switch a script off with <see cref="VortexBehaviour.Enabled"/>).</summary>
+        public static bool RemoveComponent(long entity, string type)
+            { return Editor.Scripting.ScriptRuntime.Instance.RemoveComponentAtRuntime(entity, type); }
+
+        /// <summary>True when the entity has a component of that type (a base type counts its kinds: "Collider").</summary>
+        public static bool HasComponent(long entity, string type)
+            { return Editor.Scripting.ScriptRuntime.Instance.HasComponentAtRuntime(entity, type); }
+
         /// <summary>Set an entity's WORLD position + rotation in one call — correct even when the entity
         /// is a CHILD of a moved/rotated/scaled parent (the engine converts to the local frame; the
         /// entity's own scale is untouched). THE way to camera-lock a viewmodel that lives under the
@@ -1009,9 +1200,15 @@ namespace Vortex
 
         /// <summary>Activate/deactivate an entity and its children (#51) — the staple horror mechanic
         /// (monster appears behind you, prop swaps between glances, a door unlocks). Deactivating stops
-        /// rendering, REMOVES its colliders from the collision world and stops its audio sources;
+        /// rendering, REMOVES its colliders and physics bodies from the worlds and stops its audio sources;
         /// re-activating restores all of it. Behaviours keep their state. No allocation churn — far
-        /// cheaper than Instantiate/Destroy for on/off mechanics.</summary>
+        /// cheaper than Instantiate/Destroy for on/off mechanics.
+        /// <para>The scripts of the subtree hear it (#422): switching off calls OnDisable on every script whose entity was
+        /// active in the hierarchy, BEFORE its colliders and bodies go; switching on calls OnEnable once they exist again —
+        /// so a script that needs its live body (an impulse, Physics.SetKinematic, registering with a manager) does that in
+        /// OnEnable instead of polling Physics.HasRigidbody every Update. A child switched off on its own hears nothing.
+        /// Their Update keeps running while inactive, as before — <see cref="VortexBehaviour.IsActiveAndEnabled"/> tells.
+        /// A SetActive on the entity being switched from its own OnEnable / OnDisable is ignored (with a warning).</para></summary>
         public static void SetActive(long entity, bool active) { Editor.Scripting.ScriptRuntime.Instance.SetEntityActive(entity, active); }
 
         /// <summary>The entity's OWN active flag (Unity's activeSelf) — true even while hidden because
@@ -1033,14 +1230,16 @@ namespace Vortex
         // ---- Runtime prefab instantiation (#36) ----
 
         /// <summary>Spawn a prefab (.ventity asset, project-relative path like "Assets/Prefabs/Monster.ventity")
-        /// at a world position. Its Script components start immediately (Start() runs this frame), its colliders
-        /// join the collision world, and it renders the same frame. Returns the new entity's handle (0 = failed).
+        /// at a world position. Its colliders and bodies join the worlds, then its Script components start immediately:
+        /// OnEnable (#422 — the bodies exist), then Start, inside this call; it renders the same frame. Returns the new
+        /// entity's handle (0 = failed).
         /// THE jump-scare primitive: <c>Scene.Instantiate("Assets/Prefabs/Monster.ventity", pos, yaw);</c></summary>
         public static long Instantiate(string prefabPath, Vector3 position, float yawDegrees = 0f)
             { return Editor.Scripting.ScriptRuntime.Instance.InstantiatePrefabAt(prefabPath, position, yawDegrees); }
 
-        /// <summary>Remove an entity (spawned or authored) from the running game: behaviours get OnDestroy,
-        /// rendering + colliders are removed. The scene ASSET is untouched — this is runtime-only.</summary>
+        /// <summary>Remove an entity (spawned or authored) from the running game: its scripts and its children's get OnDisable
+        /// (the active ones, while the bodies are still there, #422) and then OnDestroy; rendering, colliders and bodies are
+        /// removed. The scene ASSET is untouched — this is runtime-only.</summary>
         public static void Destroy(long entity) { Editor.Scripting.ScriptRuntime.Instance.DestroyEntity(entity); }
     }
 
@@ -1803,10 +2002,32 @@ namespace Vortex
         /// Triggers are not included. Empty without a physics-enabled build.</summary>
         public static long[] OverlapSphere(Vector3 center, float radius) { return Host != null ? (Host.PhysicsOverlapSphere(center, radius) ?? new long[0]) : new long[0]; }
 
-        /// <summary>True when the entity is a moving physics body (a Dynamic or Kinematic Rigidbody).</summary>
+        /// <summary>Make an entity a physics body while the game runs (#421): it gets a Rigidbody — Dynamic, or Kinematic with
+        /// <paramref name="kinematic"/> — with <paramref name="mass"/> kg, and its body is built at once from its enabled
+        /// colliders (or from its mesh when it has no Collider at all), so a lamp post that was only a static collider falls,
+        /// rolls and gets pushed from this frame on, and Physics.AddImpulse works right away. Its children keep their own
+        /// bodies. An entity that has a Rigidbody already takes the mass and kind given. Runtime only: play end takes the
+        /// Rigidbody off again. False, with a Console warning, when the game has no physics world or the entity neither has an
+        /// enabled collider nor a mesh (it is left as it was), and for a Dynamic body on an entity that moves a character
+        /// (MoveCharacter with its id): the simulation would write over the character's moves every step — make it kinematic,
+        /// put the body on a child, or <see cref="RemoveCharacter"/> first. An entity that is switched off gets its body when it
+        /// is switched on. <c>if (Physics.AddRigidbody(hit.EntityId, 40f)) Physics.AddImpulse(hit.EntityId, dir * 200f);</c></summary>
+        public static bool AddRigidbody(long entity, float mass = 1f, bool kinematic = false)
+            { return Editor.Scripting.ScriptRuntime.Instance.AddRigidbodyAtRuntime(entity, mass, kinematic); }
+
+        /// <summary>Take an entity's Rigidbody off while the game runs (#421): it is a static body again (its colliders stay), or
+        /// has no body without colliders; children keep theirs. Play end puts an authored Rigidbody back. False when it has none.</summary>
+        public static bool RemoveRigidbody(long entity)
+            { return Editor.Scripting.ScriptRuntime.Instance.RemoveRigidbodyAtRuntime(entity); }
+
+        /// <summary>True when the entity is a moving physics body (a Dynamic or Kinematic Rigidbody). Bodies exist only while
+        /// the entity is active in the hierarchy: false while it or an ancestor is switched off (Scene.SetActive) — in Start of
+        /// a script under an inactive area root too. The body is there in the script's OnEnable (#422), which runs once it was
+        /// created; it is gone after OnDisable.</summary>
         public static bool HasRigidbody(long entity) { return Host != null && Host.PhysicsHasRigidbody(entity); }
 
-        /// <summary>Mass (kg) of the entity's simulated body — 0 without one.</summary>
+        /// <summary>Mass (kg) of the entity's simulated body — 0 without one, and 0 while the entity or an ancestor is
+        /// switched off (no body then; it is back in OnEnable, #422).</summary>
         public static float GetMass(long entity) { return Host != null ? Host.PhysicsGetMass(entity) : 0f; }
     }
 
@@ -1835,6 +2056,43 @@ namespace Vortex
 
         /// <summary>Current playback time in seconds.</summary>
         public static float Time(long entityId) { return Host != null ? Host.GetAnimationTime(entityId) : 0f; }
+
+        /// <summary>Let an entity's Animator play in real time whatever <see cref="Vortex.Time.TimeScale"/> says (#425) — the
+        /// player's own body while the world around them runs in slow motion, a menu character during a pause. The same as the
+        /// Animator's Ignore Time Scale box in the Inspector (the authored value is back after play). False when the entity has
+        /// no Animator. <c>Animation.SetIgnoreTimeScale(EntityId, true); Time.TimeScale = 0.25f;</c></summary>
+        public static bool SetIgnoreTimeScale(long entityId, bool ignore)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entityId);
+            var a = e?.GetComponent<Editor.ECS.Components.Animation.Animator>();
+            if (a == null) return false;
+            a.IgnoreTimeScale = ignore;
+            return true;
+        }
+
+        /// <summary>The animators' level of detail (#361) — on by default, set so that nothing you can see changes: within
+        /// <paramref name="nearRadius"/> metres of the camera every character poses every frame, seen or not (shadows, a quick
+        /// turn); beyond it a character outside the view keeps its clock, its animation events (footsteps) and its root motion,
+        /// but its pose — the costly part — waits until it is in view again; in view beyond <paramref name="farDistance"/> its
+        /// pose updates <paramref name="farRate"/> times a second, beyond twice that distance half as often. A bone query
+        /// (GetBoneTransform) and Ragdoll.Activate always get the current pose. An Animator with Always Animate (Inspector) opts
+        /// out; <c>Animation.SetLod(false)</c> poses everything every frame. Call in Start(); resets on every scene load.
+        /// <see cref="PosesEvaluated"/> / <see cref="PosesSkipped"/> show the effect.</summary>
+        public static void SetLod(bool enabled, float nearRadius = 20f, float farDistance = 50f, float farRate = 30f)
+        {
+            var lod = Editor.Core.Animation.AnimationService.Instance.Lod;
+            lod.Enabled = enabled;
+            lod.NearRadius = nearRadius >= 0f && float.IsFinite(nearRadius) ? nearRadius : Editor.Core.Animation.AnimationLod.DefaultNearRadius;
+            lod.FarDistance = farDistance > 0f && float.IsFinite(farDistance) ? farDistance : Editor.Core.Animation.AnimationLod.DefaultFarDistance;
+            lod.FarRate = farRate >= 1f && float.IsFinite(farRate) ? farRate : Editor.Core.Animation.AnimationLod.DefaultFarRate;
+        }
+
+        /// <summary>Animators whose pose was evaluated in the last frame (#361) — for a debug overlay next to
+        /// <see cref="PosesSkipped"/>.</summary>
+        public static int PosesEvaluated => Editor.Core.Animation.AnimationService.Instance.PosesEvaluated;
+
+        /// <summary>Animators whose pose the level of detail skipped in the last frame (off-screen or between far updates, #361).</summary>
+        public static int PosesSkipped => Editor.Core.Animation.AnimationService.Instance.PosesSkipped;
 
         // ---- bone-masked layers (#173) ----
 
@@ -2100,9 +2358,9 @@ namespace Vortex
         /// <summary>Mouse position in UI points (top-left origin) — the unit of <see cref="Width"/> and of every UI call.</summary>
         public static float MouseX { get { return Host != null ? Host.UIMouseX() : 0f; } }
         public static float MouseY { get { return Host != null ? Host.UIMouseY() : 0f; } }
-        /// <summary>Device pixels per UI point: 2 on a Retina (200 %) display, 1 on a standard one; the standalone player on
-        /// Windows draws its window at 1 (Windows scales it). The drawable is <c>UI.Width * UI.Scale</c> ×
-        /// <c>UI.Height * UI.Scale</c> pixels — what a render-resolution preset needs (#454).</summary>
+        /// <summary>Device pixels per UI point: 2 on a Retina (200 %) display, 1 on a standard one, the display's scale on
+        /// Windows (1.5 at 150 % — the standalone player draws its window sharp at the full resolution). The drawable is
+        /// <c>UI.Width * UI.Scale</c> × <c>UI.Height * UI.Scale</c> pixels — what a render-resolution preset needs (#454).</summary>
         public static float Scale { get { return Host != null ? Host.UIScale() : 1f; } }
         public static bool MouseDown { get { return Host != null && Host.UIMouseDown(); } }
 
@@ -2214,6 +2472,19 @@ namespace Vortex
         public static void SetRenderScale(float scale) { Editor.DllWrapper.VortexAPI.SetRenderScale(scale); }
         public static float RenderScale { get { return Editor.DllWrapper.VortexAPI.GetRenderScale(); } }
 
+        /// <summary>Render the 3D scene at a resolution in pixels instead of a scale (#462) — the options menu's "1080p / 1440p /
+        /// 4K" presets: the render scale becomes the one that gives the drawable (<see cref="Screen.PixelWidth"/> ×
+        /// <see cref="Screen.PixelHeight"/>) about width × height pixels, 0.25..2 (the view keeps its own aspect; the UI stays
+        /// sharp at the drawable). <c>Settings.SetRenderResolution(3840, 2160)</c> on a 1920 × 1080 drawable renders at 2× and
+        /// supersamples; on a 3840 × 2160 one it is native. Returns the render scale it set (1 while the size of the view is
+        /// not known yet). <see cref="Screen.RenderWidth"/> / RenderHeight tell the result.</summary>
+        public static float SetRenderResolution(int width, int height)
+        {
+            float scale = Screen.RenderScaleFor(width, height, Screen.PixelWidth, Screen.PixelHeight);
+            SetRenderScale(scale);
+            return scale;
+        }
+
         /// <summary>DLSS quality: 0=Off, 1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance. A non-off mode
         /// renders the 3D at a lower resolution and AI-upscales it to native (big perf win on RTX). Only takes
         /// visible effect when <see cref="DlssSupported"/> is true; otherwise it falls back to a bilinear upscale.</summary>
@@ -2242,6 +2513,120 @@ namespace Vortex
         public static string GpuName { get { return Editor.DllWrapper.VortexAPI.GpuName(); } }
         /// <summary>True only on an NVIDIA RTX GPU — gate DLSS options on this (render-scale is the universal fallback).</summary>
         public static bool DlssSupported { get { return Editor.DllWrapper.VortexAPI.GpuSupportsDlss(); } }
+    }
+
+    /// <summary>A display mode (#462): a resolution in pixels, its refresh rate and its pixel density.</summary>
+    public struct DisplayMode
+    {
+        /// <summary>Width in pixels.</summary>
+        public int Width;
+        /// <summary>Height in pixels.</summary>
+        public int Height;
+        /// <summary>Refresh rate in Hz (0 when the display does not say).</summary>
+        public float RefreshRate;
+        /// <summary>Pixels per point of this mode: 2 for a Retina ("HiDPI") mode, 1 for a standard one; on Windows the
+        /// display's scale (1.5 at 150 %).</summary>
+        public float Scale;
+        /// <summary>Make one.</summary>
+        public DisplayMode(int width, int height, float refreshRate, float scale = 1f) { Width = width; Height = height; RefreshRate = refreshRate; Scale = scale; }
+        /// <summary>"2560 × 1440 @ 144 Hz".</summary>
+        public override string ToString()
+            => Width + " × " + Height + (RefreshRate > 0f ? " @ " + RefreshRate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " Hz" : "");
+    }
+
+    /// <summary>The game's view on the screen (#462) — the editor's play viewport, the player's window — for an options menu
+    /// that works the same on Retina / HiDPI and standard displays. <see cref="Width"/> / <see cref="Height"/> are points (the
+    /// UI's unit, <see cref="UI.Width"/>), <see cref="PixelWidth"/> / <see cref="PixelHeight"/> the drawable's device pixels
+    /// (PixelWidth = Width × <see cref="ContentScale"/>: twice the points on a Retina window), <see cref="RenderWidth"/> /
+    /// <see cref="RenderHeight"/> the pixels the 3D scene renders at (× <see cref="Settings.RenderScale"/>; the UI is drawn
+    /// at the drawable). The window size is changed with <see cref="Settings.SetResolution"/> (pixels), the render resolution
+    /// with <see cref="Settings.SetRenderResolution"/> or SetRenderScale.
+    /// <code>
+    /// foreach (var m in Screen.DisplayModes()) menu.Add(m.ToString());       // "3024 × 1964 @ 120 Hz", …
+    /// Settings.SetRenderResolution(2560, 1440);                              // "1440p" whatever the window is
+    /// UI.Text("Rendering " + Screen.RenderWidth + " × " + Screen.RenderHeight, 20, 20, 400, 24, 14, Color.Rgb(255, 255, 255));
+    /// </code></summary>
+    public static class Screen
+    {
+        /// <summary>Width of the game view in points — the same as <see cref="UI.Width"/>.</summary>
+        public static float Width => UI.Width;
+        /// <summary>Height of the game view in points — the same as <see cref="UI.Height"/>.</summary>
+        public static float Height => UI.Height;
+
+        /// <summary>Width of the drawable in device pixels: 2 × <see cref="Width"/> on a Retina window, in editor play and in
+        /// the player.</summary>
+        public static int PixelWidth => Editor.Scripting.ScriptRuntime.Instance.ScreenPixelWidth;
+        /// <summary>Height of the drawable in device pixels.</summary>
+        public static int PixelHeight => Editor.Scripting.ScriptRuntime.Instance.ScreenPixelHeight;
+
+        /// <summary>Device pixels per point (the display's content scale): 2 on a Retina display, 1 on a standard one, the
+        /// display's scale on Windows (1.5 at 150 %). The same as <see cref="UI.Scale"/>.</summary>
+        public static float ContentScale => UI.Scale;
+
+        /// <summary>Width the 3D scene renders at: <see cref="PixelWidth"/> × <see cref="Settings.RenderScale"/>.</summary>
+        public static int RenderWidth => RenderSize(PixelWidth);
+        /// <summary>Height the 3D scene renders at: <see cref="PixelHeight"/> × <see cref="Settings.RenderScale"/>.</summary>
+        public static int RenderHeight => RenderSize(PixelHeight);
+
+        /// <summary>The standalone player's borderless fullscreen (get / set; the same as Settings.IsFullscreen /
+        /// SetFullscreen). Always false in editor play, where the viewport is the view.</summary>
+        public static bool FullScreen
+        {
+            get => Settings.IsFullscreen;
+            set => Settings.SetFullscreen(value);
+        }
+
+        /// <summary>The modes of the display the game is on — the main display in editor play — in pixels, largest first, one
+        /// per resolution and refresh rate. Empty when the engine cannot tell (no display, an old engine library).</summary>
+        public static DisplayMode[] DisplayModes()
+        {
+            int cap = 256;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                var w = new int[cap]; var h = new int[cap]; var hz = new float[cap]; var d = new float[cap];
+                int n = Editor.DllWrapper.VortexAPI.GameHostDisplayModes(w, h, hz, d);
+                if (n > cap && attempt == 0) { cap = n; continue; }
+                var list = new List<DisplayMode>(Math.Min(n, cap));
+                for (int i = 0; i < n && i < cap; i++)
+                {
+                    if (w[i] <= 0 || h[i] <= 0) continue;
+                    bool seen = false;
+                    foreach (var m in list) if (m.Width == w[i] && m.Height == h[i] && Math.Abs(m.RefreshRate - hz[i]) < 0.01f) { seen = true; break; }
+                    if (!seen) list.Add(new DisplayMode(w[i], h[i], hz[i], d[i] > 0f ? d[i] : 1f));
+                }
+                list.Sort((a, b) => a.Width != b.Width ? b.Width.CompareTo(a.Width) : a.Height != b.Height ? b.Height.CompareTo(a.Height) : b.RefreshRate.CompareTo(a.RefreshRate));
+                return list.ToArray();
+            }
+            return new DisplayMode[0];
+        }
+
+        /// <summary>The display's current (desktop) mode in pixels — width and height 0 when the engine cannot tell.</summary>
+        public static DisplayMode CurrentDisplayMode
+        {
+            get
+            {
+                return Editor.DllWrapper.VortexAPI.GameHostCurrentDisplayMode(out int w, out int h, out float hz, out float d)
+                    ? new DisplayMode(w, h, hz, d > 0f ? d : 1f) : new DisplayMode(0, 0, 0f, 1f);
+            }
+        }
+
+        private static int RenderSize(int pixels)
+        {
+            float s = Settings.RenderScale;
+            if (!(s > 0f)) s = 1f;
+            int r = (int)(pixels * s + 0.5f);   // the renderer's own rounding
+            return pixels > 0 && r < 1 ? 1 : r;
+        }
+
+        /// <summary>The render scale that gives a <paramref name="drawW"/> × <paramref name="drawH"/> drawable about
+        /// <paramref name="width"/> × <paramref name="height"/> pixels — the pixel count's ratio, 0.25..2 (1 for unknown sizes).</summary>
+        internal static float RenderScaleFor(int width, int height, int drawW, int drawH)
+        {
+            if (width <= 0 || height <= 0 || drawW <= 0 || drawH <= 0) return 1f;
+            float s = (float)Math.Sqrt((double)width * height / ((double)drawW * drawH));
+            if (Math.Abs(s - 1f) < 1e-3f) s = 1f;
+            return s < 0.25f ? 0.25f : (s > 2f ? 2f : s);
+        }
     }
 
     /// <summary>A script handle to one entity's Light component (get it via GetLight() in a VortexBehaviour).
@@ -2706,6 +3091,18 @@ namespace Vortex
             var bus = Editor.DllWrapper.VortexAudio.BusIndexFromName(busName);
             return bus >= 0 ? Editor.DllWrapper.VortexAudio.GetBusVolume(bus) : 1f;
         }
+
+        /// <summary>Slow motion on the sound (#425) — off by default: sounds keep their pitch whatever
+        /// <see cref="Time.TimeScale"/> says. On, every Audio Source outside the Music and UI buses and every positional
+        /// one-shot (<see cref="PlayOneShot(string, Vector3, float, float)"/>) plays at its own pitch × TimeScale — never below
+        /// <paramref name="minPitch"/> (0.05..1, default 0.5), at most 4× — and holds while TimeScale is 0, resuming where it
+        /// stopped. The music channel, 2D one-shots (UI clicks) and the Music and UI buses never follow. Resets to off when
+        /// play starts. <c>Audio.SetPitchFollowsTimeScale(true); Time.TimeScale = 0.25f;</c> — deep, slowed gunfire.</summary>
+        public static void SetPitchFollowsTimeScale(bool on, float minPitch = 0.5f)
+            => Editor.Core.Services.AudioPlaybackService.Instance.SetPitchFollowsTimeScale(on, minPitch);
+
+        /// <summary>True while sounds follow <see cref="Time.TimeScale"/> (see <see cref="SetPitchFollowsTimeScale"/>).</summary>
+        public static bool PitchFollowsTimeScale => Editor.Core.Services.AudioPlaybackService.Instance.PitchFollowsTimeScale;
 
         /// <summary>The audio mixer's clock in seconds — Unity's AudioSettings.dspTime (#465): the samples mixed since the
         /// audio engine started, over its sample rate. It advances in mixer blocks of about 10 ms, never drifts from what is

@@ -36,21 +36,41 @@ namespace
 	float g_game_time = 0.0f;
 }
 
+namespace
+{
+	// game_dt seconds of game time into fixed steps of the fallback physics and the game clock, at most max_steps
+	void step_simulation(float game_dt, int max_steps)
+	{
+		g_time_accumulator += game_dt;
+		int steps = 0;
+		while (g_time_accumulator >= k_fixed_dt && steps < max_steps) // cap steps to avoid a spiral of death
+		{
+			runtime::systems::update_physics(k_fixed_dt);
+			g_game_time += k_fixed_dt;
+			g_time_accumulator -= k_fixed_dt;
+			++steps;
+		}
+	}
+}
+
 EDITOR_INTERFACE void StepRuntime(float dt)
 {
 	if (dt < 0.0f) dt = 0.0f;
 	if (dt > 0.25f) dt = 0.25f; // clamp huge spikes (e.g. after a breakpoint)
+	step_simulation(dt, 8);
+	runtime::systems::update_audio(dt);
+}
 
-	g_time_accumulator += dt;
-	int steps = 0;
-	while (g_time_accumulator >= k_fixed_dt && steps < 8) // cap steps to avoid a spiral of death
-	{
-		runtime::systems::update_physics(k_fixed_dt);
-		g_game_time += k_fixed_dt;
-		g_time_accumulator -= k_fixed_dt;
-		++steps;
-	}
-
+// One game tick with the game's time scale (#425): dt real seconds; the fallback physics and the game clock advance by
+// dt x time_scale (0 = paused, 0..100), the audio by the real seconds. Fast-forward may take more steps per tick.
+EDITOR_INTERFACE void StepRuntimeScaled(float dt, float time_scale)
+{
+	if (!(dt >= 0.0f)) dt = 0.0f;
+	if (dt > 0.25f) dt = 0.25f; // clamp huge spikes (e.g. after a breakpoint)
+	if (!(time_scale >= 0.0f)) time_scale = 1.0f;   // NaN or negative: normal speed
+	if (time_scale > 100.0f) time_scale = 100.0f;
+	const int max_steps = time_scale > 1.0f ? (time_scale >= 4.0f ? 32 : static_cast<int>(8.0f * time_scale + 0.999f)) : 8;
+	step_simulation(dt * time_scale, max_steps);
 	runtime::systems::update_audio(dt);
 }
 
