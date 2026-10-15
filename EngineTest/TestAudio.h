@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -73,6 +74,12 @@ public:
 		// -- streaming playback (issue #10) -----------------------------------------
 		run_streaming_tests(wav_path);
 
+		// -- playback position, seeking, scheduled starts (issue #465) ----------------
+		run_position_tests();
+
+		// -- adaptive music: sample-locked stem groups (issue #437) ---------------------
+		run_music_tests();
+
 		// -- mixer buses + ducking (issue #13) ---------------------------------------
 		run_mixer_tests(wav_path);
 
@@ -81,6 +88,9 @@ public:
 
 		// -- fade envelopes (issue #17) --------------------------------------------------
 		run_fade_tests(wav_path);
+
+		// -- optional: file-streamed OGGs know their length (#465 / #437 review) -----------
+		run_optional_ogg_tests();
 
 		// -- 3D spatialization measurement demo (issue #9) --------------------------
 		// Opt-in: VORTEX_AUDIO_SPATIAL_DEMO=<phase-file>. An external meter samples
@@ -302,11 +312,496 @@ private:
 		std::remove(long_wav.c_str());
 	}
 
+	// A (mixer clock, voice cursor) pair taken while the mixer is idle: the cursor advances DURING a mix and the clock
+	// at its end, so a pair read across a mix is skewed by a whole block. Two reads 2 ms apart that agree saw no mix
+	// in between (a mix takes microseconds, a device period ~10 ms). False if no quiet window was found.
+	bool quiet_position(runtime::audio::voice_handle v, u64* clock, u64* cursor)
+	{
+		using namespace runtime::audio;
+		for (int attempt = 0; attempt < 400; ++attempt)
+		{
+			u64 c1 = 0, c2 = 0;
+			const u64 t1 = engine_time_frames();
+			voice_get_position(v, &c1, nullptr, nullptr);
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));   // (silent mode mixes only inside update_audio)
+			const u64 t2 = engine_time_frames();
+			voice_get_position(v, &c2, nullptr, nullptr);
+			if (t1 == t2 && c1 == c2) { *clock = t1; *cursor = c1; return true; }
+		}
+		return false;
+	}
+
+	// Playback position (issue #465): the cursor follows the mixer at the voice's pitch, holds while paused, seeks
+	// decoded and streamed clips, starts from a given position, and a scheduled start lands on its exact mixer frame
+	// (miniaudio slipped it to the next device period before the VORTEX PATCH in ma_node_read_pcm_frames).
+	void run_position_tests()
+	{
+		using namespace runtime::audio;
+		const std::string clip = write_wav("vortex_audio_position.wav", 3.0f, 330.0f);   // 3 s, 44.1 kHz mono
+		const u32 rate = engine_sample_rate();
+		check("mixer clock has a sample rate", rate > 0);
+
+		voice_params p{};
+		p.loop = true;
+		p.volume = 0.05f;
+		voice_handle v = voice_play(clip.c_str(), p);
+		u64 cursor = 0, length = 0;
+		u32 voice_rate = 0;
+		check("position of a playing voice", voice_get_position(v, &cursor, &length, &voice_rate));
+		// decoded clips are converted to the engine rate on load: 3 s of 44.1 kHz = 3 s of engine frames
+		check("clip length in the voice's frames", voice_rate == rate && length > 0
+			&& std::fabs((double)length / voice_rate - 3.0) < 0.002);
+
+		// pitch 2: the cursor runs twice as fast as the mixer clock (quiet pairs: exact to a block or two)
+		voice_set_pitch(v, 2.0f);
+		tick_seconds(0.1f);
+		u64 t0 = 0, c0 = 0, t1 = 0, c1 = 0;
+		const bool q0 = quiet_position(v, &t0, &c0);
+		tick_seconds(0.4f);
+		const bool q1 = quiet_position(v, &t1, &c1);
+		const double ratio = (t1 > t0) ? (double)((c1 + length - c0) % length) / (double)(t1 - t0) : 0.0;
+		std::printf("[info] position at pitch 2: %.4f cursor frames per mixer frame\n", ratio);
+		check("cursor advances at the voice's pitch", q0 && q1 && std::fabs(ratio - 2.0) < 0.01);
+		voice_set_pitch(v, 1.0f);
+
+		// pause holds the position, resume continues from it
+		voice_pause(v);
+		tick_seconds(0.05f);
+		u64 paused0 = 0, paused1 = 0;
+		voice_get_position(v, &paused0, nullptr, nullptr);
+		tick_seconds(0.3f);
+		voice_get_position(v, &paused1, nullptr, nullptr);
+		voice_resume(v);
+		tick_seconds(0.3f);
+		u64 resumed = 0;
+		voice_get_position(v, &resumed, nullptr, nullptr);
+		check("pause holds the position, resume continues", paused0 == paused1 && resumed != paused1);
+
+		// seek: the target reads back at once (before the mixer applied it) and playback continues from there
+		voice_seek(v, 1.25);
+		const auto sought_at = std::chrono::steady_clock::now();
+		u64 sought = 0;
+		voice_get_position(v, &sought, nullptr, nullptr);
+		tick_seconds(0.2f);
+		u64 after = 0;
+		voice_get_position(v, &after, nullptr, nullptr);
+		check("seek reads back its target", sought == (u64)(1.25 * rate + 0.5));
+		check("playback continues from the seek target", after > sought && cursor_after(after, 1.25, seconds_since(sought_at), rate, length));
+		voice_seek(v, 4.0);   // looping: wraps to ~1 s
+		voice_get_position(v, &sought, nullptr, nullptr);
+		check("seeking a looping voice past its end wraps", sought == (u64)(4.0 * rate + 0.5) % length);
+		voice_stop(v);
+		check("a stale handle has no position", !voice_get_position(v, &cursor, nullptr, nullptr));
+
+		// a start position (AudioSource.Time set before Play) on a decoded and a streamed voice
+		voice_params from{};
+		from.volume = 0.05f;
+		from.start_position = 2.0;
+		voice_handle d = voice_play(clip.c_str(), from);
+		voice_get_position(d, &cursor, nullptr, nullptr);
+		check("a decoded voice starts at its start position", cursor >= (u64)(2.0 * rate) && cursor < (u64)(2.2 * rate));
+		voice_stop(d);
+		from.stream = true;
+		voice_handle s = voice_play(clip.c_str(), from);
+		const auto s_at = std::chrono::steady_clock::now();
+		tick_seconds(0.1f);
+		voice_get_position(s, &cursor, &length, &voice_rate);
+		check("a streamed voice starts at its start position", cursor_after(cursor, 2.0, seconds_since(s_at), voice_rate, 0));
+		// seeking a stream: the stream refills from the new spot
+		from.start_position = 0.0;
+		from.loop = true;
+		voice_handle s2 = voice_play(clip.c_str(), from);
+		tick_seconds(0.1f);
+		voice_seek(s2, 2.5);
+		const auto s2_at = std::chrono::steady_clock::now();
+		tick_seconds(0.25f);
+		voice_get_position(s2, &cursor, &length, &voice_rate);
+		check("seeking a streamed voice", cursor_after(cursor, 2.5, seconds_since(s2_at), voice_rate, length));
+		voice_stop(s);
+		voice_stop(s2);
+
+		// scheduled start: silent until its mixer frame, then the cursor counts exactly the frames since that frame
+		voice_params later{};
+		later.volume = 0.05f;
+		later.loop = true;
+		const u64 start = engine_time_frames() + rate / 4;   // 250 ms ahead
+		later.start_time = start;
+		voice_handle sch = voice_play(clip.c_str(), later);
+		check("a scheduled voice waits for its start", sch != invalid_voice && !voice_is_playing(sch));
+		tick_seconds(0.5f);
+		u64 clock = 0;
+		const bool quiet = quiet_position(sch, &clock, &cursor);
+		const long long error = (long long)cursor - (long long)(clock - start);
+		std::printf("[info] scheduled start: cursor %llu, mixer frames since the scheduled frame %llu (error %lld frames)\n",
+			(unsigned long long)cursor, (unsigned long long)(clock - start), error);
+		check("a scheduled voice plays after its start", voice_is_playing(sch));
+		check("a scheduled start lands on its exact mixer frame (+-2)", quiet && clock > start && error >= -2 && error <= 2);
+		voice_stop(sch);
+		std::remove(clip.c_str());
+
+		// A shipped game's MP3 (pak bytes, streamed and not): reading the position every frame must leave the decoder the
+		// mixer reads alone (#465 review: each read queried the length — a whole-file scan, 27-43 ms at 2:30 of a 3-minute
+		// file — and moved the decoder under the mixer), and a seek goes through the MP3 seek table.
+		const std::vector<uint8_t> mp3 = silent_mp3(180.0);
+		check("pak MP3 registered", register_clip_data("vpak://music.mp3", mp3.data(), mp3.size()));
+		for (int stream = 1; stream >= 0; --stream)
+		{
+			voice_params mp{};
+			mp.volume = 0.05f;
+			mp.loop = true;
+			mp.priority = 0;
+			mp.stream = stream != 0;
+			voice_handle m = voice_play("vpak://music.mp3", mp);
+			tick_seconds(0.3f);
+			voice_seek(m, 150.0);
+			const auto sought_at = std::chrono::steady_clock::now();
+			tick_seconds(0.3f);
+			// The cursor follows the device clock, and a tick lasts as long as the machine makes it (16 ms here, ~45 ms on a
+			// loaded CI runner): every bound is the wall time measured around the reads plus the mixer's read-ahead, never
+			// an assumed tick. A read that moved the decoder (the #465 review bug) jumps by seconds, far past any of them.
+			double worst_ms = 0.0;
+			u64 first = 0, prev = 0, len = 0;
+			u32 r = 0, backwards = 0, jumps = 0;
+			auto prev_at = sought_at;
+			for (int i = 0; i < 60; ++i)
+			{
+				u64 cur = 0;
+				const auto t0 = std::chrono::steady_clock::now();
+				voice_get_position(m, &cur, &len, &r);
+				const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+				if (ms > worst_ms) worst_ms = ms;
+				if (i == 0) first = cur;
+				if (i > 0 && cur < prev) ++backwards;
+				// further than the wall time since the last read allows (plus the read-ahead slack): a jump
+				if (i > 0 && r && cur > prev && (double)(cur - prev) / r > std::chrono::duration<double>(t0 - prev_at).count() + k_read_ahead) ++jumps;
+				prev = cur;
+				prev_at = t0;
+				tick_seconds(0.016f);
+			}
+			const double since_seek = std::chrono::duration<double>(prev_at - sought_at).count();   // the seek -> the last read
+			const double at = r ? (double)prev / r : -1.0, length_s = r ? (double)len / r : -1.0;
+			std::printf("[info] pak MP3 (%s): worst position read %.3f ms, cursor %.2f s %.2f s after a seek to 150 s, length %.2f s, backwards %u, jumps %u\n",
+				stream ? "streamed" : "not streamed", worst_ms, at, since_seek, length_s, backwards, jumps);
+			// the seek lands: from 150 s on, at most the wall time since the seek (+ read-ahead) further, and still playing
+			check(stream ? "a streamed pak MP3: position reads are free and leave playback alone; the seek lands"
+			             : "a pak MP3 played decoded: position reads are free and leave playback alone; the seek lands",
+				m != invalid_voice && worst_ms < 0.5 && backwards == 0 && jumps == 0 && std::fabs(length_s - 180.0) < 0.1
+				&& prev > first && cursor_after(prev, 150.0, since_seek, r, 0));
+			voice_stop(m);
+		}
+	}
+
+	// Renders `frames` of a music group in mixer-sized blocks; returns the largest |sample| from frame `skip` on.
+	static f32 render_peak(runtime::audio::music_group* g, u64 frames, u64 skip = 0, std::vector<f32>* keep = nullptr)
+	{
+		std::vector<f32> block(480 * 2);
+		f32 peak = 0.0f;
+		for (u64 done = 0; done < frames;)
+		{
+			const u64 n = frames - done < 480 ? frames - done : 480;
+			runtime::audio::music_render(g, block.data(), n);
+			for (u64 f = 0; f < n; ++f)
+			{
+				if (keep) { keep->push_back(block[f * 2]); }
+				if (done + f < skip) continue;
+				const f32 v = std::fabs(block[f * 2]) > std::fabs(block[f * 2 + 1]) ? std::fabs(block[f * 2]) : std::fabs(block[f * 2 + 1]);
+				if (v > peak) peak = v;
+			}
+			done += n;
+		}
+		return peak;
+	}
+
+	// Adaptive music (issue #437): the stems of a group share one cursor — B = -A cancels to digital silence for
+	// ten minutes of looping, so a drift of a single sample would show — a state schedule begins on its exact frame,
+	// a stinger on its exact frame, streamed stems stay together through page refills, and the group plays as one
+	// voice on the music bus. Stems are written at the engine rate, so the resource manager passes them unconverted.
+	void run_music_tests()
+	{
+		using namespace runtime::audio;
+		const u32 rate = engine_sample_rate();
+		const u64 loop = (u64)rate * 4;   // a 4 s loop (two bars of 4/4 at 120 BPM)
+		std::vector<float> a((size_t)loop), b((size_t)loop + rate / 2), shot(2000, 0.25f);
+		for (size_t i = 0; i < a.size(); ++i)
+			a[i] = 0.3f * sinf((float)i * 220.0f * 2.0f * 3.14159265f / (float)rate) + ((i % (rate / 2)) < 64 ? 0.4f : 0.0f);   // tone + clicks
+		for (size_t i = 0; i < b.size(); ++i)
+			b[i] = i < a.size() ? -a[i] : 0.2f * sinf((float)i * 330.0f * 2.0f * 3.14159265f / (float)rate);   // -A, then a tail past the loop
+		const std::string pa = write_wav_samples("vortex_music_a.wav", rate, a);
+		const std::string pb = write_wav_samples("vortex_music_b.wav", rate, b);
+		const std::string pshot = write_wav_samples("vortex_music_stinger.wav", rate, shot);
+		const char* stems[] = { pa.c_str(), pb.c_str() };
+		const f32 solo[] = { 1.0f, 0.0f }, both[] = { 1.0f, 1.0f }, none[] = { 0.0f, 0.0f };
+
+		music_desc d{};
+		d.stems = stems;
+		d.stem_count = 2;
+		d.state_gains = solo;
+		d.loop_end = loop;
+		d.decode = true;   // rendered faster than real time below: decoded stems never wait for a refill
+		music_group* g = music_create(d);
+		music_group* ref = music_create(d);   // the same music with B muted for good: the switch is measured against it
+		check("a music group opens its stems", g != nullptr && ref != nullptr);
+		if (!g || !ref) { music_destroy(g); music_destroy(ref); return; }
+		check("a stem plays alone while the other is muted", render_peak(g, rate / 2) > 0.25f && render_peak(ref, rate / 2) > 0.25f);
+
+		// a state switch begins on its exact frame: B ramps in from frame F
+		music_clock c{};
+		music_get_clock(g, &c);
+		const u64 start = c.played;
+		music_schedule(g, music_stage::state, both, 2, start + 777, 64);
+		std::vector<f32> mixed, alone;
+		render_peak(g, 2048, 0, &mixed);
+		render_peak(ref, 2048, 0, &alone);
+		long long first_diff = -1;
+		for (size_t i = 0; i < mixed.size() && first_diff < 0; ++i) if (mixed[i] != alone[i]) first_diff = (long long)i;
+		music_get_clock(g, &c);
+		std::printf("[info] state switch scheduled for frame +777 began at +%lld (clock: %llu)\n", first_diff, (unsigned long long)(c.last_state_frame - start));
+		check("a scheduled state switch begins on its exact frame", first_diff == 777 && c.last_state_frame == start + 777);
+		f32 step = 0.0f;
+		for (size_t i = 778; i < 777 + 64 && i < mixed.size(); ++i)
+		{
+			const f32 dv = std::fabs((mixed[i] - alone[i]) - (mixed[i - 1] - alone[i - 1]));
+			if (dv > step) step = dv;
+		}
+		check("the switch ramps (no click: B's level moves in small steps)", step < 0.05f);
+
+		// sample lock: A + (-A) = silence for ten minutes of looping (150 passes; B is 0.5 s longer than the loop)
+		const u64 ten_minutes = (u64)rate * 600;
+		music_get_clock(g, &c);
+		const auto mix_t0 = std::chrono::steady_clock::now();
+		const f32 residue = render_peak(g, ten_minutes - (c.played - start));
+		const double mix_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - mix_t0).count();
+		music_get_clock(g, &c);
+		std::printf("[info] 10 min of looping: %llu passes, largest residue of A + (-A) %.9f; mixing cost %.1f us per 10 ms of two-stem music (%.0fx real time, this build)\n",
+			(unsigned long long)c.loops, residue, mix_ms * 1000.0 / 60000.0, 600000.0 / (mix_ms > 0 ? mix_ms : 1));
+		check("two stems stay sample-aligned for 10 minutes of looping", residue == 0.0f && c.loops >= 149);
+
+		// a stinger begins on its exact frame
+		music_schedule(g, music_stage::state, none, 2, 0, 64);
+		render_peak(g, 1024);
+		music_get_clock(g, &c);
+		check("a stinger is accepted", music_play_stinger(g, pshot.c_str(), 1.0f, c.played + 333));
+		std::vector<f32> hit;
+		render_peak(g, 1024, 0, &hit);
+		long long first_hit = -1;
+		for (size_t i = 0; i < hit.size() && first_hit < 0; ++i) if (hit[i] != 0.0f) first_hit = (long long)i;
+		check("a stinger begins on its exact frame", first_hit == 333 && std::fabs(hit[400] - 0.25f) < 1e-4f);
+		render_peak(g, 4096);
+		music_update(g);
+		bool all_free = true;
+		for (u32 i = 0; i < music_max_stingers; ++i) all_free = all_free && music_play_stinger(g, pshot.c_str(), 0.0f, 0);
+		check("finished stingers free their slots", all_free);
+		music_destroy(g);
+		music_destroy(ref);
+
+		// pak stems (a shipped game): their own decoders over the registered bytes, looping a region inside the files
+		// (a 0.5 s pickup, then 3 s): A + (-A) still cancels to digital silence through every wrap
+		{
+			auto bytes_of = [](const std::string& p) {
+				std::vector<uint8_t> v;
+				FILE* f = nullptr;
+				if (fopen_s(&f, p.c_str(), "rb") == 0 && f)
+				{
+					fseek(f, 0, SEEK_END); v.resize((size_t)_ftelli64(f)); fseek(f, 0, SEEK_SET);
+					fread(v.data(), 1, v.size(), f); fclose(f);
+				}
+				return v;
+			};
+			const auto ba = bytes_of(pa), bb = bytes_of(pb);
+			register_clip_data("vpak://music_a.wav", ba.data(), ba.size());
+			register_clip_data("vpak://music_b.wav", bb.data(), bb.size());
+			const char* pak[] = { "vpak://music_a.wav", "vpak://music_b.wav" };
+			music_desc dp{};
+			dp.stems = pak;
+			dp.stem_count = 2;
+			dp.state_gains = both;
+			dp.loop_start = rate / 2;
+			dp.loop_end = rate / 2 + (u64)rate * 3;
+			music_group* p = music_create(dp);
+			check("a music group opens pak stems", p != nullptr);
+			if (p)
+			{
+				const f32 pak_residue = render_peak(p, (u64)rate * 30);
+				music_get_clock(p, &c);
+				check("pak stems loop a region sample-aligned (A + -A = 0 over 30 s)", pak_residue == 0.0f && c.loops >= 9 && c.length == b.size());
+				music_destroy(p);
+			}
+		}
+
+		// streamed stems (the default) loop a region too: each stem's next pass opens ahead of the wrap at the loop start
+		// and every stem switches to it on the wrap frame — rendered at ~4x real time, with music_update standing in for
+		// the game tick. Solo A must continue exactly at the loop start after every wrap; A + (-A) must stay silent.
+		{
+			const u64 l0 = rate / 2, l1 = rate / 2 + (u64)rate * 3;
+			auto paced = [&](music_desc& m, u64 seconds, std::vector<f32>* keep, u32* stalls, bool update = true) {
+				music_group* sg = music_create(m);
+				if (!sg) return (music_group*)nullptr;
+				std::vector<f32> block(1024 * 2);
+				music_clock k{};
+				for (u64 played = 0; played < (u64)rate * seconds;)
+				{
+					music_render(sg, block.data(), 1024);
+					if (keep) for (u32 f = 0; f < 1024; ++f) keep->push_back(block[f * 2]);
+					music_get_clock(sg, &k);
+					if (k.stalled && stalls) ++*stalls;
+					played = k.played;
+					if (update) music_update(sg);
+					std::this_thread::sleep_for(std::chrono::microseconds(5300));
+				}
+				return sg;
+			};
+			const char* streamed[] = { pa.c_str(), pb.c_str() };
+			music_desc ds{};
+			ds.stems = streamed;
+			ds.stem_count = 2;
+			ds.state_gains = solo;
+			ds.loop_start = l0;
+			ds.loop_end = l1;
+			std::vector<f32> out;
+			u32 stalls_solo = 0;
+			music_group* s = paced(ds, 10, &out, &stalls_solo);
+			check("a streamed music group opens", s != nullptr);
+			if (s)
+			{
+				music_get_clock(s, &c);
+				// output frame t plays a[t] until the loop end, then a[l0 + (t - l1) % (l1 - l0)] — as the 16-bit WAV holds it
+				u64 mismatches = 0;
+				for (u64 t = 0; t < out.size() && t < c.played; ++t)
+				{
+					const u64 src = t < l1 ? t : l0 + (t - l1) % (l1 - l0);
+					const f32 expected = (f32)std::lround(a[(size_t)src] * 32767.0f) / 32768.0f;
+					if (std::fabs(out[(size_t)t] - expected) > 1e-6f) ++mismatches;
+				}
+				std::printf("[info] streamed region loop: %llu passes, %u stalled mixes, %llu frames off the expected samples\n",
+					(unsigned long long)c.loops, stalls_solo, (unsigned long long)mismatches);
+				check("streamed stems wrap a loop region on the exact frame without waiting", c.loops >= 2 && stalls_solo == 0 && mismatches == 0);
+				music_destroy(s);
+			}
+			ds.state_gains = both;
+			u32 stalls_null = 0;
+			std::vector<f32> null_out;
+			music_group* n = paced(ds, 10, &null_out, &stalls_null);
+			f32 peak = 0.0f;
+			for (f32 v : null_out) peak = std::fabs(v) > peak ? std::fabs(v) : peak;
+			std::printf("[info] streamed stems A + (-A): largest residue %.9f over 10 s of region loops\n", peak);
+			check("streamed stems stay sample-aligned through refills and wraps", n != nullptr && peak == 0.0f);
+			music_destroy(n);
+
+			// without music_update no next pass is ready at the wrap: every stream seeks back and the stems wait for the
+			// refill together — a pause, never a drift
+			u32 stalls_seek = 0;
+			std::vector<f32> seek_out;
+			music_group* w = paced(ds, 10, &seek_out, &stalls_seek, false);
+			f32 seek_peak = 0.0f;
+			for (f32 v : seek_out) seek_peak = std::fabs(v) > seek_peak ? std::fabs(v) : seek_peak;
+			if (w) music_get_clock(w, &c);
+			std::printf("[info] streamed wrap without a prepared pass: %llu passes, %u stalled mixes, largest residue %.9f\n",
+				w ? (unsigned long long)c.loops : 0ull, stalls_seek, seek_peak);
+			check("a wrap without a prepared pass seeks every stream and they wait together", w != nullptr && c.loops >= 2 && seek_peak == 0.0f);
+			music_destroy(w);
+
+			// a streamed ONE-SHOT whose second stem is shorter: the short one falls silent, the music ends with the long one
+			std::vector<float> half(a.begin(), a.begin() + (std::ptrdiff_t)(loop / 2));
+			const std::string ph = write_wav_samples("vortex_music_half.wav", rate, half);
+			const char* uneven[] = { pa.c_str(), ph.c_str() };
+			music_desc du{};
+			du.stems = uneven;
+			du.stem_count = 2;
+			du.loop = false;
+			music_group* u = music_create(du);
+			u64 produced = 0;
+			bool ended = false;
+			std::vector<f32> block(1024 * 2);
+			for (int i = 0; u && i < 2000 && !ended; ++i)
+			{
+				const u64 got = music_render(u, block.data(), 1024);
+				produced += got;
+				ended = got < 1024;
+				std::this_thread::sleep_for(std::chrono::microseconds(5300));
+			}
+			if (u) music_get_clock(u, &c);
+			std::printf("[info] streamed one-shot with a stem half as long: ended=%d after %.3f s of music (the long stem is 4 s)\n", ended ? 1 : 0,
+				u ? (double)c.played / rate : -1.0);
+			check("a streamed one-shot ends with its longest stem, not stalled by a shorter one", u && ended && c.played == loop && produced == loop);
+			music_destroy(u);
+			std::remove(ph.c_str());
+		}
+
+		// the group as one voice on the music bus (streamed stems, the default; voices_update runs music_update): A alone
+		// is loud, A + (-A) is silent; the voice reports its position
+		voice_params vp{};
+		vp.bus = (s32)bus::music;
+		vp.priority = 0;
+		d.state_gains = solo;
+		d.decode = false;
+		voice_handle v = voice_play_music(d, vp);
+		tick_seconds(0.5f);
+		f32 rms_solo = 0;
+		mixer_get_bus_levels(bus::music, nullptr, &rms_solo);
+		voice_music_schedule(v, music_stage::state, both, 2, 0, 64);
+		tick_seconds(0.8f);
+		f32 rms_null = 0;
+		mixer_get_bus_levels(bus::music, nullptr, &rms_null);
+		u64 cursor = 0, length = 0;
+		u32 voice_rate = 0;
+		const bool pos = voice_get_position(v, &cursor, &length, &voice_rate);
+		const bool clock = voice_music_clock(v, &c);
+		std::printf("[info] music voice: bus rms %.4f with one stem, %.6f with A + (-A); position %llu of %llu\n", rms_solo, rms_null,
+			(unsigned long long)cursor, (unsigned long long)length);
+		check("a music voice plays on the music bus", v != invalid_voice && rms_solo > 0.05f);
+		check("the music voice's stems cancel on the bus (sample-locked through the mixer)", rms_null < 0.002f);
+		check("a music voice reports its clock and position", pos && clock && c.played > rate / 2 && voice_rate == rate && cursor < loop && length == b.size());
+		voice_stop(v);
+		check("a stale music handle is a safe no-op", !voice_music_clock(v, &c) && voice_music_stem_gain(v, 0) < 0.0f);
+
+		std::remove(pa.c_str());
+		std::remove(pb.c_str());
+		std::remove(pshot.c_str());
+	}
+
 	// Fades (issue #17): the envelope must actually change the mixed level (bus
 	// meters), FadeOut must release the voice back to the pool.
 	void run_fade_tests(const std::string& wav)
 	{
 		using namespace runtime::audio;
+
+		// A fade-in from silence (FadeIn, Music.Play with a fade) begins silent (#465 review): miniaudio keeps ONE pending
+		// fade per sound, so the old "snap to 0, then fade from the current level" pair issued in one frame collapsed into
+		// a fade from full volume. The level is read once the mixer has mixed ~0.1 s of the voice, and bounded by where a
+		// linear 2 s fade from 0 is by then — measured on the mixer's own clock (engine frames since the voice started),
+		// never an assumed tick: on the macOS CI runner a 0.15 s tick had mixed 0.6 s of the fade. The meter attacks at
+		// once, so it shows the last block mixed. The old pair, measured the same way, reads full level.
+		{
+			const u32 rate = engine_sample_rate();
+			voice_params f{};
+			f.loop = true;
+			f.volume = 0.8f;
+			struct reading { f32 rms; double into; };   // the metered level, and how far into the voice the mixer was (s)
+			auto level_after = [&](int variant) {
+				const u64 t0 = engine_time_frames();
+				const auto w0 = std::chrono::steady_clock::now();
+				voice_handle v = voice_play(wav.c_str(), f);
+				if (variant == 1) { voice_fade(v, 0.0f, 0.0f, false); voice_fade(v, 1.0f, 2.0f, false); }   // the old pair
+				if (variant == 2) voice_fade_from(v, 0.0f, 1.0f, 2.0f, false);
+				// until the mixer has mixed 0.1 s of it (3 s at most: a device that stopped mixing fails below, it never hangs)
+				do tick_seconds(0.016f); while (rate > 0 && engine_time_frames() - t0 < rate / 10 && seconds_since(w0) < 3.0);
+				reading r{};
+				mixer_get_bus_levels(bus::sfx, nullptr, &r.rms);
+				r.into = rate > 0 ? (double)(engine_time_frames() - t0) / rate : 0.0;   // read after the meter: covers its block
+				voice_stop(v);
+				tick_seconds(0.7f);   // the meter's history drains
+				return r;
+			};
+			const reading full = level_after(0), pair = level_after(1);
+			reading from = level_after(2);
+			for (int retry = 0; retry < 2 && from.into >= 1.0; ++retry) from = level_after(2);   // a stall that long proves nothing
+			// at `into` seconds a linear fade from 0 over 2 s is at most into / 2 of the full level (+0.05: a mixer block)
+			const f32 bound = full.rms * (f32)(from.into / 2.0 + 0.05);
+			char what[320];
+			std::snprintf(what, sizeof what, "a fade-in from silence starts silent (explicit start level): rms %.4f %.2f s in, bound %.4f "
+				"(full level %.4f; the old snap + fade %.4f %.2f s in)", from.rms, from.into, bound, full.rms, pair.rms, pair.into);
+			check(what, full.rms > 0.05f && from.into < 1.0 && from.rms <= bound);
+		}
 
 		// FadeTo 0 drops the metered level while the voice keeps playing.
 		voice_params p{};
@@ -577,6 +1072,28 @@ private:
 	// (or the silent-mode pump) actually advances playback.
 	// Advance by WALL-CLOCK time: a loaded CI machine oversleeps the 16 ms naps, and a fixed tick count would then
 	// measure meters and tails at a later moment than the test intends.
+	// A device mixes ahead of what it plays (its buffer: a period or a few — more on a VM's virtual device), so a cursor
+	// may lead the wall clock by that much: the slack of every cursor bound that is measured in wall time.
+	static constexpr double k_read_ahead = 0.25;
+
+	static double seconds_since(std::chrono::steady_clock::time_point t)
+	{
+		return std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
+	}
+
+	// A cursor (frames at `rate`) read `since` seconds of wall time after playback was put at `target` seconds: at the
+	// target, or past it by at most that wall time plus the read-ahead — a slow machine's long ticks never count against
+	// the engine (#465 CI: 60 ticks of 16 ms took 2.9 s on the macOS runner). A looping clip of `length` frames (0 = not
+	// looping) may have wrapped once.
+	static bool cursor_after(u64 cursor, double target, double since, u32 rate, u64 length)
+	{
+		if (rate == 0) return false;
+		const u64 at = (u64)(target * rate + 0.5);
+		u64 c = cursor;
+		if (length > 0 && c < at) c += length;
+		return c >= at && (double)(c - at) / rate <= since + k_read_ahead;
+	}
+
 	void tick_seconds(float seconds)
 	{
 		using clock = std::chrono::steady_clock;
@@ -593,12 +1110,18 @@ private:
 		}
 	}
 
+	// Unique per process: two runs at once (a second ctest on the same machine) shared these names and deleted or
+	// rewrote each other's clips mid-test — the "registered pak blob" / "three simultaneous streams play" failures.
 	std::string temp_path(const char* name)
 	{
+		static const std::string prefix = [] {
+			std::random_device rd;
+			return "vortex-" + std::to_string(rd()) + "-";
+		}();
 		std::error_code ec;
 		auto dir = std::filesystem::temp_directory_path(ec);
-		if (ec) return name;
-		return (dir / name).string();
+		if (ec) return prefix + name;
+		return (dir / (prefix + name)).string();
 	}
 
 	// Minimal 16-bit PCM mono RIFF wav: 0.5 s, 660 Hz sine.
@@ -625,6 +1148,50 @@ private:
 		const uint16_t format_pcm = 1;
 		const uint32_t fmt_size = 16;
 
+		FILE* f = nullptr;
+		if (fopen_s(&f, path.c_str(), "wb") != 0 || !f) return {};
+		fwrite("RIFF", 1, 4, f); fwrite(&riff_size, 4, 1, f); fwrite("WAVE", 1, 4, f);
+		fwrite("fmt ", 1, 4, f); fwrite(&fmt_size, 4, 1, f);
+		fwrite(&format_pcm, 2, 1, f); fwrite(&channels, 2, 1, f);
+		fwrite(&sample_rate, 4, 1, f); fwrite(&byte_rate, 4, 1, f);
+		fwrite(&block_align, 2, 1, f); fwrite(&bits, 2, 1, f);
+		fwrite("data", 1, 4, f); fwrite(&data_size, 4, 1, f);
+		fwrite(pcm.data(), 1, data_size, f);
+		fclose(f);
+		return path;
+	}
+
+	// A valid MPEG-1 Layer III stream of digital silence: 128 kbps, 44.1 kHz, mono, no CRC, side info and main data zero.
+	static std::vector<uint8_t> silent_mp3(double seconds)
+	{
+		const int frames = (int)(seconds * 44100 / 1152) + 1;
+		const int size = 144 * 128000 / 44100;   // 417 bytes
+		std::vector<uint8_t> out;
+		out.reserve((size_t)frames * size);
+		for (int i = 0; i < frames; ++i)
+		{
+			const uint8_t header[4] = { 0xFF, 0xFB, 0x90, 0xC0 };
+			out.insert(out.end(), header, header + 4);
+			out.insert(out.end(), (size_t)(size - 4), (uint8_t)0);
+		}
+		return out;
+	}
+
+	// 16-bit mono RIFF wav of the given samples (-1..1, kept inside +-32767 so a negated stem is the exact negation).
+	std::string write_wav_samples(const char* name, uint32_t sample_rate, const std::vector<float>& samples)
+	{
+		const std::string path = temp_path(name);
+		const uint32_t frames = (uint32_t)samples.size();
+		std::vector<int16_t> pcm(frames);
+		for (uint32_t i = 0; i < frames; ++i)
+		{
+			float s = samples[i] > 1.0f ? 1.0f : (samples[i] < -1.0f ? -1.0f : samples[i]);
+			pcm[i] = (int16_t)std::lround(s * 32767.0f);   // round half away from zero: round(-x) == -round(x)
+		}
+		const uint32_t data_size = frames * sizeof(int16_t);
+		const uint32_t riff_size = 36 + data_size;
+		const uint16_t channels = 1, bits = 16, block_align = 2, format_pcm = 1;
+		const uint32_t byte_rate = sample_rate * block_align, fmt_size = 16;
 		FILE* f = nullptr;
 		if (fopen_s(&f, path.c_str(), "wb") != 0 || !f) return {};
 		fwrite("RIFF", 1, 4, f); fwrite(&riff_size, 4, 1, f); fwrite("WAVE", 1, 4, f);
@@ -668,6 +1235,67 @@ private:
 			auto handle = runtime::resource_manager::load_audio(file.c_str());
 			check(("decode " + entry.path().filename().string()).c_str(),
 				handle.is_valid() && runtime::audio::is_loaded(file.c_str()));
+		}
+	}
+
+	// miniaudio streams Vorbis files in push mode: the stream's length is 0 and its cursor never wraps at the loop. The
+	// voice probes the length (Time wraps, Length is known), and a one-shot music of OGG stems ends with them — checked
+	// on the short .ogg files in VORTEX_AUDIO_TEST_DIR (no OGG encoder here to generate one).
+	void run_optional_ogg_tests()
+	{
+		using namespace runtime::audio;
+		char* dir = nullptr;
+		size_t len = 0;
+		if (_dupenv_s(&dir, &len, "VORTEX_AUDIO_TEST_DIR") != 0 || !dir) return;
+		std::string test_dir(dir);
+		free(dir);
+		std::error_code ec;
+		for (const auto& entry : std::filesystem::directory_iterator(test_dir, ec))
+		{
+			std::string ext = entry.path().extension().string();
+			for (char& c : ext) c = (char)tolower((unsigned char)c);
+			if (!entry.is_regular_file() || ext != ".ogg") continue;
+			const std::string file = entry.path().string(), name = entry.path().filename().string();
+			f32 seconds = 0.0f;
+			u32 clip_rate = 0, channels = 0;
+			if (!clip_info(file.c_str(), &seconds, &clip_rate, &channels) || seconds <= 0.2f || seconds > 8.0f) continue;
+
+			voice_params p{};
+			p.volume = 0.05f;
+			p.loop = true;
+			p.stream = true;
+			voice_handle v = voice_play(file.c_str(), p);
+			tick_seconds(seconds * 1.5f);
+			u64 cursor = 0, length = 0;
+			u32 rate = 0;
+			voice_get_position(v, &cursor, &length, &rate);
+			const double length_s = rate ? (double)length / rate : 0.0;
+			std::printf("[info] streamed %s: length %.3f s (header %.3f s), cursor %.3f s after %.3f s of looping\n", name.c_str(),
+				length_s, seconds, rate ? (double)cursor / rate : -1.0, seconds * 1.5);
+			check(("a file-streamed OGG knows its length and its position wraps at the loop: " + name).c_str(),
+				v != invalid_voice && std::fabs(length_s - seconds) < 0.01 && cursor < length);
+			voice_stop(v);
+
+			const char* stems[] = { file.c_str() };
+			music_desc d{};
+			d.stems = stems;
+			d.stem_count = 1;
+			d.loop = false;
+			music_group* g = music_create(d);
+			bool ended = false;
+			std::vector<f32> block(1024 * 2);
+			for (int i = 0; g && i < 4000 && !ended; ++i)
+			{
+				ended = music_render(g, block.data(), 1024) < 1024;
+				std::this_thread::sleep_for(std::chrono::microseconds(5300));
+			}
+			music_clock c{};
+			if (g) music_get_clock(g, &c);
+			std::printf("[info] one-shot music of %s: ended=%d after %.3f s, length %.3f s\n", name.c_str(), ended ? 1 : 0,
+				c.sample_rate ? (double)c.played / c.sample_rate : -1.0, c.sample_rate ? (double)c.length / c.sample_rate : -1.0);
+			check(("a one-shot music of a streamed OGG ends with it: " + name).c_str(),
+				g && ended && c.length > 0 && c.played + 256 >= c.length && c.played <= c.length);
+			music_destroy(g);
 		}
 	}
 

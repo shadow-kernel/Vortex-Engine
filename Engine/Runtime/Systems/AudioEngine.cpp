@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <cmath>
 #include <mutex>
 #include <string>
@@ -292,6 +293,16 @@ namespace vortex::runtime::audio {
 		return g_state == engine_state::device;
 	}
 
+	u64 engine_time_frames()
+	{
+		return g_state != engine_state::uninitialized ? (u64)ma_engine_get_time_in_pcm_frames(&g_engine) : 0;
+	}
+
+	u32 engine_sample_rate()
+	{
+		return g_state != engine_state::uninitialized ? (u32)ma_engine_get_sample_rate(&g_engine) : 0;
+	}
+
 	bool register_clip_data(const char* name, const void* data, u64 size)
 	{
 		if (g_state == engine_state::uninitialized || !name || !*name || !data || size == 0) return false;
@@ -355,9 +366,10 @@ namespace vortex::runtime::audio {
 		// Shared decoder-open for the editor helpers: registered blob or file path.
 		// Forces f32 output (the default keeps the file's native format — reading
 		// s16 data into float buffers would be garbage); channels/rate stay native.
-		bool open_probe_decoder(const char* path, ma_decoder* out)
+		// sample_rate 0 = the clip's own
+		bool open_probe_decoder(const char* path, ma_decoder* out, u32 sample_rate = 0)
 		{
-			ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+			ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, sample_rate);
 			u64 size = 0;
 			const void* bytes = registered_clip_bytes(path, &size);
 			if (bytes)
@@ -466,6 +478,41 @@ namespace vortex::runtime::audio {
 			out_peaks[b] = peak;
 		}
 		return true;
+	}
+
+	bool internal_is_mp3(const char* path)
+	{
+		if (!path) return false;
+		const size_t n = strlen(path);
+		if (n < 4) return false;
+		const char* e = path + n - 4;
+		return e[0] == '.' && (e[1] | 0x20) == 'm' && (e[2] | 0x20) == 'p' && e[3] == '3';
+	}
+
+	u64 internal_probe_length(const char* path)
+	{
+		if (g_state == engine_state::uninitialized || !path || !*path) return 0;
+		// at the engine rate, as the resource manager converts a stream (Vorbis: within a frame of what it plays)
+		ma_decoder decoder{};
+		if (!open_probe_decoder(path, &decoder, ma_engine_get_sample_rate(&g_engine))) return 0;
+		ma_uint64 frames = 0;
+		ma_decoder_get_length_in_pcm_frames(&decoder, &frames);
+		ma_decoder_uninit(&decoder);
+		return (u64)frames;
+	}
+
+	bool internal_open_pak_decoder(const char* name, bool f32_engine_rate, ma_decoder* out)
+	{
+		if (g_state == engine_state::uninitialized || !name || !out) return false;
+		u64 size = 0;
+		const void* bytes = registered_clip_bytes(name, &size);
+		if (!bytes) return false;
+		ma_decoder_config config = f32_engine_rate
+			? ma_decoder_config_init(ma_format_f32, 0, ma_engine_get_sample_rate(&g_engine))
+			: ma_decoder_config_init_default();
+		// one seek point per ~0.2 s of a 3-minute track (dr_mp3 spreads them over the file; other formats ignore it)
+		config.seekPointCount = 1024;
+		return ma_decoder_init_memory(bytes, (size_t)size, &config, out) == MA_SUCCESS;
 	}
 
 	const void* registered_clip_bytes(const char* name, u64* out_size)

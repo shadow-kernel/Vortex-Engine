@@ -30,7 +30,7 @@ namespace VortexEditor.Claude.Tools
             ["texture"] = new[] { ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".psd", ".hdr", ".dds", ".exr", ".webp" },
             ["material"] = new[] { ".vmat" },
             ["prefab"] = new[] { ".ventity", ".vprefab" },
-            ["audio"] = new[] { ".wav", ".mp3", ".ogg", ".flac", ".vsndc" },
+            ["audio"] = new[] { ".wav", ".mp3", ".ogg", ".flac", ".vsndc", ".vmusic" },
             ["script"] = new[] { ".cs" },
             ["scene"] = new[] { ".vscene" },
             ["shader"] = new[] { ".hlsl", ".metal", ".glsl", ".vshader" },

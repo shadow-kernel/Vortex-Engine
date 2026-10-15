@@ -271,37 +271,49 @@ namespace VortexEditor.Claude.Tools
                 }
                 return sb.ToString();
             }
+            // a nested class is a topic of its own too ("Music" or "Audio.Music", #437)
             var type = types.FirstOrDefault(t => string.Equals(t.Name, topic.Trim(), StringComparison.OrdinalIgnoreCase))
+                       ?? asm.GetExportedTypes().FirstOrDefault(t => t.Namespace == "Vortex" && t.IsNested
+                              && (string.Equals(t.Name, topic.Trim(), StringComparison.OrdinalIgnoreCase) || string.Equals(t.DeclaringType.Name + "." + t.Name, topic.Trim(), StringComparison.OrdinalIgnoreCase)))
                        ?? throw new ToolError("No type '" + topic + "' in the Vortex API. Types: " + string.Join(", ", types.Select(t => t.Name)));
-            sb.Append(type.IsAbstract && type.IsSealed ? "static class " : type.IsValueType ? "struct " : "class ").Append("Vortex.").Append(type.Name).Append('\n');
+            sb.Append(type.IsAbstract && type.IsSealed ? "static class " : type.IsValueType ? "struct " : "class ").Append("Vortex.").Append(type.IsNested ? type.DeclaringType.Name + "." : "").Append(type.Name).Append('\n');
             Doc(sb, type, "  ");
             if (type.IsEnum) { sb.Append("values: ").Append(string.Join(", ", Enum.GetNames(type))).Append('\n'); return sb.ToString(); }
-            const BindingFlags all = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-            foreach (var f in type.GetFields(all))
-            {
-                sb.Append("  ").Append(f.IsStatic ? "static " : "").Append(Tn(f.FieldType)).Append(' ').Append(f.Name).Append('\n');
-                Doc(sb, f, "      ");
-            }
-            foreach (var p in type.GetProperties(all))
-            {
-                bool st = (p.GetMethod ?? p.SetMethod)?.IsStatic == true;
-                sb.Append("  ").Append(st ? "static " : "").Append(Tn(p.PropertyType)).Append(' ').Append(p.Name)
-                  .Append(p.CanWrite && p.SetMethod?.IsPublic == true ? " { get; set; }" : " { get; }").Append('\n');
-                Doc(sb, p, "      ");
-            }
-            foreach (var m in type.GetMethods(all).Where(m => !m.IsSpecialName).OrderBy(m => m.Name))
-            {
-                sb.Append("  ").Append(m.IsStatic ? "static " : m.IsVirtual && !m.IsFinal ? "virtual " : "").Append(Tn(m.ReturnType)).Append(' ').Append(m.Name).Append('(')
-                  .Append(string.Join(", ", m.GetParameters().Select(p => Tn(p.ParameterType) + " " + p.Name + (p.HasDefaultValue ? " = " + (p.DefaultValue ?? "null") : ""))))
-                  .Append(")\n");
-                Doc(sb, m, "      ");
-            }
+            Members(sb, type, "  ");
             foreach (var nt in type.GetNestedTypes(BindingFlags.Public))
             {
                 sb.Append("  nested ").Append(nt.IsEnum ? "enum " : "type ").Append(nt.Name).Append(nt.IsEnum ? ": " + string.Join(", ", Enum.GetNames(nt)) : "").Append('\n');
                 Doc(sb, nt, "      ");
+                // a nested class's members are what scripts call (Audio.Music.Play, Audio.Music.SetState …): list them under it
+                if (!nt.IsEnum) Members(sb, nt, "    ");
             }
             return sb.ToString();
+        }
+
+        /// <summary>A type's own fields, properties and methods, each with its summary.</summary>
+        private static void Members(StringBuilder sb, Type type, string indent)
+        {
+            const BindingFlags all = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+            string docIndent = indent + "    ";
+            foreach (var f in type.GetFields(all))
+            {
+                sb.Append(indent).Append(f.IsStatic ? "static " : "").Append(Tn(f.FieldType)).Append(' ').Append(f.Name).Append('\n');
+                Doc(sb, f, docIndent);
+            }
+            foreach (var p in type.GetProperties(all))
+            {
+                bool st = (p.GetMethod ?? p.SetMethod)?.IsStatic == true;
+                sb.Append(indent).Append(st ? "static " : "").Append(Tn(p.PropertyType)).Append(' ').Append(p.Name)
+                  .Append(p.CanWrite && p.SetMethod?.IsPublic == true ? " { get; set; }" : " { get; }").Append('\n');
+                Doc(sb, p, docIndent);
+            }
+            foreach (var m in type.GetMethods(all).Where(m => !m.IsSpecialName).OrderBy(m => m.Name))
+            {
+                sb.Append(indent).Append(m.IsStatic ? "static " : m.IsVirtual && !m.IsFinal ? "virtual " : "").Append(Tn(m.ReturnType)).Append(' ').Append(m.Name).Append('(')
+                  .Append(string.Join(", ", m.GetParameters().Select(p => Tn(p.ParameterType) + " " + p.Name + (p.HasDefaultValue ? " = " + (p.DefaultValue ?? "null") : ""))))
+                  .Append(")\n");
+                Doc(sb, m, docIndent);
+            }
         }
 
         /// <summary>A type's or member's XML doc summary under its line (#404): the API's rules live there — e.g. that a fade

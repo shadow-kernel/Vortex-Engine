@@ -683,6 +683,18 @@ namespace Vortex
         /// Editor) — e.g. footstep sounds, attack hit frames. The marker's name is passed.</summary>
         public virtual void OnAnimationEvent(string name) { }
 
+        /// <summary>Adaptive music (#437): called on every beat of the .vmusic playing on Audio.Music — <paramref name="beat"/>
+        /// counts from 0 at bar 1 and keeps counting through loops (<c>beat % Audio.Music.BeatsPerBar</c> is the beat in the
+        /// bar). It fires on the game tick nearest to the moment the mixer reaches the beat — within half a frame, on the
+        /// same clock as Audio.Music.Time — so a crowd can clap on it: <c>public override void OnBeat(int beat) {
+        /// PlayAnimation("Clap", 0.05f); }</c> Only scripts that override it are called.</summary>
+        public virtual void OnBeat(int beat) { }
+
+        /// <summary>Adaptive music (#437): called on every bar line of the .vmusic playing on Audio.Music, before that beat's
+        /// OnBeat — <paramref name="bar"/> counts from 0 at bar 1 through loops (<c>bar % 4 == 0</c>: every fourth bar). Same
+        /// timing as <see cref="OnBeat"/>; only scripts that override it are called.</summary>
+        public virtual void OnBar(int bar) { }
+
         /// <summary>Called once when another character first enters this entity's TRIGGER collider.</summary>
         public virtual void OnTriggerEnter(TriggerHit other) { }
         /// <summary>This entity entered an Area (a zone: a cave, a no-fly zone, a village — whatever its tags say). Once.</summary>
@@ -2537,13 +2549,28 @@ namespace Vortex
             return bus >= 0 ? Editor.DllWrapper.VortexAudio.GetBusVolume(bus) : 1f;
         }
 
-        /// <summary>The music channel: one streamed, looping track at priority 0 (never stolen),
-        /// with fade-in and crossfade. Fades are frame-ticked ramps for now (native envelopes
-        /// arrive with the fade-envelope feature); the API shape is final.</summary>
+        /// <summary>The audio mixer's clock in seconds — Unity's AudioSettings.dspTime (#465): the samples mixed since the
+        /// audio engine started, over its sample rate. It advances in mixer blocks of about 10 ms, never drifts from what is
+        /// heard, and keeps running while sounds are paused. Schedule with it — <c>double t = Audio.DspTime + 0.5;
+        /// drums.PlayScheduled(t); bass.PlayScheduled(t);</c> starts both on the same sample. 0 without an audio engine.</summary>
+        public static double DspTime => Editor.Core.Services.AudioPlaybackService.DspSeconds;
+
+        /// <summary>The music channel: one looping track at a time at priority 0 (never stolen), on the Music bus, with
+        /// sample-accurate fade-in and crossfade. The track is a streamed clip — or adaptive music, a .vmusic (#437): stems
+        /// of one tempo playing sample-locked, states that set each stem's volume, parameters that fade stems in and out,
+        /// transitions on the beat, bar or phrase, and stingers.
+        /// <code>
+        /// Audio.Music.Play("Assets/Audio/Music/spy.vmusic", 2f);   // starts in its initial state
+        /// Audio.Music.SetState("alert");                            // lands on the next bar (its transition rule)
+        /// Audio.Music.SetParameter("intensity", danger);            // 0..1, the mapped stems glide along
+        /// Audio.Music.PlayStinger("spotted");                       // on the next beat
+        /// </code></summary>
         public static class Music
         {
             /// <summary>Start a track, fading in over fadeInSeconds (0 = immediate). A track
-            /// that is already playing is faded out quickly and replaced.</summary>
+            /// that is already playing is faded out quickly and replaced. A .vmusic path starts
+            /// adaptive music in its initial state (SetState, SetParameter, PlayStinger, OnBeat /
+            /// OnBar then work on it).</summary>
             public static void Play(string clipPath, float fadeInSeconds = 0f)
                 => Editor.Core.Services.AudioPlaybackService.Instance.MusicPlay(clipPath, fadeInSeconds);
 
@@ -2563,6 +2590,79 @@ namespace Vortex
                 get => Editor.Core.Services.AudioPlaybackService.Instance.MusicVolume;
                 set => Editor.Core.Services.AudioPlaybackService.Instance.MusicVolume = value;
             }
+
+            /// <summary>Seconds into the current track (#465) — the mixer's own position, exact through pauses (it advances
+            /// in mixer blocks of about 10 ms). Set it to seek; a streamed track refills from there. Resume where the music
+            /// stopped: <c>float t = Audio.Music.Time; … Audio.Music.Play(track); Audio.Music.Time = t;</c> 0 (and setting
+            /// does nothing) without a track.</summary>
+            public static float Time
+            {
+                get => (float)Editor.Core.Services.AudioPlaybackService.Instance.MusicTime;
+                set => Editor.Core.Services.AudioPlaybackService.Instance.MusicTime = value;
+            }
+
+            /// <summary>The current track's length in seconds (#465); 0 without a track.</summary>
+            public static float Length => (float)Editor.Core.Services.AudioPlaybackService.Instance.MusicLength;
+
+            /// <summary>Time ÷ Length, 0..1 (#465); set it to seek to a fraction of the track.</summary>
+            public static float NormalizedTime
+            {
+                get { double len = Editor.Core.Services.AudioPlaybackService.Instance.MusicLength; return len > 0 ? (float)Math.Min(1.0, Editor.Core.Services.AudioPlaybackService.Instance.MusicTime / len) : 0f; }
+                set
+                {
+                    double len = Editor.Core.Services.AudioPlaybackService.Instance.MusicLength;
+                    if (len > 0 && !float.IsNaN(value)) Editor.Core.Services.AudioPlaybackService.Instance.MusicTime = Math.Max(0f, Math.Min(1f, value)) * len;
+                }
+            }
+
+            /// <summary>The current track's position in samples of its own sample rate (#465) — sample-exact where Time is
+            /// a float; set it to seek. For adaptive music (.vmusic) it counts samples of the mixer's rate, which all its
+            /// stems play at (<see cref="Audio.DspTime"/>'s rate).</summary>
+            public static int TimeSamples
+            {
+                get => (int)Math.Min(int.MaxValue, Editor.Core.Services.AudioPlaybackService.Instance.MusicTimeSamples);
+                set => Editor.Core.Services.AudioPlaybackService.Instance.MusicTimeSamples = value;
+            }
+
+            /// <summary>Adaptive music (#437): switch the playing .vmusic to a state. Its stems glide to that state's volumes
+            /// on the boundary its transition rule names — at once, the next beat, the next bar or the end of the phrase —
+            /// exactly on the music's own clock, over the rule's crossfade (never a click), with the rule's stinger on the
+            /// same sample. Asking for the state it is in or heading to does nothing, so it is safe every frame; a newer
+            /// state replaces one still waiting for its bar. False (and one Console warning) for an unknown state or when no
+            /// .vmusic plays.</summary>
+            public static bool SetState(string state) => Editor.Core.Services.AudioPlaybackService.Instance.MusicSetState(state);
+
+            /// <summary>The state the adaptive music is in or heading to — the last one SetState chose, or its initial state;
+            /// "" without adaptive music (#437).</summary>
+            public static string State => Editor.Core.Services.AudioPlaybackService.Instance.MusicState;
+
+            /// <summary>Adaptive music (#437): set a parameter, 0..1 — every stem mapped to it in the .vmusic (silent at its
+            /// From value, full at its To value) glides to its new volume over the music's parameter fade, at once rather than
+            /// on a bar, so it can follow gameplay every frame: <c>Audio.Music.SetParameter("intensity", danger);</c> The
+            /// volume of a stem is its state's volume × its parameter volume.</summary>
+            public static void SetParameter(string name, float value) => Editor.Core.Services.AudioPlaybackService.Instance.MusicSetParameter(name, value);
+
+            /// <summary>A parameter's current value (0 when it was never set and the .vmusic gives no start value) (#437).</summary>
+            public static float GetParameter(string name) => Editor.Core.Services.AudioPlaybackService.Instance.MusicGetParameter(name);
+
+            /// <summary>Adaptive music (#437): play one of the .vmusic's stingers, mixed into the music on its own sync point
+            /// (by default the next beat) — sample-accurate, on the Music bus. False for an unknown stinger (one Console
+            /// warning) or when four already sound.</summary>
+            public static bool PlayStinger(string name) => Editor.Core.Services.AudioPlaybackService.Instance.MusicPlayStinger(name);
+
+            /// <summary>The adaptive music's tempo in beats per minute; 0 for a plain track or no music (#437).</summary>
+            public static float Bpm => Editor.Core.Services.AudioPlaybackService.Instance.MusicBpm;
+
+            /// <summary>Beats in a bar of the adaptive music (its time signature's upper number); 0 without one (#437).</summary>
+            public static int BeatsPerBar => Editor.Core.Services.AudioPlaybackService.Instance.MusicBeatsPerBar;
+
+            /// <summary>The beat the mixer is in — counting from 0 at bar 1 through loops, as OnBeat does; -1 before bar 1 or
+            /// without adaptive music (#437).</summary>
+            public static int Beat => Editor.Core.Services.AudioPlaybackService.Instance.MusicBeat;
+
+            /// <summary>The bar the mixer is in — counting from 0 at bar 1 through loops, as OnBar does; -1 before bar 1 or
+            /// without adaptive music (#437).</summary>
+            public static int Bar => Editor.Core.Services.AudioPlaybackService.Instance.MusicBar;
         }
     }
 
@@ -2628,5 +2728,54 @@ namespace Vortex
         public bool Loop { get => _component.Loop; set => _component.Loop = value; }
         /// <summary>Project-relative clip path; takes effect on the next Play().</summary>
         public string Clip { get => _component.AudioClipPath; set => _component.AudioClipPath = value; }
+
+        /// <summary>Playback position in seconds (#465) — read it to sync gameplay to the sound (dancers clapping on the
+        /// band's beat), set it to seek. Reading gives the mixer's own position, exact through Pause/Resume, Pitch changes
+        /// and seeks: it advances in mixer blocks of about 10 ms, at Pitch 2 twice as fast. Setting it while the source
+        /// plays or is paused jumps there — decoded and Streaming clips alike (a streamed clip is silent for the moment
+        /// it refills). Set while stopped, the next Play() (or Play On Awake start) begins there: <c>src.Time = saved;
+        /// src.Play();</c> resumes music where it stopped. Stop() rewinds to 0. Clamped to the clip; a looping source wraps.</summary>
+        public float Time
+        {
+            get => (float)Editor.Core.Services.AudioPlaybackService.Instance.ScriptGetTime(_component);
+            set => Editor.Core.Services.AudioPlaybackService.Instance.ScriptSetTime(_component, value);
+        }
+
+        /// <summary>The clip's length in seconds (#465): the playing clip's (for a sound container, the clip it rolled),
+        /// else the assigned clip's; 0 when unknown.</summary>
+        public float Length => (float)Editor.Core.Services.AudioPlaybackService.Instance.ScriptGetLength(_component);
+
+        /// <summary>Time ÷ Length, 0..1 (#465) — a progress bar, or set it to seek to a fraction of the clip. 0 when the
+        /// length is unknown.</summary>
+        public float NormalizedTime
+        {
+            get
+            {
+                var svc = Editor.Core.Services.AudioPlaybackService.Instance;
+                double len = svc.ScriptGetLength(_component);
+                return len > 0 ? (float)Math.Min(1.0, svc.ScriptGetTime(_component) / len) : 0f;
+            }
+            set
+            {
+                var svc = Editor.Core.Services.AudioPlaybackService.Instance;
+                double len = svc.ScriptGetLength(_component);
+                if (len > 0 && !float.IsNaN(value)) svc.ScriptSetTime(_component, Math.Max(0f, Math.Min(1f, value)) * len);
+            }
+        }
+
+        /// <summary>Playback position in samples of the clip's own sample rate — Unity's timeSamples (#465): sample-exact
+        /// where Time is a float. Set it to seek, like Time.</summary>
+        public int TimeSamples
+        {
+            get => (int)Math.Min(int.MaxValue, Editor.Core.Services.AudioPlaybackService.Instance.ScriptGetTimeSamples(_component));
+            set => Editor.Core.Services.AudioPlaybackService.Instance.ScriptSetTimeSamples(_component, value);
+        }
+
+        /// <summary>Start playing exactly when the mixer clock reaches <paramref name="dspTime"/> — seconds of
+        /// <see cref="Audio.DspTime"/> (#465). Sample-accurate: the voice waits inside the mixer, not for a game frame, so
+        /// sources scheduled for the same time start on the same sample and stay locked: <c>double t = Audio.DspTime + 0.5;
+        /// drums.PlayScheduled(t); bass.PlayScheduled(t);</c> A time already passed plays at once, like Play(); it starts from
+        /// Time when that was set while stopped. IsPlaying is true from the call on (as in Unity).</summary>
+        public void PlayScheduled(double dspTime) => Editor.Core.Services.AudioPlaybackService.Instance.ScriptPlayScheduled(_component, dspTime);
     }
 }
