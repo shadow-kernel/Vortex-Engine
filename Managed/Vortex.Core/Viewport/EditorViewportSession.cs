@@ -267,7 +267,7 @@ namespace Editor.Core.Viewport
                     VortexAPI.UIBegin((float)uw, (float)uh);   // the same point space the scripts see (#454)
                 }
 
-                VortexAPI.StepEngineRuntime(dt);
+                VortexAPI.StepEngineRuntime(dt, GameTime.EffectiveScale);   // the fallback physics on game time (#425)
                 ReadbackPhysics();
                 // this tick's wheel notches, 0 on a tick without any (#319): the wheel event used to set ScrollDelta and
                 // nothing reset it, so a zoom or weapon-switch script kept scrolling after one notch

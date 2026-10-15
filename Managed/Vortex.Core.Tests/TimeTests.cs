@@ -365,6 +365,28 @@ public class Clocks : VortexBehaviour
             finally { GameTime.ResetSession(1f / 60f); }
         }
 
+        /// <summary>#425 review: the engine's own runtime step — the fallback physics of a build without Jolt and its game clock —
+        /// advances by game time (real seconds × the time scale; 0 holds it), its audio by the real seconds; fast-forward takes
+        /// more steps per tick.</summary>
+        [Test]
+        public static void TheEngineRuntimeStepsOnGameTime(TestContext t)
+        {
+            try { Editor.Core.Native.NativeLoader.Register(); } catch { }
+            float clock;
+            try { Editor.DllWrapper.VortexAPI.ResetGameClock(); clock = Editor.DllWrapper.VortexAPI.GameTime(); }
+            catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException) { Console.WriteLine("    (skipped: no engine library)"); return; }
+            t.Equal(0f, clock, "a reset clock");
+            Editor.DllWrapper.VortexAPI.StepEngineRuntime(0.1f, 0.55f);   // 0.055 game s: three 1/60 s steps
+            t.True(Near(Editor.DllWrapper.VortexAPI.GameTime(), 0.05f, 1e-4f), "0.1 real s at time scale 0.55: three fixed steps of game time (" + Editor.DllWrapper.VortexAPI.GameTime() + ")");
+            Editor.DllWrapper.VortexAPI.StepEngineRuntime(0.1f, 0f);
+            t.True(Near(Editor.DllWrapper.VortexAPI.GameTime(), 0.05f, 1e-4f), "paused: the clock holds");
+            Editor.DllWrapper.VortexAPI.StepEngineRuntime(0.2f, 4f);
+            t.True(Near(Editor.DllWrapper.VortexAPI.GameTime(), 0.05f + 32f / 60f, 1e-3f), "0.2 s at 4× asks 0.8 s: 32 steps run in this tick (" + Editor.DllWrapper.VortexAPI.GameTime() + ")");
+            Editor.DllWrapper.VortexAPI.StepEngineRuntime(0f, 4f);
+            t.True(Near(Editor.DllWrapper.VortexAPI.GameTime(), 0.85f, 1e-3f), "… the rest in the next (" + Editor.DllWrapper.VortexAPI.GameTime() + ")");
+            Editor.DllWrapper.VortexAPI.ResetGameClock();
+        }
+
         [Test]
         public static void AnimatorsFollowTheTimeScaleUnlessTheyIgnoreIt(TestContext t)
         {

@@ -964,7 +964,9 @@ namespace Vortex
         /// more or less often, each one still <see cref="FixedDeltaTime"/> long — rendered poses stay smooth), animators,
         /// particles and decal fades, Nav Agents and the AI's trees, coroutines (WaitForSeconds) and Invoke timers. Update
         /// keeps being called at 0, with dt 0; FixedUpdate is not. Resets to 1 when play starts and when it stops; stays across
-        /// scene loads.
+        /// scene loads. Fast-forward has limits per frame: physics runs at most 32 fixed steps (0.53 s of game time at 60 Hz —
+        /// about 32× at 60 fps), the AI crowd at most 0.8 s (in 0.1 s steps) and perception 2 s; asked for more, they fall
+        /// behind the clock.
         /// <c>Time.TimeScale = 0.3f;</c> — bullet time.</summary>
         public static float TimeScale
         {

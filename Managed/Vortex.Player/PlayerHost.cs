@@ -355,7 +355,7 @@ namespace Vortex.Player
 
                 if (playing)
                 {
-                    VortexAPI.StepEngineRuntime(dt);
+                    VortexAPI.StepEngineRuntime(dt, Editor.Core.Services.GameTime.EffectiveScale);   // the fallback physics on game time (#425)
                     sr.Update(dt);
                     GameRuntime.ProcessPendingSceneSwitch();
                     AudioPlaybackService.Instance.Tick();
