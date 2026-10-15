@@ -70,14 +70,18 @@ namespace Editor.Core.Services.AI
                 if (en.Runner == null || en.Runner.Stopped) { (dead ??= new List<GameEntity>()).Add(kv.Key); continue; }
                 if (kv.Key.Scene != null && !kv.Key.ActiveInHierarchy) continue;
                 float interval = en.Agent != null ? en.Agent.TickInterval : 0f;
+                float step = dt;
                 if (interval > 0f)
                 {
                     en.Accumulator += dt;
                     if (en.Accumulator < interval) continue;
-                    float step = en.Accumulator; en.Accumulator = 0f;
-                    en.Runner.Tick(step);
+                    step = en.Accumulator; en.Accumulator = 0f;
                 }
-                else en.Runner.Tick(dt);
+                // the tasks act for the agent (#406): Physics.MoveCharacter(..., Agent) moves the agent's own capsule
+                var rt = Editor.Scripting.ScriptRuntime.Instance;
+                var ctx = rt.EnterEntityCode(kv.Key);
+                try { en.Runner.Tick(step); }
+                finally { rt.ExitEntityCode(ctx); }
             }
             if (dead != null) foreach (var e in dead) _entries.Remove(e);
         }

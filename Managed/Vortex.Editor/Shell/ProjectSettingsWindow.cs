@@ -18,7 +18,7 @@ namespace VortexEditor.Shell
 {
     /// <summary>
     /// Project settings (WPF ProjectSettingsWindow + the rest of ProjectSettings): General (name, location, company,
-    /// product, default resolution, fullscreen, v-sync, target FPS), Build (boot scene, version, bundle id, game icon),
+    /// product, default resolution, fullscreen, v-sync, target FPS, play-mode saves), Build (boot scene, version, bundle id, game icon),
     /// Source Control (remote, commit author, branch, LFS) and Editor (per-user preferences: reopen the last project,
     /// script IDE, appearance).
     /// </summary>
@@ -37,6 +37,8 @@ namespace VortexEditor.Shell
         private readonly ComboBox _bootScene = new ComboBox { MinWidth = 200, HorizontalAlignment = HorizontalAlignment.Left };
         private readonly ComboBox _ide = new ComboBox { MinWidth = 200, HorizontalAlignment = HorizontalAlignment.Left, ItemsSource = new[] { "Automatic (VS Code, then Rider)", "Visual Studio Code", "JetBrains Rider" } };
         private readonly ComboBox _theme = new ComboBox { MinWidth = 200, HorizontalAlignment = HorizontalAlignment.Left, ItemsSource = new[] { "System", "Dark", "Light" } };
+        /// <summary>Play-mode saves (#458): 0 = Sandbox, 1 = Shared.</summary>
+        internal readonly ComboBox PlaySaves = new ComboBox { MinWidth = 200, HorizontalAlignment = HorizontalAlignment.Left, ItemsSource = new[] { "Sandbox — separate test saves", "Shared with the exported game" } };
         private readonly TextBlock _branch = new TextBlock { Classes = { "secondary" }, VerticalAlignment = VerticalAlignment.Center }, _lfs = new TextBlock { Classes = { "secondary" }, VerticalAlignment = VerticalAlignment.Center }, _status = new TextBlock { Classes = { "small", "secondary" }, VerticalAlignment = VerticalAlignment.Center };
         public TabControl Tabs { get; }
         public string StatusText => _status.Text;
@@ -64,6 +66,14 @@ namespace VortexEditor.Shell
             general.Children.Add(Row("Fullscreen", _fullscreen));
             general.Children.Add(Row("V-Sync", _vsync));
             general.Children.Add(Row("Target FPS", _fps, "Frame-rate cap of the exported game (0 = unlimited; v-sync caps at the display rate)."));
+            general.Children.Add(new TextBlock { Text = "Play testing", Classes = { "section" } });
+            var saves = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            var showSaves = new Button { Content = "Show in Finder", Classes = { "ghost" }, VerticalAlignment = VerticalAlignment.Center };
+            showSaves.Click += (s, e) => ShowSavesFolder();
+            saves.Children.Add(PlaySaves); saves.Children.Add(showSaves);
+            general.Children.Add(Row("Saves", saves, "Where the game's Save slots live while you play it from the editor (Play, Play in Standalone Player). " +
+                "Sandbox keeps separate test saves, so play testing never changes the exported game's saves; Shared uses the exported game's own files. " +
+                "The exported game always uses its own. A change applies at the next Play."));
             tabs.Items.Add(new TabItem { Header = "General", Content = Scroll(general) });
 
             var build = Page();
@@ -134,6 +144,7 @@ namespace VortexEditor.Shell
             _name.Text = _project.Name ?? "";
             var st = _project.Settings;
             if (st != null) { _company.Text = st.CompanyName; _product.Text = st.ProductName; _width.Text = st.DefaultScreenWidth.ToString(); _height.Text = st.DefaultScreenHeight.ToString(); _fullscreen.IsChecked = st.FullscreenByDefault; _vsync.IsChecked = st.VSync; _fps.Text = st.TargetFPS.ToString(); _version.Text = st.ProductVersion; _bundleId.Text = st.BundleIdentifier; }
+            PlaySaves.SelectedIndex = st?.SandboxedPlaySaves == true ? 0 : 1;
             ShowIcon(null);
             _bootScene.ItemsSource = _project.Scenes.Select(s => s.Name).ToList();
             int idx = 0;
@@ -173,6 +184,9 @@ namespace VortexEditor.Shell
                 st.FullscreenByDefault = _fullscreen.IsChecked == true; st.VSync = _vsync.IsChecked == true;
                 st.ProductVersion = string.IsNullOrWhiteSpace(_version.Text) ? "1.0.0" : _version.Text.Trim();
                 st.BundleIdentifier = (_bundleId.Text ?? "").Trim();
+                // a project that never chose keeps no key (it shares the files, as before #458) until the choice changes
+                bool sandbox = PlaySaves.SelectedIndex == 0;
+                if (sandbox != st.SandboxedPlaySaves) st.PlayModeSaves = sandbox ? ProjectSettings.SandboxSaves : ProjectSettings.SharedSaves;
                 ApplyIconChoice(st);
                 if (_bootScene.SelectedIndex >= 0 && _bootScene.SelectedIndex < _project.Scenes.Count) _project.StartSceneId = _project.Scenes[_bootScene.SelectedIndex].Id;
                 ProjectService.Instance.SaveProject(_project);
@@ -188,6 +202,18 @@ namespace VortexEditor.Shell
                 EditorCommands.Toast("Project settings saved");
             }
             catch (Exception ex) { _status.Text = "Save failed: " + ex.Message; }
+        }
+
+        /// <summary>The folder of the chosen Play-mode saves (#458), made when it does not exist yet.</summary>
+        private void ShowSavesFolder()
+        {
+            try
+            {
+                string dir = Vortex.Save.Folder(PlaySaves.SelectedIndex == 0);
+                Directory.CreateDirectory(dir);
+                EditorCommands.RevealInFinder(dir);
+            }
+            catch (Exception ex) { _status.Text = "Could not open the saves folder: " + ex.Message; }
         }
 
         // ---------------------------------------------------------------- game icon

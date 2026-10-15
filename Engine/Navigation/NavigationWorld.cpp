@@ -5,7 +5,8 @@
 // The runtime navigation world: the loaded tiled navmesh (dtNavMesh), one query object for path / point / raycast
 // queries and a DetourCrowd for agents. See NavigationWorld.h for the contract; baking lives in
 // NavigationBake.cpp. The #else branch at the bottom is the stub the Visual Studio projects (and
-// -DVORTEX_ENABLE_RECAST=OFF) compile.
+// -DVORTEX_ENABLE_RECAST=OFF) compile. Poly refs are 64-bit (#517) and never leave this file: queries and the
+// crowd take and hand back world positions only.
 // ============================================================================
 
 #include <algorithm>
@@ -26,6 +27,10 @@
 
 namespace vortex::navigation {
 
+	// .vnav version 2 is Detour tile data with 64-bit poly refs (#517, NavigationFormat.h); Engine/CMakeLists.txt builds
+	// Detour and everything that links it with DT_POLYREF64. A build without it would misread every tile.
+	static_assert(sizeof(dtPolyRef) == 8, "Vortex navigation needs recastnavigation built with DT_POLYREF64 (#517)");
+
 	namespace {
 
 		void log(const char* fmt, ...)
@@ -39,6 +44,104 @@ namespace vortex::navigation {
 			line += text;
 			line += '\n';
 			platform::debug_output(line.c_str());
+		}
+
+		// sizeof(dtLink) with 32-bit poly refs: ref (4) + next (4) + edge, side, bmin, bmax (1 each) — .vnav version 1.
+		constexpr size_t k_link_bytes_ref32{ 12 };
+
+		// The byte layout of a Detour tile whose links are link_bytes each: the sections of dtCreateNavMeshData /
+		// dtNavMesh::addTile (header, vertices, polygons, links, detail meshes, detail vertices, detail triangles, BV
+		// tree, off-mesh connections), every one 4-byte aligned. False when the header is not a Detour tile this build
+		// reads: magic, version, a negative count, or counts that dtCreateNavMeshData never writes together — addTile
+		// writes links[maxLinkCount - 1], every ground polygon has one detail mesh, the BV tree has two nodes per ground
+		// polygon or none.
+		struct tile_layout { size_t links_at, links_size, total; };
+		bool layout_of(const dtMeshHeader& h, size_t link_bytes, tile_layout& out)
+		{
+			if (h.magic != DT_NAVMESH_MAGIC || h.version != DT_NAVMESH_VERSION) return false;
+			const int counts[] = { h.vertCount, h.polyCount, h.maxLinkCount, h.detailMeshCount, h.detailVertCount,
+				h.detailTriCount, h.bvNodeCount, h.offMeshConCount };
+			for (int c : counts) if (c < 0) return false;
+			if (h.maxLinkCount < 1 || h.detailMeshCount + h.offMeshConCount != h.polyCount
+				|| (h.bvNodeCount != 0 && h.bvNodeCount != 2 * h.detailMeshCount)) return false;
+			auto a4 = [](size_t n) { return (n + 3) & ~(size_t)3; };
+			out.links_at = a4(sizeof(dtMeshHeader)) + a4(sizeof(f32) * 3 * (size_t)h.vertCount) + a4(sizeof(dtPoly) * (size_t)h.polyCount);
+			out.links_size = a4(link_bytes * (size_t)h.maxLinkCount);
+			out.total = out.links_at + out.links_size + a4(sizeof(dtPolyDetail) * (size_t)h.detailMeshCount)
+				+ a4(sizeof(f32) * 3 * (size_t)h.detailVertCount) + a4(4 * (size_t)h.detailTriCount)
+				+ a4(sizeof(dtBVNode) * (size_t)h.bvNodeCount) + a4(sizeof(dtOffMeshConnection) * (size_t)h.offMeshConCount);
+			return true;
+		}
+
+		// The indices addTile and every query follow unchecked: a polygon's vertices (below vertCount) and neighbours
+		// inside the tile (below polyCount), each ground polygon's slice of the detail mesh and its triangles' vertices,
+		// and the BV tree's polygons and escape offsets. tile = laid out for this build (load_tile); a broken one is
+		// refused instead of read out of bounds — a flipped bit in any of them crashed the queries or debug_triangles.
+		bool indices_valid(const unsigned char* tile, const dtMeshHeader& h)
+		{
+			auto a4 = [](size_t n) { return (n + 3) & ~(size_t)3; };
+			tile_layout l{};
+			layout_of(h, sizeof(dtLink), l);
+			const size_t polys_at = a4(sizeof(dtMeshHeader)) + a4(sizeof(f32) * 3 * (size_t)h.vertCount);
+			const size_t details_at = l.links_at + l.links_size;
+			const size_t tris_at = details_at + a4(sizeof(dtPolyDetail) * (size_t)h.detailMeshCount) + a4(sizeof(f32) * 3 * (size_t)h.detailVertCount);
+			const size_t bv_at = tris_at + a4(4 * (size_t)h.detailTriCount);
+			for (int i = 0; i < h.polyCount; ++i)
+			{
+				dtPoly p;
+				std::memcpy(&p, tile + polys_at + sizeof(dtPoly) * (size_t)i, sizeof(p));
+				if (p.vertCount == 0 || p.vertCount > DT_VERTS_PER_POLYGON) return false;
+				for (int j = 0; j < p.vertCount; ++j)
+				{
+					if (p.verts[j] >= h.vertCount) return false;
+					if (p.neis[j] != 0 && !(p.neis[j] & DT_EXT_LINK) && p.neis[j] > h.polyCount) return false;   // neis = index + 1
+				}
+				if (i >= h.detailMeshCount) continue;   // off-mesh connections have no detail mesh
+				dtPolyDetail d;
+				std::memcpy(&d, tile + details_at + sizeof(dtPolyDetail) * (size_t)i, sizeof(d));
+				if ((size_t)d.vertBase + d.vertCount > (size_t)h.detailVertCount || (size_t)d.triBase + d.triCount > (size_t)h.detailTriCount) return false;
+				for (unsigned t = 0; t < d.triCount; ++t)
+				{
+					const unsigned char* v = tile + tris_at + 4 * ((size_t)d.triBase + t);   // polygon vertices, then the detail mesh's own
+					if (v[0] >= p.vertCount + d.vertCount || v[1] >= p.vertCount + d.vertCount || v[2] >= p.vertCount + d.vertCount) return false;
+				}
+			}
+			for (int i = 0; i < h.bvNodeCount; ++i)
+			{
+				dtBVNode n;
+				std::memcpy(&n, tile + bv_at + sizeof(dtBVNode) * (size_t)i, sizeof(n));
+				// a leaf names a ground polygon; an inner node's escape offset (-i) lands inside the tree or just past it
+				if (n.i >= 0 ? n.i >= h.detailMeshCount : (s64)i - (s64)n.i > (s64)h.bvNodeCount) return false;
+			}
+			return true;
+		}
+
+		// A copy of one stored tile in the layout this build's dtNavMesh::addTile expects (dtAlloc'd; the navmesh frees
+		// it), or null when the bytes are not a tile of that .vnav version: the size the header's counts give must be the
+		// stored size exactly, so a tile of the other ref width is refused, never misread (#517). Version 1 tiles keep
+		// every section; only the links section — runtime state, rebuilt by addTile — grows to this build's dtLink.
+		unsigned char* load_tile(const u8* src, size_t size, bool ref32, int& out_size)
+		{
+			if (size < sizeof(dtMeshHeader)) return nullptr;
+			dtMeshHeader h{};
+			std::memcpy(&h, src, sizeof(h));
+			tile_layout stored{}, now{};
+			if (!layout_of(h, ref32 ? k_link_bytes_ref32 : sizeof(dtLink), stored) || stored.total != size) return nullptr;
+			layout_of(h, sizeof(dtLink), now);
+			if (now.total > 0x7fffffff) return nullptr;
+			unsigned char* tile = (unsigned char*)dtAlloc(now.total, DT_ALLOC_PERM);
+			if (!tile) return nullptr;
+			std::memcpy(tile, src, stored.links_at);
+			std::memset(tile + now.links_at, 0, now.links_size);
+			std::memcpy(tile + now.links_at + now.links_size, src + stored.links_at + stored.links_size,
+				stored.total - stored.links_at - stored.links_size);
+			if (!indices_valid(tile, h))
+			{
+				dtFree(tile);
+				return nullptr;
+			}
+			out_size = (int)now.total;
+			return tile;
 		}
 
 		constexpr int k_query_nodes{ 4096 };
@@ -174,8 +277,20 @@ namespace vortex::navigation {
 		format::file_header hdr{};
 		std::memcpy(&hdr, data, sizeof(hdr));
 		if (hdr.magic != data_magic) { log("load: not a navmesh (.vnav) blob"); return false; }
-		if (hdr.version != data_version) { log("load: unsupported .vnav version %d (expected %d) - rebake", hdr.version, data_version); return false; }
+		// #517: version 1 was baked with 32-bit poly refs; its tiles are re-laid out below (load_tile)
+		const bool ref32 = hdr.version == format::version_ref32;
+		if (hdr.version != data_version && !ref32) { log("load: unsupported .vnav version %d (expected %d) - rebake", hdr.version, data_version); return false; }
 		if (hdr.tile_count < 0 || hdr.max_tiles <= 0 || hdr.max_polys <= 0 || !(hdr.tile_width > 0.0f)) { log("load: corrupt header"); return false; }
+		// The tile pool is sized by tile_count (tiles are found by their grid position, and with 64-bit refs no ref bits
+		// come from the pool size), so tile_count must be what the bytes can hold — every tile is a tile_header and at
+		// least a dtMeshHeader. One flipped bit used to allocate gigabytes before the tile table was read. max_tiles sizes
+		// nothing any more; version 2 writes it equal to tile_count.
+		const size_t max_tiles_in_file = ((size_t)size - sizeof(hdr)) / (sizeof(format::tile_header) + sizeof(dtMeshHeader));
+		if ((size_t)hdr.tile_count > max_tiles_in_file || (!ref32 && hdr.max_tiles != hdr.tile_count))
+		{
+			log("load: corrupt header (%d tiles, max_tiles %d, in %d bytes)", hdr.tile_count, hdr.max_tiles, size);
+			return false;
+		}
 
 		dtNavMesh* mesh = dtAllocNavMesh();
 		if (!mesh) return false;
@@ -183,9 +298,15 @@ namespace vortex::navigation {
 		dtVcopy(params.orig, hdr.orig);
 		params.tileWidth = hdr.tile_width;
 		params.tileHeight = hdr.tile_height;
-		params.maxTiles = hdr.max_tiles;
+		params.maxTiles = std::max(1, hdr.tile_count);
 		params.maxPolys = hdr.max_polys;
-		if (dtStatusFailed(mesh->init(&params))) { dtFreeNavMesh(mesh); log("load: dtNavMesh::init failed"); return false; }
+		if (dtStatusFailed(mesh->init(&params)))
+		{
+			// Only out of memory. A failed init leaves maxTiles set over a tile array it never allocated (or never cleared),
+			// which Detour's destructor would walk: the half-built mesh is dropped rather than crash dtFreeNavMesh.
+			log("load: dtNavMesh::init failed for %d tiles (out of memory)", params.maxTiles);
+			return false;
+		}
 
 		size_t off = sizeof(hdr);
 		for (s32 i = 0; i < hdr.tile_count; ++i)
@@ -195,10 +316,15 @@ namespace vortex::navigation {
 			std::memcpy(&th, data + off, sizeof(th));
 			off += sizeof(th);
 			if (th.size <= 0 || off + (size_t)th.size > (size_t)size) { dtFreeNavMesh(mesh); log("load: truncated tile %d", i); return false; }
-			unsigned char* tile = (unsigned char*)dtAlloc((size_t)th.size, DT_ALLOC_PERM);
-			if (!tile) { dtFreeNavMesh(mesh); return false; }
-			std::memcpy(tile, data + off, (size_t)th.size);
-			if (dtStatusFailed(mesh->addTile(tile, th.size, DT_TILE_FREE_DATA, 0, nullptr)))
+			int tile_size = 0;
+			unsigned char* tile = load_tile(data + off, (size_t)th.size, ref32, tile_size);
+			if (!tile)
+			{
+				dtFreeNavMesh(mesh);
+				log("load: tile %d (%d, %d) is not Detour tile data of .vnav version %d - rebake", i, th.tx, th.tz, hdr.version);
+				return false;
+			}
+			if (dtStatusFailed(mesh->addTile(tile, tile_size, DT_TILE_FREE_DATA, 0, nullptr)))
 			{
 				dtFree(tile);
 				dtFreeNavMesh(mesh);
@@ -221,6 +347,7 @@ namespace vortex::navigation {
 		g.header = hdr;
 		g.blob.assign(data, data + size);
 		setup_crowd(hdr.settings.agent_radius);
+		if (ref32) log("load: .vnav version 1 (32-bit poly refs, %d tiles) re-laid out for 64-bit refs - a rebake stores version %d", hdr.tile_count, data_version);
 		return true;
 	}
 

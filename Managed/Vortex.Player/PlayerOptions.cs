@@ -17,7 +17,7 @@ namespace Vortex.Player
         public float ExitAfterSeconds = 0f;
         /// <summary>Smoke-test mode: write a frame capture (BMP) to this path shortly before exiting.</summary>
         public string CapturePath;
-        /// <summary>Automation: a timed input script (see <see cref="InputScript"/>).</summary>
+        /// <summary>Automation: a timed input script (see <see cref="Editor.Core.Input.InputScript"/>).</summary>
         public string InputScriptPath;
         /// <summary>Automation: directory for the script's frame captures (default: next to --capture or the temp folder).</summary>
         public string CaptureDir;
