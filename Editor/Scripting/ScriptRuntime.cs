@@ -310,6 +310,11 @@ namespace Editor.Scripting
             if (!_compactPending) return;
             _compactPending = false;
             _behaviours.RemoveAll(b => !IsLive(b));
+            if (_fixedBehaviours.Count > 0)
+            {
+                _fixedBehaviours.RemoveAll(b => !IsLive(b));
+                if (_fixedBehaviours.Count == 0) Editor.Core.Services.Physics.PhysicsService.BeforeStep = null;   // #481: no cost again
+            }
         }
 
         // ---- coroutines + timers (#37) ----
@@ -319,6 +324,7 @@ namespace Editor.Scripting
             public Vortex.VortexBehaviour Owner;
             public System.Collections.IEnumerator Routine;
             public float Wait;
+            public bool Realtime;   // the wait counts real seconds (WaitForSecondsRealtime), not game time (#425)
             public Vortex.Coroutine Handle;
         }
         private sealed class Inv
@@ -368,10 +374,15 @@ namespace Editor.Scripting
             catch (Exception ex) { LogScriptError("Coroutine", c.Owner, ex); c.Handle.Done = true; return; }
             finally { _dispatching = prev; }
             if (!more) { c.Handle.Done = true; return; }
-            c.Wait = (c.Routine.Current as Vortex.WaitForSeconds)?.Seconds ?? 0f;   // yield return null = one frame
+            // yield return null = one frame; WaitForSeconds counts game time, WaitForSecondsRealtime real time (#425)
+            var current = c.Routine.Current;
+            if (current is Vortex.WaitForSecondsRealtime real) { c.Wait = real.Seconds; c.Realtime = true; }
+            else { c.Wait = (current as Vortex.WaitForSeconds)?.Seconds ?? 0f; c.Realtime = false; }
         }
 
-        private void TickCoroutinesAndInvokes(float dt)
+        /// <summary>Coroutines and Invoke timers advance by <paramref name="dt"/> (game seconds — slowed or held by the time
+        /// scale, #425); a coroutine waiting on WaitForSecondsRealtime by <paramref name="realDt"/>.</summary>
+        private void TickCoroutinesAndInvokes(float dt, float realDt)
         {
             // Snapshot the counts: coroutines/invokes STARTED during this tick already ran their first
             // step (StartCoroutine) or wait a full delay — they must not double-advance this frame.
@@ -380,7 +391,7 @@ namespace Editor.Scripting
             {
                 var c = _coroutines[i];
                 if (c.Handle.Stopped || c.Handle.Done) continue;
-                c.Wait -= dt;
+                c.Wait -= c.Realtime ? realDt : dt;
                 if (c.Wait > 0f) continue;
                 AdvanceCoroutine(c);
             }
@@ -833,6 +844,11 @@ namespace Editor.Scripting
             try { Vortex.Save.BeginSession(); } catch { }   // forgets the last session's cache — the file on disk is the truth
             ResetNonFiniteWarnings();                       // a NaN written again in this session is reported again (#455)
             _duplicateWarned.Clear();
+            // a session starts at time scale 1 with the project's fixed step (#425, #481); a scene load inside it keeps both
+            int rate = 0;
+            try { rate = Editor.Core.Data.ProjectData.Current?.Settings?.FixedUpdateRate ?? 0; } catch { }
+            Editor.Core.Services.GameTime.ResetSession(Editor.Core.Services.GameTime.FixedDeltaTimeForRate(rate));
+            try { Editor.Core.Services.AudioPlaybackService.Instance.SetPitchFollowsTimeScale(false); } catch { }   // #425: off until a script turns it on
             Begin(scene, overrideAsm);
         }
 
@@ -1054,13 +1070,18 @@ namespace Editor.Scripting
             try { Editor.Core.Services.ConsoleService.Instance.LogError(msg); } catch { }
         }
 
-        /// <summary>Tick every running behaviour.</summary>
-        public void Update(float dt)
+        /// <summary>Tick every running behaviour. <paramref name="realDt"/> is the host's frame time in real seconds; the game
+        /// runs on it scaled by the time scale (#425): Update / LateUpdate, the AI, the physics accumulator (and with it
+        /// FixedUpdate, #481), coroutines and timers, camera effects and the animators get game seconds — the UI action classes
+        /// and the debug draw clock keep real ones.</summary>
+        public void Update(float realDt)
         {
             // a new input tick: key edges (GetKeyDown / GetKeyUp) and the sub-frame press latch roll over (#337)
             _keyTick++;
             Editor.Core.Input.HostInput.BeginTick();
             if (!_active) return;
+            float dt = Editor.Core.Services.GameTime.BeginTick(realDt);   // game seconds (#425)
+            realDt = Editor.Core.Services.GameTime.UnscaledDeltaTime;     // sanitised (negative / NaN = 0)
             Vortex.Time.DeltaTime = dt;
             Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
             CompactBehaviours();          // drop what was destroyed since the last tick — never inside the loops below
@@ -1086,11 +1107,12 @@ namespace Editor.Scripting
                 catch (Exception ex) { LogScriptError("Update", b, ex); }
                 finally { _dispatching = prev; }
             }
-            // Auto-instantiated UI action controllers tick too, so a screen's class can drive its own widgets.
+            // Auto-instantiated UI action controllers tick too, so a screen's class can drive its own widgets — in real time:
+            // a pause menu (time scale 0) keeps animating (#425).
             foreach (var b in _uiActions.Values)
             {
                 if (b == null) continue;
-                try { b.Update(dt); }
+                try { b.Update(realDt); }
                 catch (Exception ex) { LogScriptError("UI Update", b, ex); }
             }
 
@@ -1121,16 +1143,17 @@ namespace Editor.Scripting
             foreach (var b in _uiActions.Values)
             {
                 if (b == null) continue;
-                try { b.LateUpdate(dt); }
+                try { b.LateUpdate(realDt); }
                 catch (Exception ex) { LogScriptError("UI LateUpdate", b, ex); }
             }
 
             // Coroutines + Invoke timers (#37) advance after behaviours, so a coroutine resumed this
             // frame sees the world the behaviours just built (and PlayAnimation from it applies below).
-            TickCoroutinesAndInvokes(dt);
+            TickCoroutinesAndInvokes(dt, realDt);
 
-            // Debug draw + dev console (#42): re-submit live wire shapes, then the console overlay on top.
-            SubmitDebugShapes(dt);
+            // Debug draw + dev console (#42): re-submit live wire shapes, then the console overlay on top. A shape's duration
+            // is real time — a debug line stays readable while the game is paused.
+            SubmitDebugShapes(realDt);
             try { Editor.Core.Services.Physics.PhysicsService.SubmitDebugDraw(); } catch { }   // View ▸ Physics Debug (#106)
             try { Editor.Core.Services.AI.AiRuntime.SubmitDebugDraw(); } catch { }           // navmesh / agent paths / patrol routes / vision cones
             RenderDebugConsole();
@@ -1144,13 +1167,63 @@ namespace Editor.Scripting
             try
             {
                 Editor.Core.Services.CameraFXService.Instance.Step(dt);   // springs/noise BEFORE sockets read them
-                Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt);
+                Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt, realDt);   // Ignore Time Scale animators: real time (#425)
                 Editor.Core.Animation.BoneSocketService.Instance.Apply(_currentScene);
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Animation step error: " + ex.Message); }
 
             // Collision/trigger events fire AFTER everyone moved this tick, so overlaps are tested at final positions.
             DispatchCollisionEvents();
+        }
+
+        // ---- FixedUpdate (#481): the behaviours whose class overrides it, in _behaviours order. PhysicsService calls
+        // RunFixedUpdate before each fixed step; while the list is empty its hook stays null — no cost per step.
+        private readonly List<Vortex.VortexBehaviour> _fixedBehaviours = new List<Vortex.VortexBehaviour>();
+        private static readonly Dictionary<Type, bool> _overridesFixedUpdate = new Dictionary<Type, bool>();
+        private Action<float> _fixedHook;
+
+        /// <summary>True when the behaviour class (or a base of it) overrides VortexBehaviour.FixedUpdate.</summary>
+        internal static bool OverridesFixedUpdate(Type t)
+        {
+            if (t == null) return false;
+            lock (_overridesFixedUpdate)
+            {
+                if (_overridesFixedUpdate.TryGetValue(t, out bool yes)) return yes;
+                var m = t.GetMethod("FixedUpdate", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(float) }, null);
+                yes = m != null && m.DeclaringType != typeof(Vortex.VortexBehaviour);
+                _overridesFixedUpdate[t] = yes;
+                return yes;
+            }
+        }
+
+        private void TrackFixedUpdate(Vortex.VortexBehaviour b)
+        {
+            if (b == null || !OverridesFixedUpdate(b.GetType())) return;
+            _fixedBehaviours.Add(b);
+            Editor.Core.Services.Physics.PhysicsService.BeforeStep = _fixedHook ??= RunFixedUpdate;
+        }
+
+        /// <summary>One fixed step's FixedUpdate on every live behaviour that has one (#481): Time.DeltaTime reads the step
+        /// and Time.InFixedStep is true meanwhile. A behaviour spawned by a FixedUpdate runs from the next step on.</summary>
+        private void RunFixedUpdate(float step)
+        {
+            if (!_active) return;
+            Editor.Core.Services.GameTime.InFixedStep = true;
+            try
+            {
+                int n = _fixedBehaviours.Count;
+                for (int i = 0; i < n && i < _fixedBehaviours.Count; i++)
+                {
+                    var b = _fixedBehaviours[i];
+                    if (!IsLive(b)) continue;
+                    var prev = _dispatching; _dispatching = b;   // its character moves are its entity's (#406)
+                    try { b.FixedUpdate(step); }
+                    catch (Exception ex) { LogScriptError("FixedUpdate", b, ex); }
+                    finally { _dispatching = prev; }
+                    if (!_active) break;   // a FixedUpdate stopped play
+                }
+            }
+            finally { Editor.Core.Services.GameTime.InFixedStep = false; }
         }
 
         private bool _animEventsHooked;
@@ -1490,6 +1563,10 @@ namespace Editor.Scripting
             try { Vortex.Save.Flush(); } catch { }
             _uiActions.Clear();
             _behaviours.Clear();
+            _fixedBehaviours.Clear();
+            lock (_overridesFixedUpdate) _overridesFixedUpdate.Clear();   // holds script types: a hot reload's old assembly must unload
+            Editor.Core.Services.Physics.PhysicsService.BeforeStep = null;   // #481
+            Editor.Core.Services.GameTime.InFixedStep = false;
             _compactPending = false;
             _startPending.Clear();
             _entitiesById.Clear();
@@ -1745,6 +1822,7 @@ namespace Editor.Scripting
                 _behaviours.Add(behaviour);
                 list.Add(behaviour);
                 _scriptOf[behaviour] = script;
+                TrackFixedUpdate(behaviour);   // #481
                 return behaviour;
             }
             catch (Exception ex) { LogScriptError(script.ScriptClassName, "constructor", ex); return null; }

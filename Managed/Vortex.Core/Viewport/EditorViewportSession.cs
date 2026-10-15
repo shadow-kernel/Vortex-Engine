@@ -372,6 +372,9 @@ namespace Editor.Core.Viewport
             {
                 float t = VortexAPI.GameTime();
                 status += $"   ·   ▶ {((int)t) / 60:00}:{((int)t) % 60:00}";
+                // the game's slow motion / pause and the play menu's test multiplier (#425), when they are not 1
+                float scale = GameTime.EffectiveScale;
+                if (Math.Abs(scale - 1f) > 1e-4f) status += "   ·   Time ×" + scale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
                 status += _mouseCaptured ? "   ·   Esc releases the mouse" : "   ·   Click to capture the mouse";
             }
             else if (_gameViewMode)

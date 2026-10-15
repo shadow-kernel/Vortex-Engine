@@ -315,11 +315,16 @@ namespace Editor.Core.Animation
 
         // ------------------------------------------------------------------ per-frame tick
 
-        /// <summary>Advance every enabled Animator in the scene. Called from ScriptRuntime.Update AFTER
+        /// <summary>Advance every enabled Animator in the scene by <paramref name="dt"/>. Called from ScriptRuntime.Update AFTER
         /// behaviours ran, so a same-frame Play() takes effect immediately.</summary>
-        public void Step(Data.Scene scene, float dt)
+        public void Step(Data.Scene scene, float dt) => Step(scene, dt, dt);
+
+        /// <summary>As <see cref="Step(Data.Scene, float)"/> with game seconds (<paramref name="dt"/>, scaled by the time scale,
+        /// #425) and real ones: an Animator with Ignore Time Scale plays by <paramref name="unscaledDt"/>.</summary>
+        public void Step(Data.Scene scene, float dt, float unscaledDt)
         {
             HasActiveAnimators = false;
+            _unscaledDt = unscaledDt;
             if (scene?.Entities == null) return;
 
             // Advance sync-group master clocks FIRST — grouped members read Norm during their step.
@@ -339,11 +344,13 @@ namespace Editor.Core.Animation
             foreach (var e in scene.Entities) StepRecursive(e, dt);
         }
 
+        private float _unscaledDt;   // this Step's real seconds (Ignore Time Scale, #425)
+
         private void StepRecursive(ECS.GameEntity entity, float dt)
         {
             if (entity == null || !entity.IsActive) return;
             var animator = entity.GetComponent<ECS.Components.Animation.Animator>();
-            if (animator != null && animator.IsEnabled) StepEntity(entity, animator, dt);
+            if (animator != null && animator.IsEnabled) StepEntity(entity, animator, animator.IgnoreTimeScale ? _unscaledDt : dt);
             if (entity.Children != null)
                 foreach (var c in entity.Children) StepRecursive(c, dt);
         }
@@ -785,6 +792,22 @@ namespace Editor.Core.Animation
         public void Stop(ECS.GameEntity entity)
         {
             if (entity != null && _states.TryGetValue(entity.Id, out var s)) { s.Playing = false; s.StartHandled = true; }
+        }
+
+        /// <summary>Play <paramref name="clip"/> on <paramref name="entity"/> with the rig given directly instead of one read from
+        /// its model — the headless tests drive the clock, the time scale and the level of detail through it.</summary>
+        internal bool PlayWithRig(ECS.GameEntity entity, SkeletonDef skeleton, VortexAnimClip clip)
+        {
+            if (entity == null || skeleton == null || clip == null) return false;
+            var state = new AnimatorState { Entity = entity, Skeleton = skeleton };
+            _states[entity.Id] = state;
+            state.Clip = clip;
+            state.TrackNodes = ResolveTrackNodes(skeleton, clip);
+            state.Loop = clip.Loop;
+            state.Playing = true;
+            state.StartHandled = true;
+            state.Palette = EvaluateStatePalette(state);
+            return true;
         }
 
         // ------------------------------------------------------------------ synced groups (#174)

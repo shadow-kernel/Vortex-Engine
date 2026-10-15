@@ -214,6 +214,12 @@ namespace Editor.Core.Data
         public const string SandboxSaves = "Sandbox";
         public const string SharedSaves = "Shared";
 
+        /// <summary>Physics steps (and FixedUpdate calls) per second of game time (#481) — Time.FixedDeltaTime is 1 / this.
+        /// 0, the value of every project.vortex without the key, means the default 60; the key is only written for another
+        /// rate (10..1000).</summary>
+        [DataMember(Name = "fixedUpdateRate", Order = 11, IsRequired = false, EmitDefaultValue = false)]
+        public int FixedUpdateRate { get; set; }
+
         /// <summary>Editor play keeps its own save files (<see cref="PlayModeSaves"/> is Sandbox).</summary>
         public bool SandboxedPlaySaves => string.Equals(PlayModeSaves, SandboxSaves, StringComparison.OrdinalIgnoreCase);
     }

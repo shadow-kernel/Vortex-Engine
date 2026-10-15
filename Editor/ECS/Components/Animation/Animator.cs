@@ -87,8 +87,18 @@ namespace Editor.ECS.Components.Animation
             set => SetProperty(ref _rootMotionBone, value ?? "", nameof(RootMotionBone));
         }
 
+        /// <summary>#425: play in real time, whatever Time.TimeScale says — a menu character, or the player's own body while
+        /// the world around them runs in slow motion. Off = the animation slows down, pauses and speeds up with the game.</summary>
+        [DataMember(Name = "ignoreTimeScale", Order = 16, IsRequired = false, EmitDefaultValue = false)]
+        public bool IgnoreTimeScale
+        {
+            get => _ignoreTimeScale;
+            set => SetProperty(ref _ignoreTimeScale, value, nameof(IgnoreTimeScale));
+        }
+
         private bool _applyRootMotion;
         private string _rootMotionBone = "";
+        private bool _ignoreTimeScale;
 
         public Animator() : base() { }
         public Animator(GameEntity entity) : base(entity) { }

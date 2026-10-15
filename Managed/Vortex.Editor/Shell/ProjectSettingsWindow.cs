@@ -18,7 +18,8 @@ namespace VortexEditor.Shell
 {
     /// <summary>
     /// Project settings (WPF ProjectSettingsWindow + the rest of ProjectSettings): General (name, location, company,
-    /// product, default resolution, fullscreen, v-sync, target FPS, play-mode saves), Build (boot scene, version, bundle id, game icon),
+    /// product, default resolution, fullscreen, v-sync, target FPS, the physics' fixed update rate, play-mode saves), Build (boot
+    /// scene, version, bundle id, game icon),
     /// Source Control (remote, commit author, branch, LFS) and Editor (per-user preferences: reopen the last project,
     /// script IDE, appearance).
     /// </summary>
@@ -28,6 +29,8 @@ namespace VortexEditor.Shell
         private readonly TextBox _name = new TextBox(), _remote = new TextBox { Watermark = "https://github.com/you/repo.git" }, _user = new TextBox(), _email = new TextBox();
         private readonly TextBox _company = new TextBox(), _product = new TextBox(), _width = new TextBox { Classes = { "number" }, Width = 80 }, _height = new TextBox { Classes = { "number" }, Width = 80 };
         private readonly TextBox _fps = new TextBox { Classes = { "number" }, Width = 80, HorizontalAlignment = HorizontalAlignment.Left };
+        /// <summary>Physics steps per second of game time (#481).</summary>
+        internal readonly TextBox FixedRate = new TextBox { Classes = { "number" }, Width = 80, HorizontalAlignment = HorizontalAlignment.Left };
         private readonly TextBox _version = new TextBox { Width = 120, HorizontalAlignment = HorizontalAlignment.Left }, _bundleId = new TextBox { Watermark = "com.company.game (derived when empty)" };
         private readonly Image _iconPreview = new Image { Width = 56, Height = 56 };
         private readonly TextBlock _iconInfo = new TextBlock { Classes = { "small", "secondary" }, VerticalAlignment = VerticalAlignment.Center, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 160 };
@@ -66,6 +69,10 @@ namespace VortexEditor.Shell
             general.Children.Add(Row("Fullscreen", _fullscreen));
             general.Children.Add(Row("V-Sync", _vsync));
             general.Children.Add(Row("Target FPS", _fps, "Frame-rate cap of the exported game (0 = unlimited; v-sync caps at the display rate)."));
+            general.Children.Add(new TextBlock { Text = "Physics", Classes = { "section" } });
+            general.Children.Add(Row("Fixed update rate", FixedRate, "Physics steps per second of game time (10–1000, default 60): every step runs the scripts' " +
+                "FixedUpdate first, and Time.FixedDeltaTime is 1 / this rate. A higher rate makes fast vehicles and stacks steadier and costs more CPU. " +
+                "A change applies at the next Play."));
             general.Children.Add(new TextBlock { Text = "Play testing", Classes = { "section" } });
             var saves = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             var showSaves = new Button { Content = "Show in Finder", Classes = { "ghost" }, VerticalAlignment = VerticalAlignment.Center };
@@ -145,6 +152,7 @@ namespace VortexEditor.Shell
             var st = _project.Settings;
             if (st != null) { _company.Text = st.CompanyName; _product.Text = st.ProductName; _width.Text = st.DefaultScreenWidth.ToString(); _height.Text = st.DefaultScreenHeight.ToString(); _fullscreen.IsChecked = st.FullscreenByDefault; _vsync.IsChecked = st.VSync; _fps.Text = st.TargetFPS.ToString(); _version.Text = st.ProductVersion; _bundleId.Text = st.BundleIdentifier; }
             PlaySaves.SelectedIndex = st?.SandboxedPlaySaves == true ? 0 : 1;
+            FixedRate.Text = (st != null && st.FixedUpdateRate > 0 ? st.FixedUpdateRate : 60).ToString();
             ShowIcon(null);
             _bootScene.ItemsSource = _project.Scenes.Select(s => s.Name).ToList();
             int idx = 0;
@@ -181,6 +189,8 @@ namespace VortexEditor.Shell
                 if (int.TryParse(_width.Text, out int w)) st.DefaultScreenWidth = Math.Max(320, w);
                 if (int.TryParse(_height.Text, out int h)) st.DefaultScreenHeight = Math.Max(240, h);
                 if (int.TryParse(_fps.Text, out int fps)) st.TargetFPS = Math.Max(0, Math.Min(1000, fps));
+                // 60 is the default and stays out of project.vortex (#481): a project that never chose another rate keeps no key
+                if (int.TryParse(FixedRate.Text, out int rate)) { rate = Math.Max(10, Math.Min(1000, rate)); st.FixedUpdateRate = rate == 60 ? 0 : rate; }
                 st.FullscreenByDefault = _fullscreen.IsChecked == true; st.VSync = _vsync.IsChecked == true;
                 st.ProductVersion = string.IsNullOrWhiteSpace(_version.Text) ? "1.0.0" : _version.Text.Trim();
                 st.BundleIdentifier = (_bundleId.Text ?? "").Trim();

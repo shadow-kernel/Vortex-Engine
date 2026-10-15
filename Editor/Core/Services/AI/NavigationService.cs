@@ -547,6 +547,9 @@ namespace Editor.Core.Services.AI
                 }
             }
 
+            // the game is paused (time scale 0, #425): the crowd holds still — nothing to step, nothing to write back
+            if (dt <= 0f) return;
+
             // 2) the crowd: path requests, corridor following, avoidance
             VortexAPI.NavCrowdUpdate(dt);
 

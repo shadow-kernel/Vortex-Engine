@@ -365,12 +365,25 @@ namespace Vortex
         public string Tag;
     }
 
-    /// <summary>Coroutine yield instruction: pause the coroutine for the given seconds.
-    /// <c>yield return new WaitForSeconds(2f);</c> — <c>yield return null</c> waits one frame.</summary>
+    /// <summary>Coroutine yield instruction: pause the coroutine for the given seconds of GAME time — slowed by
+    /// <see cref="Time.TimeScale"/>, and held while it is 0 (#425). <c>yield return new WaitForSeconds(2f);</c> —
+    /// <c>yield return null</c> waits one frame. For a menu that must count while the game is paused use
+    /// <see cref="WaitForSecondsRealtime"/>.</summary>
     public sealed class WaitForSeconds
     {
         internal readonly float Seconds;
+        /// <summary>Wait <paramref name="seconds"/> of game time (negative counts as 0).</summary>
         public WaitForSeconds(float seconds) { Seconds = seconds > 0f ? seconds : 0f; }
+    }
+
+    /// <summary>Coroutine yield instruction: pause the coroutine for the given REAL seconds, whatever
+    /// <see cref="Time.TimeScale"/> says (#425) — a pause menu's countdown, a hit-stop that ends on time:
+    /// <c>Time.TimeScale = 0f; yield return new WaitForSecondsRealtime(0.08f); Time.TimeScale = 1f;</c></summary>
+    public sealed class WaitForSecondsRealtime
+    {
+        internal readonly float Seconds;
+        /// <summary>Wait <paramref name="seconds"/> of real time (negative counts as 0).</summary>
+        public WaitForSecondsRealtime(float seconds) { Seconds = seconds > 0f ? seconds : 0f; }
     }
 
     /// <summary>Handle to a running coroutine (returned by <see cref="VortexBehaviour.StartCoroutine"/>).
@@ -385,10 +398,10 @@ namespace Vortex
 
     /// <summary>
     /// Base class for all gameplay behaviours — like MonoBehaviour. Override Start (called once when
-    /// play begins) and Update (called every tick). Move your entity via Position / Translate, read
-    /// input via Input.GetKey, and timing via Time.DeltaTime. For collision zones, mark a Collider as
-    /// a Trigger and override OnTriggerEnter/OnTriggerStay/OnTriggerExit (e.g. a no-fly zone, or "change
-    /// color when touched"); for solid contacts override OnCollisionEnter.
+    /// play begins) and Update (called every tick), FixedUpdate for physics at a fixed rate (#481). Move your entity via
+    /// Position / Translate, read input via Input.GetKey, and timing via Time.DeltaTime (game time, scaled by
+    /// Time.TimeScale). For collision zones, mark a Collider as a Trigger and override OnTriggerEnter/OnTriggerStay/OnTriggerExit
+    /// (e.g. a no-fly zone, or "change color when touched"); for solid contacts override OnCollisionEnter.
     /// </summary>
     public abstract class VortexBehaviour
     {
@@ -669,6 +682,22 @@ namespace Vortex
 
         public virtual void Start() { }
         public virtual void Update(float dt) { }
+
+        /// <summary>Runs right before each physics step (#481), with <paramref name="fixedDt"/> = <see cref="Time.FixedDeltaTime"/>
+        /// (1/60 s unless the project sets another rate): 0, 1 or several times per frame — as many times as the frame runs
+        /// physics steps (none on a short frame at a high frame rate, two on a 30 fps frame, none at all while
+        /// <see cref="Time.TimeScale"/> is 0). Put frame-rate-independent physics here — engine force, drag, downforce,
+        /// buoyancy, a hover controller: a force added here acts on exactly the step that follows, so a car handles the same
+        /// at 30 and at 144 fps. (A force added in Update acts on the next step only — once per frame, however many steps the
+        /// frame runs — so its effect depends on the frame rate.)
+        /// <para>Order in a frame: every Update → the AI tick → [FixedUpdate → physics step] × steps → LateUpdate → animation.
+        /// Inside it <see cref="Time.DeltaTime"/> is the fixed step and <see cref="Time.InFixedStep"/> is true. Contacts of a
+        /// frame's steps (OnCollisionEnter, OnTrigger*) are reported once after its last step, so the next frame's FixedUpdate
+        /// sees them. Dynamic bodies render interpolated between the last two steps, whatever moved them; a transform a
+        /// script writes here is what renders, so move kinematic things in Update.</para>
+        /// <c>public override void FixedUpdate(float fixedDt) { AddForce(Forward * EngineForce); }</c></summary>
+        public virtual void FixedUpdate(float fixedDt) { }
+
         /// <summary>Runs AFTER every behaviour's Update() this frame (Unity-style). Use it for anything that
         /// must read the FINAL state the other scripts produced this tick — most importantly a first-person
         /// VIEWMODEL that follows the camera: positioning it here (not in Update) guarantees the camera script
@@ -857,11 +886,66 @@ namespace Vortex
 
     }
 
-    /// <summary>Frame timing.</summary>
+    /// <summary>Frame timing and the game's clock (#425, #481). Update and LateUpdate get <see cref="DeltaTime"/> — game seconds,
+    /// scaled by <see cref="TimeScale"/>; FixedUpdate gets <see cref="FixedDeltaTime"/>. Slow motion, a pause and fast forward
+    /// are one line: <c>Time.TimeScale = 0.2f;</c> — physics, ragdolls, animators, particles and decals, the AI crowd,
+    /// coroutines and Invoke timers all follow it from that frame on. The UI keeps real time: the .vui screens and their
+    /// <c>&lt;Screen&gt;Actions</c> classes (their Update gets the unscaled dt), UI.* drawing, the dev console; so does the sound
+    /// unless <see cref="Audio.SetPitchFollowsTimeScale"/> is on. A pause menu animates with <see cref="UnscaledDeltaTime"/>:
+    /// <code>
+    /// if (Input.GetKeyDown("Escape")) Time.TimeScale = Time.TimeScale > 0f ? 0f : 1f;   // the world freezes, the menu does not
+    /// _menuFade += Time.UnscaledDeltaTime * 4f;
+    /// </code></summary>
     public static class Time
     {
-        /// <summary>Seconds since the last tick (the runtime sets this each frame).</summary>
-        public static float DeltaTime { get; internal set; }
+        private static float _deltaTime;
+
+        /// <summary>Game seconds since the last tick — the dt Update and LateUpdate get: real seconds × <see cref="TimeScale"/>,
+        /// so 0 while the game is paused (TimeScale 0). Inside FixedUpdate it is <see cref="FixedDeltaTime"/>.</summary>
+        public static float DeltaTime
+        {
+            get => Editor.Core.Services.GameTime.InFixedStep ? Editor.Core.Services.GameTime.FixedDeltaTime : _deltaTime;
+            internal set => _deltaTime = value;
+        }
+
+        /// <summary>Real seconds since the last tick, whatever <see cref="TimeScale"/> says — for menus, UI animation and
+        /// anything that must keep running while the game is paused.</summary>
+        public static float UnscaledDeltaTime => Editor.Core.Services.GameTime.UnscaledDeltaTime;
+
+        /// <summary>The speed of game time (#425): 1 = normal (the default), 0.2 = slow motion, 0 = paused, 2 = fast forward;
+        /// 0..100. Everything the engine simulates follows it in the same frame: Jolt bodies and ragdolls (the fixed steps come
+        /// more or less often, each one still <see cref="FixedDeltaTime"/> long — rendered poses stay smooth), animators,
+        /// particles and decal fades, Nav Agents and the AI's trees, coroutines (WaitForSeconds) and Invoke timers. Update
+        /// keeps being called at 0, with dt 0; FixedUpdate is not. Resets to 1 when play starts and stays across scene loads.
+        /// <c>Time.TimeScale = 0.3f;</c> — bullet time.</summary>
+        public static float TimeScale
+        {
+            get => Editor.Core.Services.GameTime.Scale;
+            set => Editor.Core.Services.GameTime.Scale = value;
+        }
+
+        /// <summary>Seconds of game time per physics step — the dt FixedUpdate gets (#481). From the project's Fixed Update Rate
+        /// (Project Settings ▸ General ▸ Physics; 60 per second = 1/60 s unless the project says otherwise); a script may change
+        /// it for the rest of the session (0.001..0.1). Up to 4 steps' worth of game time run per frame (more while
+        /// fast-forwarding); a slower frame drops the rest instead of falling further behind.</summary>
+        public static float FixedDeltaTime
+        {
+            get => Editor.Core.Services.GameTime.FixedDeltaTime;
+            set => Editor.Core.Services.GameTime.FixedDeltaTime = value;
+        }
+
+        /// <summary>True while FixedUpdate runs (#481) — code shared by Update and FixedUpdate can tell which one called it.</summary>
+        public static bool InFixedStep => Editor.Core.Services.GameTime.InFixedStep;
+
+        /// <summary>Game seconds since play started — scaled by <see cref="TimeScale"/>, so it stands still while the game is
+        /// paused (Unity's Time.time). Goes on across scene loads.</summary>
+        public static float Elapsed => (float)Editor.Core.Services.GameTime.Elapsed;
+
+        /// <summary>Real seconds since play started, whatever <see cref="TimeScale"/> says.</summary>
+        public static float UnscaledElapsed => (float)Editor.Core.Services.GameTime.UnscaledElapsed;
+
+        /// <summary>Ticks since play started (1 on the first frame's Update).</summary>
+        public static int FrameCount => Editor.Core.Services.GameTime.FrameCount;
     }
 
     /// <summary>
@@ -1747,6 +1831,19 @@ namespace Vortex
         /// <summary>Current playback time in seconds.</summary>
         public static float Time(long entityId) { return Host != null ? Host.GetAnimationTime(entityId) : 0f; }
 
+        /// <summary>Let an entity's Animator play in real time whatever <see cref="Vortex.Time.TimeScale"/> says (#425) — the
+        /// player's own body while the world around them runs in slow motion, a menu character during a pause. The same as the
+        /// Animator's Ignore Time Scale box in the Inspector (the authored value is back after play). False when the entity has
+        /// no Animator. <c>Animation.SetIgnoreTimeScale(EntityId, true); Time.TimeScale = 0.25f;</c></summary>
+        public static bool SetIgnoreTimeScale(long entityId, bool ignore)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entityId);
+            var a = e?.GetComponent<Editor.ECS.Components.Animation.Animator>();
+            if (a == null) return false;
+            a.IgnoreTimeScale = ignore;
+            return true;
+        }
+
         // ---- bone-masked layers (#173) ----
 
         /// <summary>Play a clip on an override layer of another entity, restricted to a bone mask
@@ -2536,6 +2633,18 @@ namespace Vortex
             var bus = Editor.DllWrapper.VortexAudio.BusIndexFromName(busName);
             return bus >= 0 ? Editor.DllWrapper.VortexAudio.GetBusVolume(bus) : 1f;
         }
+
+        /// <summary>Slow motion on the sound (#425) — off by default: sounds keep their pitch whatever
+        /// <see cref="Time.TimeScale"/> says. On, every Audio Source outside the Music and UI buses and every positional
+        /// one-shot (<see cref="PlayOneShot(string, Vector3, float, float)"/>) plays at its own pitch × TimeScale — never below
+        /// <paramref name="minPitch"/> (0.05..1, default 0.5), at most 4× — and holds while TimeScale is 0, resuming where it
+        /// stopped. The music channel, 2D one-shots (UI clicks) and the Music and UI buses never follow. Resets to off when
+        /// play starts. <c>Audio.SetPitchFollowsTimeScale(true); Time.TimeScale = 0.25f;</c> — deep, slowed gunfire.</summary>
+        public static void SetPitchFollowsTimeScale(bool on, float minPitch = 0.5f)
+            => Editor.Core.Services.AudioPlaybackService.Instance.SetPitchFollowsTimeScale(on, minPitch);
+
+        /// <summary>True while sounds follow <see cref="Time.TimeScale"/> (see <see cref="SetPitchFollowsTimeScale"/>).</summary>
+        public static bool PitchFollowsTimeScale => Editor.Core.Services.AudioPlaybackService.Instance.PitchFollowsTimeScale;
 
         /// <summary>The music channel: one streamed, looping track at priority 0 (never stolen),
         /// with fade-in and crossfade. Fades are frame-ticked ramps for now (native envelopes
