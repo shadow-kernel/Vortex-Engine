@@ -2716,9 +2716,6 @@ namespace Editor.Scripting
             // is up — e.g. a chest/inventory. A hotbar/HUD leaves it off, so the player keeps moving. (Mouse-look is
             // gated the same way in Vortex.Input.MouseDeltaX/Y.)
             if (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked) return false;
-            // GetAsyncKeyState reads the GLOBAL key state (needed because focus is on a native swapchain HWND), so it
-            // would fire even when our game is in the background — gate it on our window actually being focused.
-            if (!Vortex.Input.WindowFocused) return false;
             // Mouse buttons are NOT in the WPF Key enum, so Enum.TryParse("RButton") fails and Input.GetKey("RButton")
             // always returned false (ADS/right-click never worked). Map the mouse-button names to Win32 VK codes.
             int mvk = 0;
@@ -2727,9 +2724,13 @@ namespace Editor.Scripting
             else if (key == "MButton" || key == "Mouse2" || key == "MiddleMouse") mvk = 0x04;
             // Shared core: the host (native GameHost / editor shell) answers physical key state; key names are
             // the WPF Key enum names the scripts were written against, mapped to virtual-key codes.
-            if (mvk != 0) return Editor.Core.Input.HostInput.IsKeyDown(mvk);
-            int vk = Editor.Core.Input.KeyNames.VirtualKeyFromName(key);
+            int vk = mvk != 0 ? mvk : Editor.Core.Input.KeyNames.VirtualKeyFromName(key);
             if (vk == 0) { WarnUnknownKey(key); return false; }
+            // GetAsyncKeyState reads the GLOBAL key state (needed because focus is on a native swapchain HWND), so it
+            // would fire even when our game is in the background — gate it on our window actually being focused. Simulated
+            // input (send_input, --input) is not physical: it drives the game with another app in front (#457).
+            if (!Vortex.Input.WindowFocused) return Editor.Core.Input.HostInput.Simulated.IsDown(vk);
+            if (mvk != 0) return Editor.Core.Input.HostInput.IsKeyDown(mvk);
             return Editor.Core.Input.HostInput.IsKeyDownThisTick(vk);   // incl. a tap shorter than one frame (#337)
         }
 
