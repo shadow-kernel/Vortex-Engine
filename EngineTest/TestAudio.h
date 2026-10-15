@@ -767,25 +767,40 @@ private:
 
 		// A fade-in from silence (FadeIn, Music.Play with a fade) begins silent (#465 review): miniaudio keeps ONE pending
 		// fade per sound, so the old "snap to 0, then fade from the current level" pair issued in one frame collapsed into
-		// a fade from full volume. Measured 0.15 s into a 2 s fade-in, against the same voice at full level.
+		// a fade from full volume. The level is read once the mixer has mixed ~0.1 s of the voice, and bounded by where a
+		// linear 2 s fade from 0 is by then — measured on the mixer's own clock (engine frames since the voice started),
+		// never an assumed tick: on the macOS CI runner a 0.15 s tick had mixed 0.6 s of the fade. The meter attacks at
+		// once, so it shows the last block mixed. The old pair, measured the same way, reads full level.
 		{
+			const u32 rate = engine_sample_rate();
 			voice_params f{};
 			f.loop = true;
 			f.volume = 0.8f;
+			struct reading { f32 rms; double into; };   // the metered level, and how far into the voice the mixer was (s)
 			auto level_after = [&](int variant) {
+				const u64 t0 = engine_time_frames();
+				const auto w0 = std::chrono::steady_clock::now();
 				voice_handle v = voice_play(wav.c_str(), f);
 				if (variant == 1) { voice_fade(v, 0.0f, 0.0f, false); voice_fade(v, 1.0f, 2.0f, false); }   // the old pair
 				if (variant == 2) voice_fade_from(v, 0.0f, 1.0f, 2.0f, false);
-				tick_seconds(0.15f);
-				f32 rms = 0;
-				mixer_get_bus_levels(bus::sfx, nullptr, &rms);
+				// until the mixer has mixed 0.1 s of it (3 s at most: a device that stopped mixing fails below, it never hangs)
+				do tick_seconds(0.016f); while (rate > 0 && engine_time_frames() - t0 < rate / 10 && seconds_since(w0) < 3.0);
+				reading r{};
+				mixer_get_bus_levels(bus::sfx, nullptr, &r.rms);
+				r.into = rate > 0 ? (double)(engine_time_frames() - t0) / rate : 0.0;   // read after the meter: covers its block
 				voice_stop(v);
 				tick_seconds(0.7f);   // the meter's history drains
-				return rms;
+				return r;
 			};
-			const f32 full = level_after(0), pair = level_after(1), from = level_after(2);
-			std::printf("[info] 0.15 s into a 2 s fade-in: full level rms %.4f, snap + fade-from-current %.4f, fade from 0 %.4f\n", full, pair, from);
-			check("a fade-in from silence starts silent (explicit start level)", full > 0.05f && from < full * 0.25f);
+			const reading full = level_after(0), pair = level_after(1);
+			reading from = level_after(2);
+			for (int retry = 0; retry < 2 && from.into >= 1.0; ++retry) from = level_after(2);   // a stall that long proves nothing
+			// at `into` seconds a linear fade from 0 over 2 s is at most into / 2 of the full level (+0.05: a mixer block)
+			const f32 bound = full.rms * (f32)(from.into / 2.0 + 0.05);
+			char what[320];
+			std::snprintf(what, sizeof what, "a fade-in from silence starts silent (explicit start level): rms %.4f %.2f s in, bound %.4f "
+				"(full level %.4f; the old snap + fade %.4f %.2f s in)", from.rms, from.into, bound, full.rms, pair.rms, pair.into);
+			check(what, full.rms > 0.05f && from.into < 1.0 && from.rms <= bound);
 		}
 
 		// FadeTo 0 drops the metered level while the voice keeps playing.
