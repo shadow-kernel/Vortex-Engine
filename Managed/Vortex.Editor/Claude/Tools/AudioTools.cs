@@ -189,6 +189,164 @@ namespace VortexEditor.Claude.Tools
             };
         }
 
+        // Destructive: with path it replaces that .vmusic's whole content (undoable, but nothing of the old file is kept)
+        [McpServerTool(Name = "create_adaptive_music", Destructive = true)]
+        [Description("Creates adaptive music (.vmusic, #437) — or, with path, rewrites one (replacing all of it): stems of ONE tempo that play sample-locked as the " +
+                     "music track, states that set a volume per stem, transition rules for when a state change lands, stingers, and parameters " +
+                     "(0..1) that fade mapped stems in and out. Scripts play it with Audio.Music.Play(path) and drive it with " +
+                     "Audio.Music.SetState(\"combat\"), Audio.Music.SetParameter(\"intensity\", x), Audio.Music.PlayStinger(\"hit\"); behaviours " +
+                     "get OnBeat(int) / OnBar(int). sync is immediate | beat | bar | phrase (a phrase = phrase_bars bars); fade = crossfade seconds " +
+                     "from the boundary. A stem not listed in a state is silent in it; a stem's volume = state volume × parameter volume. " +
+                     "By default in Assets/Audio/Music. One undo step.")]
+        public static object CreateAdaptiveMusic(
+            [Description("Music name (also the file name), e.g. spy_theme")] string name = null,
+            [Description("Stems: project clip paths, or objects {\"clip\": \"Assets/Audio/drums.ogg\", \"name\": \"drums\", \"parameter\": \"intensity\", " +
+                         "\"from\": 0.3, \"to\": 0.6} — the stem then fades in as the parameter rises from 0.3 to 0.6 (from > to fades it out). Name defaults to the file name. At most 16.")] JsonElement? stems = null,
+            [Description("Tempo in beats per minute (the beats of the time signature)")] float bpm = 120f,
+            [Description("Beats per bar (time signature upper number)")] int beats_per_bar = 4,
+            [Description("Time signature lower number (2, 4, 8, 16)")] int beat_unit = 4,
+            [Description("States: {\"calm\": {\"pads\": 1}, \"combat\": {\"pads\": 0.6, \"drums\": 1, \"brass\": 1}} — volume 0..1 per stem name")] JsonElement? states = null,
+            [Description("The state the music starts in (default: the first)")] string initial_state = null,
+            [Description("The rule for every change no specific rule covers: {\"sync\": \"bar\", \"fade\": 0.25, \"stinger\": \"\"} (default: next bar, 0.1 s)")] JsonElement? transition = null,
+            [Description("Specific rules, the most specific wins: [{\"from\": \"calm\", \"to\": \"combat\", \"sync\": \"beat\", \"fade\": 0.05, \"stinger\": \"hit\"}] — \"*\" = any state")] JsonElement? transitions = null,
+            [Description("Stingers: [{\"name\": \"hit\", \"clip\": \"Assets/Audio/hit.wav\", \"volume\": 1, \"sync\": \"beat\"}] — played by PlayStinger or a rule")] JsonElement? stingers = null,
+            [Description("Start values of parameters: {\"intensity\": 0.2}")] JsonElement? parameters = null,
+            [Description("Bars the music loops from bar 1; 0 = the stems' length rounded to whole bars")] int loop_bars = 0,
+            [Description("Bars per phrase (\"phrase\" transitions wait for the next multiple)")] int phrase_bars = 4,
+            [Description("Seconds into the stems where bar 1 begins (a pickup before it)")] float offset = 0f,
+            [Description("Loop the music (false: it plays once)")] bool loop = true,
+            [Description("Decode the stems into memory at every Play instead of streaming them (short loops only; streaming, the default, suits any length)")] bool decode = false,
+            [Description("Volume of the whole music 0..2")] float volume = 1f,
+            [Description("Seconds SetParameter glides the mapped stems")] float parameter_fade = 0.5f,
+            [Description("Folder relative to the project")] string folder = "Assets/Audio/Music",
+            [Description("Or: an existing .vmusic to rewrite with these settings")] string path = null)
+        {
+            if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(path)) throw new ToolError("Give a name for the new music (or the path of a .vmusic to rewrite).");
+            JsonElement stemsArg = stems ?? default, statesArg = states ?? default, transitionArg = transition ?? default,
+                        transitionsArg = transitions ?? default, stingersArg = stingers ?? default, parametersArg = parameters ?? default;
+            var m = new AdaptiveMusic
+            {
+                Bpm = bpm, BeatsPerBar = beats_per_bar, BeatUnit = beat_unit, LoopBars = loop_bars, PhraseBars = phrase_bars, OffsetSeconds = offset,
+                Loop = loop, Decode = decode, Volume = Math.Clamp(volume, 0f, 2f), ParameterFadeSeconds = Math.Max(0f, parameter_fade),
+            };
+            if (!(bpm >= 20f && bpm <= 400f)) throw new ToolError("bpm must be between 20 and 400.");
+
+            // stems: clip paths or objects
+            if (stemsArg.ValueKind != JsonValueKind.Array || stemsArg.GetArrayLength() == 0) throw new ToolError("stems needs at least one clip (.wav, .mp3, .ogg, .flac).");
+            if (stemsArg.GetArrayLength() > 16) throw new ToolError("16 stems is the most one music plays.");
+            foreach (var s in stemsArg.EnumerateArray())
+            {
+                string clip = s.ValueKind == JsonValueKind.String ? s.GetString() : Str(s, "clip") ?? Str(s, "path");
+                if (string.IsNullOrWhiteSpace(clip)) throw new ToolError("Every stem needs a clip: \"Assets/Audio/drums.ogg\" or {\"clip\": …}.");
+                string rel = ProjectFiles.Rel(ProjectFiles.Resolve(clip, ClipExt, mustExist: true));
+                string stemName = (s.ValueKind == JsonValueKind.Object ? Str(s, "name") : null) ?? Path.GetFileNameWithoutExtension(rel);
+                if (m.Stems.Exists(x => string.Equals(x.Name, stemName, StringComparison.OrdinalIgnoreCase)))
+                    throw new ToolError("Two stems are named '" + stemName + "' — give them names.");
+                var meta = AssetDatabase.Instance.GetAssetByPath(rel);
+                var stem = new AdaptiveMusic.Stem { Name = stemName, ClipPath = rel, Guid = meta != null ? meta.Guid.ToString() : "" };
+                if (s.ValueKind == JsonValueKind.Object)
+                {
+                    stem.Parameter = Str(s, "parameter") ?? "";
+                    stem.From = Num(s, "from", 0f);
+                    stem.To = Num(s, "to", 1f);
+                    if (stem.Parameter.Length > 0 && !(stem.From >= 0f && stem.From <= 1f && stem.To >= 0f && stem.To <= 1f)) throw new ToolError("Stem '" + stemName + "': from and to are parameter values 0..1.");
+                }
+                m.Stems.Add(stem);
+            }
+            string stemList = string.Join(", ", m.Stems.Select(x => x.Name));
+
+            // stingers before the rules that name them
+            if (stingersArg.ValueKind == JsonValueKind.Array)
+                foreach (var s in stingersArg.EnumerateArray())
+                {
+                    string stName = Str(s, "name"), clip = Str(s, "clip") ?? Str(s, "path");
+                    if (string.IsNullOrWhiteSpace(stName) || string.IsNullOrWhiteSpace(clip)) throw new ToolError("Every stinger needs a name and a clip.");
+                    string rel = ProjectFiles.Rel(ProjectFiles.Resolve(clip, ClipExt, mustExist: true));
+                    var meta = AssetDatabase.Instance.GetAssetByPath(rel);
+                    m.Stingers.Add(new AdaptiveMusic.Stinger { Name = stName.Trim(), ClipPath = rel, Guid = meta != null ? meta.Guid.ToString() : "", Volume = Num(s, "volume", 1f), Sync = SyncArg(Str(s, "sync") ?? "beat", "stinger '" + stName + "'") });
+                }
+
+            if (statesArg.ValueKind == JsonValueKind.Object)
+                foreach (var st in statesArg.EnumerateObject())
+                {
+                    if (st.Value.ValueKind != JsonValueKind.Object) throw new ToolError("State '" + st.Name + "' must be an object of stem volumes, e.g. {\"pads\": 1}.");
+                    var state = new AdaptiveMusic.State { Name = st.Name.Trim() };
+                    foreach (var v in st.Value.EnumerateObject())
+                    {
+                        var stem = m.Stems.Find(x => string.Equals(x.Name, v.Name, StringComparison.OrdinalIgnoreCase))
+                                   ?? throw new ToolError("State '" + st.Name + "' names a stem '" + v.Name + "' — the stems are: " + stemList + ".");
+                        state.Volumes[stem.Name] = v.Value.ValueKind == JsonValueKind.Number ? Math.Clamp((float)v.Value.GetDouble(), 0f, 4f) : throw new ToolError("Volumes are numbers 0..1.");
+                    }
+                    m.States.Add(state);
+                }
+            string StateRef(string s, string what)
+            {
+                if (string.IsNullOrWhiteSpace(s) || s.Trim() == "*") return "*";
+                var st = m.FindState(s.Trim()) ?? throw new ToolError(what + " names a state '" + s + "' — the states are: " + string.Join(", ", m.States.Select(x => x.Name)) + ".");
+                return st.Name;
+            }
+            string StingerRef(string s, string what)
+            {
+                if (string.IsNullOrWhiteSpace(s)) return "";
+                return (m.FindStinger(s.Trim()) ?? throw new ToolError(what + " names a stinger '" + s + "' that is not in stingers.")).Name;
+            }
+            if (!string.IsNullOrWhiteSpace(initial_state)) m.InitialState = StateRef(initial_state, "initial_state");
+            if (transitionArg.ValueKind == JsonValueKind.Object)
+                m.DefaultTransition = new AdaptiveMusic.Transition
+                {
+                    Sync = SyncArg(Str(transitionArg, "sync") ?? "bar", "transition"), FadeSeconds = Math.Max(0f, Num(transitionArg, "fade", 0.1f)),
+                    Stinger = StingerRef(Str(transitionArg, "stinger"), "transition"),
+                };
+            if (transitionsArg.ValueKind == JsonValueKind.Array)
+                foreach (var r in transitionsArg.EnumerateArray())
+                    m.Transitions.Add(new AdaptiveMusic.Transition
+                    {
+                        From = StateRef(Str(r, "from"), "A transition"), To = StateRef(Str(r, "to"), "A transition"),
+                        Sync = SyncArg(Str(r, "sync") ?? "bar", "a transition"), FadeSeconds = Math.Max(0f, Num(r, "fade", 0.1f)),
+                        Stinger = StingerRef(Str(r, "stinger"), "A transition"),
+                    });
+            if (parametersArg.ValueKind == JsonValueKind.Object)
+                foreach (var p in parametersArg.EnumerateObject())
+                    m.Parameters[p.Name] = p.Value.ValueKind == JsonValueKind.Number ? AdaptiveMusic.Clamp01((float)p.Value.GetDouble()) : 0f;
+            m.Normalize();
+
+            string target;
+            if (!string.IsNullOrWhiteSpace(path)) target = ProjectFiles.Resolve(path, new[] { AdaptiveMusic.FileExtension }, mustExist: true);
+            else
+            {
+                string dir = Path.GetDirectoryName(ProjectFiles.Resolve(Path.Combine(folder ?? "Assets/Audio/Music", "x" + AdaptiveMusic.FileExtension).Replace('\\', '/')));
+                target = ProjectFiles.Unique(dir, name.Trim(), AdaptiveMusic.FileExtension);
+            }
+            ProjectFiles.Write(target, m.ToJson());
+            ToolContext.UndoLabel = (string.IsNullOrWhiteSpace(path) ? "create adaptive music " : "rewrite adaptive music ") + Path.GetFileNameWithoutExtension(target);
+            string rel0 = ProjectFiles.Rel(target);
+            return new
+            {
+                path = rel0,
+                stems = m.Stems.Select(x => string.IsNullOrEmpty(x.Parameter) ? x.Name : x.Name + " (follows " + x.Parameter + " " + x.From + "→" + x.To + ")").ToArray(),
+                states = m.States.Select(x => x.Name).ToArray(),
+                initial_state = m.StartState()?.Name,
+                tempo = m.Bpm + " BPM " + m.BeatsPerBar + "/" + m.BeatUnit,
+                loops = !m.Loop ? "once" : m.LoopBars > 0 ? m.LoopBars + " bars" : "the stems' length in whole bars",
+                stems_play = m.Decode ? "decoded into memory at Play" : "streamed",
+                stingers = m.Stingers.Count > 0 ? m.Stingers.Select(x => x.Name).ToArray() : null,
+                script = "Audio.Music.Play(\"" + rel0 + "\");" + (m.States.Count > 1 ? " Audio.Music.SetState(\"" + m.States[m.States.Count - 1].Name + "\");" : ""),
+            };
+        }
+
+        private static string Str(JsonElement o, string key)
+            => o.ValueKind == JsonValueKind.Object && o.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+        private static float Num(JsonElement o, string key, float fallback)
+            => o.ValueKind == JsonValueKind.Object && o.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? (float)v.GetDouble() : fallback;
+
+        private static string SyncArg(string s, string what)
+        {
+            var sync = AdaptiveMusic.ParseSync(s, (MusicSync)(-1));
+            if ((int)sync < 0) throw new ToolError(what + ": sync must be immediate, beat, bar or phrase (got '" + s + "').");
+            return AdaptiveMusic.SyncName(sync);
+        }
+
         private static (float min, float max) Range(float[] r, string what, float lo, float hi)
         {
             if (r.Length != 2 || r[0] > r[1] || r[0] < lo || r[1] > hi)

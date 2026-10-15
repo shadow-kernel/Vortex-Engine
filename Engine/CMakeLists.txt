@@ -40,6 +40,7 @@ set(VORTEX_ENGINE_CORE_SOURCES
 	Runtime/SceneManager.cpp
 	Runtime/Systems/AudioEngine.cpp
 	Runtime/Systems/AudioMixer.cpp
+	Runtime/Systems/AudioMusic.cpp
 	Runtime/Systems/AudioReverb.cpp
 	Runtime/Systems/AudioSystem.cpp
 	Runtime/Systems/AudioVoices.cpp
