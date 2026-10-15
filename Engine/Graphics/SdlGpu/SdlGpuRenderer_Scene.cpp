@@ -858,20 +858,22 @@ namespace vortex::graphics::sdlgpu
 		c.tonemapper = (float)m_frame_constants.tonemapper;
 		c.haze = { m_frame_constants.fog_color.x, m_frame_constants.fog_color.y, m_frame_constants.fog_color.z, m_frame_constants.fog_density };
 		{
-			// normalised here, once, instead of per sky pixel (the sun's disc and the haze glow read it)
+			// normalised here, once, instead of per sky pixel (the sun's disc and the haze glow read it); without a light
+			// direction there is no sun: no disc and no glow (not a sun at the zenith)
 			const DirectX::XMFLOAT3& ld = m_frame_constants.light_direction;
 			const float n = sqrtf(ld.x * ld.x + ld.y * ld.y + ld.z * ld.z);
-			c.glow_dir = n > 1e-6f ? DirectX::XMFLOAT4{ ld.x / n, ld.y / n, ld.z / n, m_frame_constants.fog_sun_glow } : DirectX::XMFLOAT4{ 0.0f, -1.0f, 0.0f, m_frame_constants.fog_sun_glow };
+			const bool has_dir = n > 1e-6f;
+			c.glow_dir = has_dir ? DirectX::XMFLOAT4{ ld.x / n, ld.y / n, ld.z / n, m_frame_constants.fog_sun_glow } : DirectX::XMFLOAT4{ 0.0f, -1.0f, 0.0f, 0.0f };
+			c.glow_color = { m_frame_constants.light_color.x, m_frame_constants.light_color.y, m_frame_constants.light_color.z, has_dir ? m_frame_constants.directional_intensity : 0.0f };
 		}
-		c.glow_color = { m_frame_constants.light_color.x, m_frame_constants.light_color.y, m_frame_constants.light_color.z, m_frame_constants.directional_intensity };
 		// the equirect map (#326) — or the white texture, so sampler slot 0 is always bound
 		auto& reg = ResourceRegistry::instance();
 		Texture* sky = (m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id) ? reg.get_texture(m_sky_texture) : nullptr;
 		c.params = { sky ? 1.0f : 0.0f, m_sky_exposure, m_sky_rotation,
 			(sky && m_sky_hdr == 2) ? (m_frame_constants.scene_exposure > 0.0f ? m_frame_constants.scene_exposure : 0.5f) : ((sky && m_sky_hdr == 1) ? -1.0f : 0.0f) };   // w > 0: HDR sky tonemapped, w < 0: HDR sky the classic way
-		// the sun's disc (#499): auto draws it on a gradient and an 8-bit picture, not on a float picture (its own sun is in it)
-		// nor on a solid colour
-		const bool sun_auto = sky ? m_sky_hdr == 0 : m_skybox_mode != SkyboxMode::SolidColor;
+		// the sun's disc (#499): Auto draws it on the gradient sky, as before; a picture sky shows it when it is On (a picture
+		// may carry its own sun, and a project's sky must not change by itself); never on a solid colour
+		const bool sun_auto = !sky && m_skybox_mode != SkyboxMode::SolidColor;
 		u32 sun_layers = (m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && sun_auto)) ? 1u : 0u;
 		// the cross-fade pictures (#464) over the sky: each by its amount, the white texture in an unused slot
 		Texture* white = reg.white_texture();
@@ -883,7 +885,7 @@ namespace vortex::graphics::sdlgpu
 			if (blend[i] && !blend[i]->texture()) blend[i] = nullptr;
 			const float mode = l.hdr == 2 ? (m_frame_constants.scene_exposure > 0.0f ? m_frame_constants.scene_exposure : 0.5f) : (l.hdr == 1 ? -1.0f : 0.0f);
 			c.blend[i] = blend[i] ? DirectX::XMFLOAT4{ l.amount, l.exposure, l.rotation, mode } : DirectX::XMFLOAT4{ 0.0f, 0.0f, 0.0f, 0.0f };
-			if (blend[i] && (m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && l.hdr == 0))) sun_layers |= 2u << i;   // the disc per picture (#499)
+			if (blend[i] && m_sky_sun_mode == 1) sun_layers |= 2u << i;   // the disc on a cross-fade picture: On only, as on the sky's (#499)
 		}
 		c.sun_disc = { m_sky_sun_radius, m_sky_sun_intensity, m_sky_sun_glow, (float)sun_layers };
 		if (!sky) sky = white;

@@ -2197,11 +2197,12 @@ namespace Vortex
         public static void SetAmbient(float strength) => Lighting.SetAmbient(strength);
 
         /// <summary>The sun's disc in the sky (#499), at the scene's Directional Light on a gradient and a texture sky alike: it
-        /// sits where the light comes from whatever the picture's rotation, blooms like a lamp, and geometry in front hides it.
-        /// <paramref name="draw"/> switches it on or off (the Skybox's Auto draws it on gradients and 8-bit pictures, not on .hdr
-        /// pictures, which carry their own sun); <paramref name="sizeDeg"/> is its angular diameter (the real sun: 0.53°),
-        /// <paramref name="intensity"/> its brightness (below ~0.1 it keeps the light's colour), <paramref name="glow"/> the
-        /// corona and aureole around it. Wins over the Skybox's Sun settings until <see cref="Clear"/> or the end of play.
+        /// sits where the light comes from whatever the picture's rotation, and geometry in front hides it.
+        /// <paramref name="draw"/> switches it on or off (the Skybox's Auto draws it on gradient skies only: a picture may carry
+        /// its own sun); <paramref name="sizeDeg"/> is its angular diameter (the real sun: 0.53°), <paramref name="intensity"/>
+        /// its brightness (1 = full, the rim darker), <paramref name="glow"/> the corona and aureole around it. It takes the
+        /// light's colour and brightens with its intensity, and sets behind the horizon. Wins over the Skybox's Sun settings
+        /// until <see cref="Clear"/> or the end of play.
         /// <c>Sky.SetSun(true, 1.2f);</c></summary>
         public static void SetSun(bool draw, float sizeDeg = 0.53f, float intensity = 1f, float glow = 1f)
         {

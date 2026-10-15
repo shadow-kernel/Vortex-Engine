@@ -23,11 +23,13 @@ struct SkyboxConstants
     float4 blend2;        // @256  w its HDR mode like params.w — composited in order: sky, then blend1, then blend2
 };
 
-// The sun's disc at the scene's directional light (#499), with a corona hugging it and the wide aureole of the gradient
-// sky. `hdr`: linear radiance before the scene exposure + tonemapper (it blooms through them like a lamp); else the display
-// values of the gradient / an 8-bit picture. The disc is the light's: rotating the picture or changing its exposure does
-// not move or dim it. Occlusion is free — the sky pass runs first, the world covers it.
-static inline float3 sun_disc(float3 dir, constant SkyboxConstants& c, bool hdr)
+// The sun's disc at the scene's directional light (#499), its corona and the wide aureole, as that light's: in its colour,
+// brightening with its intensity (the Light's default 2.5 is full brightness), cut off by the horizon. `hdr`: linear
+// radiance before the scene exposure + tonemapper (it blooms through them like a lamp); else display values, which
+// sun_over() lays over the sky without passing white, so the limb darkening shows on any sky. The disc is the light's:
+// rotating the picture or changing its exposure does not move or dim it. Occlusion is free — the sky pass runs first,
+// the world covers it.
+static inline float3 sun_light(float3 dir, constant SkyboxConstants& c, bool hdr)
 {
     float3 to_sun = -c.glow_dir.xyz;
     float d = length(dir - to_sun);                              // the chord to the sun ~ the angle (radians)
@@ -35,14 +37,25 @@ static inline float3 sun_disc(float3 dir, constant SkyboxConstants& c, bool hdr)
     float aa = clamp(fwidth(t), 0.02, 0.5);                      // ~1 pixel of edge, before the branch below
     // the aureole is gone 17° from the sun, the corona 9 radii out: the rest of the sky pays a length and a compare
     if (d > max(0.3, 9.0 * c.sun_disc.x)) return float3(0.0);
+    float above = smoothstep(-0.01, 0.01, dir.y);               // the horizon hides what is below it
     float disc = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, t);
-    float limb = 0.6 + 0.4 * sqrt(saturate(1.0 - t * t));       // limb darkening
-    float corona = exp(-max(t - 1.0, 0.0) * 0.8);
+    float limb = sqrt(saturate(1.0 - t * t));                    // limb darkening: 1 at the centre, 0 at the rim
     float aureole = pow(saturate(1.0 - 0.5 * d * d), 256.0);    // cos of the angle, from the chord
-    float3 col = float3(c.glow_color.rgb);
-    return hdr ? col * (disc * limb * 40.0 * c.sun_disc.y + c.sun_disc.z * (1.5 * corona + 0.35 * aureole))
-               : col * (disc * limb * 10.0 * c.sun_disc.y + c.sun_disc.z * (0.5 * corona + 0.5 * aureole));
+    float li = c.glow_color.w * 0.4;                             // the light's intensity against the default sun's 2.5
+    if (hdr)
+    {
+        float corona = exp(-max(t - 1.0, 0.0) * 0.8);
+        return float3(c.glow_color.rgb) * (li * above) * (disc * (0.6 + 0.4 * limb) * 40.0 * c.sun_disc.y + c.sun_disc.z * (1.5 * corona + 0.35 * aureole));
+    }
+    // display values: the light's hue at full brightness, the disc from 1 at its centre to 0.55 at the rim (its glow only
+    // around it, so the limb shows), a tight corona
+    float corona = exp(-max(t - 1.0, 0.0) * 2.5);
+    float3 hue = float3(c.glow_color.rgb) / max(max(c.glow_color.r, c.glow_color.g), max(c.glow_color.b, 1e-4));
+    return hue * (saturate(li) * above) * (disc * (0.55 + 0.45 * limb) * c.sun_disc.y + (1.0 - disc) * c.sun_disc.z * (0.18 * corona + 0.15 * aureole));
 }
+
+// Display values: the sun laid over the sky like a light (screen), never past white.
+static inline float3 sun_over(float3 sky, float3 sun) { return 1.0 - (1.0 - saturate(sky)) * (1.0 - saturate(sun)); }
 
 struct SkyOut
 {
@@ -86,7 +99,7 @@ static inline float3 sky_picture(float3 dir, float u0, float v, texture2d<float>
         float3 hz = c.haze.rgb + c.glow_color.rgb * (c.glow_dir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
         sky = mix(sky, hz, f);
     }
-    if (sun && mode > 0.0) sky += sun_disc(dir, c, true);   // on top of the haze: a setting sun stays a disc
+    if (sun && mode > 0.0) sky += sun_light(dir, c, true);   // on top of the haze: a setting sun stays a disc
     if (mode < 0.0) sky = pow(saturate(sky), 1.0 / 2.2);   // a float picture the classic way: gamma-encoded, clamped
     else if (mode > 0.0)
     {
@@ -114,7 +127,7 @@ static inline float3 sky_picture(float3 dir, float u0, float v, texture2d<float>
             sky = pow(max(saturate(a / b), 0.0), 1.0 / 2.2);
         }
     }
-    if (sun && mode <= 0.0) sky += sun_disc(dir, c, false);   // an 8-bit picture / the classic float one: display values
+    if (sun && mode <= 0.0) sky = sun_over(sky, sun_light(dir, c, false));   // an 8-bit picture / the classic float one: display values
     return sky;
 }
 
@@ -137,9 +150,9 @@ static inline float3 sky_gradient(float3 dir, constant SkyboxConstants& c, bool 
     // the sun at the scene's directional light (#499 — it used to sit at a fixed direction whatever the light did)
     if (sun)
     {
-        color += sun_disc(dir, c, false);
         float horizon_glow = pow(1.0 - abs(y), 4.0) * pow(max(dot(dir, normalize(-c.glow_dir.xyz)), 0.0), 2.0);
-        color += c.glow_color.rgb * horizon_glow * 0.3 * c.sun_disc.z;
+        color += c.glow_color.rgb * horizon_glow * 0.3 * c.sun_disc.z * saturate(c.glow_color.w * 0.4);
+        color = sun_over(color, sun_light(dir, c, false));
     }
 
     float noise = fract(sin(dot(dir.xz, float2(12.9898, 78.233))) * 43758.5453);

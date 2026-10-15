@@ -23,8 +23,8 @@ namespace VortexEditor.Claude.Tools
         [Description("Sets the scene's sky: a gradient (top / horizon / bottom colours) or an equirectangular HDR / image texture, its exposure and ambient " +
                      "strength. With a texture the gradient colours stay the ENVIRONMENT (what water and glossy surfaces reflect) — give them the picture's " +
                      "zenith / horizon / ground colours. align_sun turns the scene's directional light to the brightest pixel of the HDR (its sun). " +
-                     "sun_disc draws the sun's disc where the directional light comes from (\"auto\": on a gradient and a .png / .jpg, off on an .hdr " +
-                     "that carries its own sun; \"on\" / \"off\"), sun_size is its angular diameter in degrees (the real sun 0.53), " +
+                     "sun_disc draws the sun's disc where the directional light comes from, in its colour (\"auto\": on a gradient sky; a picture sky needs \"on\", " +
+                     "which may carry its own sun; \"on\" / \"off\"), sun_size is its angular diameter in degrees (the real sun 0.53), " +
                      "sun_disc_intensity its brightness, sun_glow the glow around it. " +
                      "Creates a Sky entity with a Skybox component when the scene has none. Colours are linear rgb 0..1. One undo step.")]
         public static object SetSky(
@@ -39,7 +39,7 @@ namespace VortexEditor.Claude.Tools
             [Description("Sun intensity when aligning (default: keep)")] float sun_intensity = -1f,
             [Description("The sun's disc in the sky: \"auto\", \"on\" or \"off\" (default: keep)")] string sun_disc = null,
             [Description("The disc's angular diameter in degrees, 0.05–20 (default: keep; the real sun 0.53)")] float sun_size = -1f,
-            [Description("The disc's brightness, 0–100 (default: keep; 1 blooms white, below ~0.1 keeps the light's colour)")] float sun_disc_intensity = -1f,
+            [Description("The disc's brightness, 0–100 (default: keep; 1 = full, its rim darker; higher washes the rim out)")] float sun_disc_intensity = -1f,
             [Description("The glow around the disc, 0–10 (default: keep; 0 = a bare disc)")] float sun_glow = -1f,
             [Description("Only report")] bool dry_run = false)
         {

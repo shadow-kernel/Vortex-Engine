@@ -33,23 +33,33 @@ struct VS_OUT
     float3 worldDir : TEXCOORD0;
 };
 
-// The sun's disc at the scene's directional light (#499) — see skybox.metal: hdr = linear radiance before the tonemapper,
-// else display values; the disc is the light's (the picture's rotation / exposure do not move or dim it).
-float3 SunDiscColor(float3 dir, bool hdr)
+// The sun's disc at the scene's directional light (#499), its corona and aureole, as that light's (skybox.metal sun_light):
+// in its colour, brightening with its intensity, cut off by the horizon. hdr = linear radiance before the tonemapper, else
+// display values for SunOver(); the disc is the light's (the picture's rotation / exposure do not move or dim it).
+float3 SunLight(float3 dir, bool hdr)
 {
     float3 toSun = -GlowDir.xyz;
     float d = length(dir - toSun);
     float t = d / max(SunDisc.x, 1e-5);
     float aa = clamp(fwidth(t), 0.02, 0.5);   // before the branch below
     if (d > max(0.3, 9.0 * SunDisc.x)) return float3(0.0, 0.0, 0.0);   // the aureole is gone 17° out, the corona 9 radii out
+    float above = smoothstep(-0.01, 0.01, dir.y);   // the horizon hides what is below it
     float disc = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, t);
-    float limb = 0.6 + 0.4 * sqrt(saturate(1.0 - t * t));
-    float corona = exp(-max(t - 1.0, 0.0) * 0.8);
+    float limb = sqrt(saturate(1.0 - t * t));
     float aureole = pow(saturate(1.0 - 0.5 * d * d), 256.0);
-    float3 col = GlowColor.rgb;
-    return hdr ? col * (disc * limb * 40.0 * SunDisc.y + SunDisc.z * (1.5 * corona + 0.35 * aureole))
-               : col * (disc * limb * 10.0 * SunDisc.y + SunDisc.z * (0.5 * corona + 0.5 * aureole));
+    float li = GlowColor.w * 0.4;   // the light's intensity against the default sun's 2.5
+    if (hdr)
+    {
+        float coronaHdr = exp(-max(t - 1.0, 0.0) * 0.8);
+        return GlowColor.rgb * (li * above) * (disc * (0.6 + 0.4 * limb) * 40.0 * SunDisc.y + SunDisc.z * (1.5 * coronaHdr + 0.35 * aureole));
+    }
+    float corona = exp(-max(t - 1.0, 0.0) * 2.5);
+    float3 hue = GlowColor.rgb / max(max(GlowColor.r, GlowColor.g), max(GlowColor.b, 1e-4));
+    return hue * (saturate(li) * above) * (disc * (0.55 + 0.45 * limb) * SunDisc.y + (1.0 - disc) * SunDisc.z * (0.18 * corona + 0.15 * aureole));
 }
+
+// Display values: the sun laid over the sky like a light (screen), never past white.
+float3 SunOver(float3 sky, float3 sun) { return 1.0 - (1.0 - saturate(sky)) * (1.0 - saturate(sun)); }
 
 VS_OUT SkyVS(uint vertexID : SV_VertexID)
 {
@@ -88,7 +98,7 @@ float3 SkyPicture(float3 dir, float u0, float v, Texture2D tex, float exposure, 
         float3 hz = Haze.rgb + GlowColor.rgb * (GlowDir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
         sky = lerp(sky, hz, f);
     }
-    if (sun && mode > 0.0) sky += SunDiscColor(dir, true);   // on top of the haze: a setting sun stays a disc
+    if (sun && mode > 0.0) sky += SunLight(dir, true);   // on top of the haze: a setting sun stays a disc
     if (mode < 0.0) sky = pow(saturate(sky), 1.0 / 2.2);   // a float picture the classic way: gamma-encoded, clamped
     else if (mode > 0.0)
     {
@@ -116,7 +126,7 @@ float3 SkyPicture(float3 dir, float u0, float v, Texture2D tex, float exposure, 
             sky = pow(max(saturate(a / b), 0.0), 1.0 / 2.2);
         }
     }
-    if (sun && mode <= 0.0) sky += SunDiscColor(dir, false);   // an 8-bit picture / the classic float one: display values
+    if (sun && mode <= 0.0) sky = SunOver(sky, SunLight(dir, false));   // an 8-bit picture / the classic float one: display values
     return sky;
 }
 
@@ -139,9 +149,9 @@ float3 SkyGradient(float3 dir, bool sun)
     // Sun disc + glow + horizon scattering at the scene's directional light (#499 — it used to sit at a fixed direction)
     if (sun)
     {
-        color += SunDiscColor(dir, false);
         float horizonGlow = pow(1.0 - abs(y), 4.0) * pow(max(dot(dir, normalize(-GlowDir.xyz)), 0.0), 2.0);
-        color += GlowColor.rgb * horizonGlow * 0.3 * SunDisc.z;
+        color += GlowColor.rgb * horizonGlow * 0.3 * SunDisc.z * saturate(GlowColor.w * 0.4);
+        color = SunOver(color, SunLight(dir, false));
     }
 
     // Subtle noise for texture

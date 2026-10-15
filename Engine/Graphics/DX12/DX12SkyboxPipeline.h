@@ -47,10 +47,12 @@ namespace vortex::graphics::dx12
 		void set_haze(const DirectX::XMFLOAT3& fog_color, float density, const DirectX::XMFLOAT3& light_dir, const DirectX::XMFLOAT3& light_color, float glow, float light_intensity = 0.0f)
 		{
 			m_constants.haze = { fog_color.x, fog_color.y, fog_color.z, density };
-			// normalised here, once, instead of per sky pixel (the sun's disc and the haze glow read it)
+			// normalised here, once, instead of per sky pixel (the sun's disc and the haze glow read it); without a light
+			// direction there is no sun: no disc and no glow (not a sun at the zenith)
 			const float n = std::sqrt(light_dir.x * light_dir.x + light_dir.y * light_dir.y + light_dir.z * light_dir.z);
-			m_constants.glow_dir = n > 1e-6f ? DirectX::XMFLOAT4{ light_dir.x / n, light_dir.y / n, light_dir.z / n, glow } : DirectX::XMFLOAT4{ 0.0f, -1.0f, 0.0f, glow };
-			m_constants.glow_color = { light_color.x, light_color.y, light_color.z, light_intensity };
+			const bool has_dir = n > 1e-6f;
+			m_constants.glow_dir = has_dir ? DirectX::XMFLOAT4{ light_dir.x / n, light_dir.y / n, light_dir.z / n, glow } : DirectX::XMFLOAT4{ 0.0f, -1.0f, 0.0f, 0.0f };
+			m_constants.glow_color = { light_color.x, light_color.y, light_color.z, has_dir ? light_intensity : 0.0f };
 		}
 
 		// The sun's disc (#499): its angular radius (radians), intensity, glow, and the layers of this frame's sky that draw it

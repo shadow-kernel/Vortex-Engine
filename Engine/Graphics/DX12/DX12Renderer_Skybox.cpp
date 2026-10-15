@@ -77,9 +77,9 @@ namespace vortex::graphics::dx12
 			(float)m_frame_constants.tonemapper);
 		m_skybox_pipeline.set_haze(m_frame_constants.fog_color, m_frame_constants.fog_density, m_frame_constants.light_direction,
 			m_frame_constants.light_color, m_frame_constants.fog_sun_glow, m_frame_constants.directional_intensity);
-		// the sun's disc (#499): auto draws it on a gradient and an 8-bit picture, not on a float picture (its own sun is in it)
-		// nor on a solid colour — per layer
-		const bool sun_auto = sky ? m_sky_hdr == 0 : m_skybox_mode != SkyboxMode::SolidColor;
+		// the sun's disc (#499), per layer: Auto draws it on the gradient sky, as before; a picture sky shows it when it is On
+		// (a picture may carry its own sun, and a project's sky must not change by itself); never on a solid colour
+		const bool sun_auto = !sky && m_skybox_mode != SkyboxMode::SolidColor;
 		u32 sun_layers = (m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && sun_auto)) ? 1u : 0u;
 		Texture* white = reg.get_texture(reg.default_white_texture());
 		Texture* blend[2] = { nullptr, nullptr };
@@ -89,7 +89,7 @@ namespace vortex::graphics::dx12
 			blend[i] = (l.amount > 0.0f && l.texture != id::invalid_id) ? reg.get_texture(l.texture) : nullptr;
 			if (blend[i] && blend[i]->srv_gpu().ptr == 0) blend[i] = nullptr;
 			m_skybox_pipeline.set_blend(i, blend[i] ? l.amount : 0.0f, l.exposure, l.rotation, l.hdr == 2 ? scene_exposure : (l.hdr == 1 ? -1.0f : 0.0f));
-			if (blend[i] && (m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && l.hdr == 0))) sun_layers |= 2u << i;
+			if (blend[i] && m_sky_sun_mode == 1) sun_layers |= 2u << i;   // a cross-fade picture: On only, as the sky's
 		}
 		m_skybox_pipeline.set_sun_disc(m_sky_sun_radius, m_sky_sun_intensity, m_sky_sun_glow, sun_layers);
 		if (!sky) sky = white;

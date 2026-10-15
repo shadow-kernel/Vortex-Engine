@@ -16,7 +16,7 @@ namespace VortexTests
         public static void ASkyboxHasSunSettings(TestContext t)
         {
             var s = new Skybox();
-            t.Equal(SkySunDisc.Auto, s.SunDisc, "Auto by default: a gradient / 8-bit picture draws the disc, an .hdr keeps its own sun");
+            t.Equal(SkySunDisc.Auto, s.SunDisc, "Auto by default: a gradient sky draws the disc, a picture sky only with On");
             t.Equal(0.53f, s.SunSize, "the real sun's angular diameter");
             t.Equal(1f, s.SunIntensity, "intensity 1");
             t.Equal(1f, s.SunGlow, "glow 1");

@@ -15,11 +15,13 @@ namespace VortexEditor.Shell
 {
     /// <summary>The sun's disc in the sky (#499), on the rendered picture so the DX12 (WARP) smoke covers the HLSL path too. A
     /// Directional Light shines towards the camera from 20° above the horizon; the camera looks straight at it, high above the
-    /// scene. A plain blue 8-bit picture sky draws a white disc there (Auto), still there with the picture turned by 90° (the
-    /// disc is the light's); a blue .hdr does not (Auto: it carries its own sun) until the disc is switched On, shown the
-    /// classic way and through the exposure pipeline (scene tonemapper, the disc added before it); a 6° disc
-    /// covers a point 1.5° off the light that the real-size 0.53° disc leaves blue; a cube in front hides it; the gradient
-    /// sky's disc follows the light when the light turns away (it used to sit at a fixed direction).</summary>
+    /// scene. A plain blue 8-bit picture sky draws no disc on Auto (a project's picture sky stays as it was) and a white one
+    /// with the disc On, still there with the picture turned by 90° (the disc is the light's); a blue .hdr likewise, shown
+    /// the classic way and through the exposure pipeline (scene tonemapper, the disc added before it). A 6° disc covers a
+    /// point 1.5° off the light that the real-size 0.53° disc leaves blue, and is darker near its rim than at its centre
+    /// (limb darkening, on display values too); a dim light draws a dim disc, an orange light an orange one; a sun below the
+    /// horizon draws none, nor does a script light without a direction (it used to stand at the zenith); a cube in front hides
+    /// it; the gradient sky draws it on Auto at the light and follows the light (it used to sit at a fixed direction).</summary>
     internal static class SkySunSmoke
     {
         [ModuleInitializer]
@@ -41,7 +43,7 @@ namespace VortexEditor.Shell
             Skybox sky = VortexEditor.Claude.SceneModel.All(scene).Select(e => e.GetComponent<Skybox>()).FirstOrDefault(s => s != null);
             var keep = sky == null ? null : new { sky.SkyboxType, sky.TexturePath, sky.Exposure, sky.IsEnabled, sky.SunDisc, sky.SunSize, sky.SunIntensity, sky.SunGlow,
                                                   sky.TopColorR, sky.TopColorG, sky.TopColorB, sky.HorizonColorR, sky.HorizonColorG, sky.HorizonColorB, sky.BottomColorR, sky.BottomColorG, sky.BottomColorB };
-            var prevSky = SceneRenderService.ScriptSky; var prevSun = SceneRenderService.ScriptSkySun;
+            var prevSky = SceneRenderService.ScriptSky; var prevSun = SceneRenderService.ScriptSkySun; var prevLight = SceneRenderService.ScriptSun;
             int tonemapper = scene.Settings.Tonemapper;
             string pngRel = "Assets/Textures/SmokeSunSky.png", hdrRel = "Assets/Textures/SmokeSunSky.hdr";
             try
@@ -75,87 +77,109 @@ namespace VortexEditor.Shell
                 var bmr = blocker.GetComponent<MeshRenderer>();
                 if (bmr != null) { bmr.ColorR = 0.1f; bmr.ColorG = 0.6f; bmr.ColorB = 0.1f; }
 
+                async Task<(int r, int g, int b)> Look(string file, float pitchDeg)
+                {
+                    cam.SetPositionAndRotation(0, 500, 0, 0, pitchDeg);
+                    EditorViewportSession.RequestResubmit();
+                    return await CameraSkySmoke.Centre(file);
+                }
+
                 sky.IsEnabled = true; sky.SkyboxType = SkyboxType.Texture; sky.TexturePath = pngRel; sky.Exposure = 1f;
-                sky.SunDisc = SkySunDisc.Auto; sky.SunSize = 0.53f; sky.SunIntensity = 1f; sky.SunGlow = 1f;
+                sky.SunDisc = SkySunDisc.Auto; sky.SunSize = 3f; sky.SunIntensity = 1f; sky.SunGlow = 1f;   // 3°: the 9 x 9 sample block lies inside it
                 SceneRenderService.Instance.ClearSkyboxMeshCache();
                 SceneRenderService.HideEditorOverlays = true;
-                cam.SetPositionAndRotation(0, 500, 0, 0, -20);   // straight at the sun
-                EditorViewportSession.RequestResubmit();
-                var pngDisc = await CameraSkySmoke.Centre("sky_sun_png.bmp");
+                var pngAuto = await Look("sky_sun_png_auto.bmp", -20);   // straight at the sun
+                sky.SunDisc = SkySunDisc.On;
+                var pngDisc = await Look("sky_sun_png.bmp", -20);
                 var pngSky = await CameraSkySmoke.Sample("sky_sun_png.bmp", 0.5, 0.12, capture: false);
 
                 SceneRenderService.ScriptSky = new SceneRenderService.SkyOverride { TexturePath = pngRel, Exposure = 1f, RotationDeg = 90f };
-                EditorViewportSession.RequestResubmit();
-                var turned = await CameraSkySmoke.Centre("sky_sun_turned.bmp");
+                var turned = await Look("sky_sun_turned.bmp", -20);
                 SceneRenderService.ScriptSky = null;
 
-                sky.TexturePath = hdrRel;   // a float picture: Auto leaves the disc to the picture
+                sky.TexturePath = hdrRel; sky.SunDisc = SkySunDisc.Auto;   // a float picture: Auto leaves the disc to the picture
                 SceneRenderService.Instance.ClearSkyboxMeshCache();
-                EditorViewportSession.RequestResubmit();
-                var hdrAuto = await CameraSkySmoke.Centre("sky_sun_hdr_auto.bmp");
+                var hdrAuto = await Look("sky_sun_hdr_auto.bmp", -20);
                 sky.SunDisc = SkySunDisc.On;
-                EditorViewportSession.RequestResubmit();
-                var hdrOn = await CameraSkySmoke.Centre("sky_sun_hdr_on.bmp");
+                var hdrOn = await Look("sky_sun_hdr_on.bmp", -20);
                 // the same through the exposure pipeline (a scene with the neutral tonemapper runs the .hdr through exposure +
                 // tonemapper): the disc is added before them
                 scene.Settings.Tonemapper = 1;
-                EditorViewportSession.RequestResubmit();
-                var hdrToneOn = await CameraSkySmoke.Centre("sky_sun_hdr_tonemapped_on.bmp");
+                var hdrToneOn = await Look("sky_sun_hdr_tonemapped_on.bmp", -20);
                 sky.SunDisc = SkySunDisc.Auto;
-                EditorViewportSession.RequestResubmit();
-                var hdrToneAuto = await CameraSkySmoke.Centre("sky_sun_hdr_tonemapped_auto.bmp");
+                var hdrToneAuto = await Look("sky_sun_hdr_tonemapped_auto.bmp", -20);
                 scene.Settings.Tonemapper = tonemapper;
 
                 // size: the camera 1.5° off the light — inside a 6° disc, outside the real-size one
-                sky.TexturePath = pngRel; sky.SunDisc = SkySunDisc.Auto;
+                sky.TexturePath = pngRel; sky.SunDisc = SkySunDisc.On; sky.SunSize = 0.53f;
                 SceneRenderService.Instance.ClearSkyboxMeshCache();
-                cam.SetPositionAndRotation(0, 500, 0, 0, -21.5f);
-                EditorViewportSession.RequestResubmit();
-                var offSmall = await CameraSkySmoke.Centre("sky_sun_off_small.bmp");
+                var offSmall = await Look("sky_sun_off_small.bmp", -21.5f);
                 sky.SunSize = 6f;
-                EditorViewportSession.RequestResubmit();
-                var offLarge = await CameraSkySmoke.Centre("sky_sun_off_large.bmp");
-                sky.SunSize = 0.53f;
+                var offLarge = await Look("sky_sun_off_large.bmp", -21.5f);
+                // limb darkening: 2.55° off the light (0.85 of the 6° disc's radius) it is darker than at its centre, on the display
+                // values of an 8-bit picture
+                var centre6 = await Look("sky_sun_large_centre.bmp", -20);
+                var limb6 = await Look("sky_sun_large_limb.bmp", -22.55f);
+                // the light's intensity and colour: a dim light draws a dim disc, an orange one an orange disc
+                sun.Intensity = 0.5f;
+                var dim = await Look("sky_sun_dim.bmp", -20);
+                sun.Intensity = 3f; sun.ColorR = 1f; sun.ColorG = 0.5f; sun.ColorB = 0.2f;
+                var orange = await Look("sky_sun_orange.bmp", -20);
+                sun.ColorR = sun.ColorG = sun.ColorB = 1f;
+                // a sun 5° below the horizon: the horizon hides it (looked at 5° down)
+                sunEntity.Transform.LocalRotation = new Vector3(-5, 180, 0);
+                var below = await Look("sky_sun_below.bmp", 5);
+                sunEntity.Transform.LocalRotation = new Vector3(20, 180, 0);
+                // a script's light without a direction: no sun, not one at the zenith (looked straight up)
+                Vortex.Lighting.SetDirectional(0f, 0f, 0f, 1f, 1f, 1f, 3f);
+                var zenith = await Look("sky_sun_no_direction.bmp", -89.5f);
+                Vortex.Lighting.ClearDirectional();
+                sky.SunSize = 3f;
 
                 // occlusion: the cube between the camera and the sun
-                cam.SetPositionAndRotation(0, 500, 0, 0, -20);
                 blocker.Transform.LocalPosition = new Vector3(0, 500 + 30f * 0.364f, 30);   // on the line of sight, 30 m out
-                EditorViewportSession.RequestResubmit();
-                var hidden = await CameraSkySmoke.Centre("sky_sun_hidden.bmp");
+                var hidden = await Look("sky_sun_hidden.bmp", -20);
                 blocker.Transform.LocalPosition = new Vector3(0, 500, -60);
 
-                // the gradient sky's disc is at the light, and moves with it
-                sky.SkyboxType = SkyboxType.Gradient;
+                // the gradient sky draws the disc on Auto, at the light, and moves with it
+                sky.SkyboxType = SkyboxType.Gradient; sky.SunDisc = SkySunDisc.Auto;
                 sky.TopColorR = 0.1f; sky.TopColorG = 0.2f; sky.TopColorB = 0.6f;
                 sky.HorizonColorR = 0.2f; sky.HorizonColorG = 0.3f; sky.HorizonColorB = 0.6f;
                 sky.BottomColorR = 0.1f; sky.BottomColorG = 0.1f; sky.BottomColorB = 0.2f;
                 SceneRenderService.Instance.ClearSkyboxMeshCache();
-                EditorViewportSession.RequestResubmit();
-                var gradient = await CameraSkySmoke.Centre("sky_sun_gradient.bmp");
+                var gradient = await Look("sky_sun_gradient.bmp", -20);
                 sunEntity.Transform.LocalRotation = new Vector3(20, 90, 0);   // the light turns a quarter away
-                EditorViewportSession.RequestResubmit();
-                var gradientAway = await CameraSkySmoke.Centre("sky_sun_gradient_away.bmp");
+                var gradientAway = await Look("sky_sun_gradient_away.bmp", -20);
 
-                log.Log("sky sun disc: 8-bit picture at the light " + CameraSkySmoke.Rgb(pngDisc) + " / sky " + CameraSkySmoke.Rgb(pngSky)
+                log.Log("sky sun disc: 8-bit picture at the light, auto " + CameraSkySmoke.Rgb(pngAuto) + " / on " + CameraSkySmoke.Rgb(pngDisc) + " / sky " + CameraSkySmoke.Rgb(pngSky)
                     + ", picture turned 90° " + CameraSkySmoke.Rgb(turned) + ", .hdr auto " + CameraSkySmoke.Rgb(hdrAuto) + " / on " + CameraSkySmoke.Rgb(hdrOn)
                     + ", tonemapped .hdr on " + CameraSkySmoke.Rgb(hdrToneOn) + " / auto " + CameraSkySmoke.Rgb(hdrToneAuto)
                     + ", 1.5° off: 0.53° disc " + CameraSkySmoke.Rgb(offSmall) + " / 6° disc " + CameraSkySmoke.Rgb(offLarge)
+                    + ", 6° disc centre " + CameraSkySmoke.Rgb(centre6) + " / near the rim " + CameraSkySmoke.Rgb(limb6)
+                    + ", light 0.5 " + CameraSkySmoke.Rgb(dim) + ", orange light " + CameraSkySmoke.Rgb(orange) + ", sun 5° below the horizon " + CameraSkySmoke.Rgb(below)
+                    + ", no light direction, zenith " + CameraSkySmoke.Rgb(zenith)
                     + ", behind a cube " + CameraSkySmoke.Rgb(hidden) + ", gradient " + CameraSkySmoke.Rgb(gradient) + " / light turned away " + CameraSkySmoke.Rgb(gradientAway));
                 bool ok = true;
                 void Check(bool c, string what) { if (!c) { ok = false; log.LogError("sky sun disc: " + what); } }
-                Check(White(pngDisc) && Bluish(pngSky), "an 8-bit picture sky draws no white disc at the directional light (or the sky around it is not the picture)");
+                Check(Bluish(pngAuto), "an 8-bit picture sky draws a disc on Auto (a picture sky must stay as it was until the disc is On)");
+                Check(White(pngDisc) && Bluish(pngSky), "an 8-bit picture sky with the disc On draws no white disc at the directional light (or the sky around it is not the picture)");
                 Check(White(turned), "the disc does not stay at the light when the picture is turned");
-                Check(Bluish(hdrAuto), "an .hdr sky draws a disc on Auto — it would double the sun the picture carries");
+                Check(Bluish(hdrAuto), "an .hdr sky draws a disc on Auto: it would double the sun the picture carries");
                 Check(White(hdrOn), "an .hdr sky with the disc On draws none");
                 Check(White(hdrToneOn) && Bluish(hdrToneAuto), "the disc of a tonemapped .hdr sky (the exposure pipeline) is missing, or drawn on Auto");
                 Check(!White(offSmall) && White(offLarge), "SunSize does not size the disc (1.5° off the light: a 0.53° disc must miss, a 6° disc cover it)");
+                Check(White(centre6) && limb6.r < centre6.r - 25 && limb6.r > 120, "no limb darkening: near its rim the disc is not darker than at its centre (or not there at all)");
+                Check(dim.r < 170 && dim.r > 50, "the disc does not follow the light's intensity (a light of 0.5 must draw a dim disc)");
+                Check(orange.r > orange.g + 40 && orange.r > 225, "the disc does not take the light's colour (an orange light)");
+                Check(Bluish(below), "a sun below the horizon still draws its disc");
+                Check(!White(zenith) && zenith.r < 150, "a light without a direction puts a sun at the zenith");
                 Check(!White(hidden) && hidden.r + hidden.g + hidden.b < 400, "geometry in front of the sun does not hide the disc");
-                Check(White(gradient) && !White(gradientAway), "the gradient sky's disc is not at the directional light (or does not follow it)");
+                Check(White(gradient) && !White(gradientAway), "the gradient sky's disc is not at the directional light on Auto (or does not follow it)");
                 return ok;
             }
             finally
             {
-                SceneRenderService.ScriptSky = prevSky; SceneRenderService.ScriptSkySun = prevSun;
+                SceneRenderService.ScriptSky = prevSky; SceneRenderService.ScriptSkySun = prevSun; SceneRenderService.ScriptSun = prevLight;
                 scene.Settings.Tonemapper = tonemapper;
                 SceneRenderService.HideEditorOverlays = false;
                 if (keep != null)

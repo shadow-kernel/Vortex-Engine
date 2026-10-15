@@ -339,7 +339,7 @@ namespace VortexEditor.Panels.Inspector
             // the sun's disc at the scene's Directional Light (#499)
             var sunHead = Section("Sun");
             var sunDisc = Row("Disc", Enum<SkySunDisc>(() => s.SunDisc, v => { s.SunDisc = v; D(); }, new[] { "Auto", "On", "Off" }),
-                "A disc where the Directional Light comes from. Auto: on a gradient and an 8-bit picture, off on an .hdr (it carries its own sun)");
+                "A disc where the Directional Light comes from, in its colour. Auto: on a gradient sky; a picture sky shows it with On (a picture may carry its own sun)");
             var sunSize = Row("Size", SliderRow(() => s.SunSize, v => { s.SunSize = v; D(); }, 0.1, 5, "0.##", 0.05f, 20f), "Angular diameter in degrees — the real sun is 0.53");
             var sunIntensity = Row("Intensity", SliderRow(() => s.SunIntensity, v => { s.SunIntensity = v; D(); }, 0, 4, "0.##", 0f, 100f), "1 = a white-hot disc that blooms; below ~0.1 it keeps the light's colour");
             var sunGlow = Row("Glow", SliderRow(() => s.SunGlow, v => { s.SunGlow = v; D(); }, 0, 4, "0.##", 0f, 10f), "The corona and aureole around the disc (0 = a bare disc)");

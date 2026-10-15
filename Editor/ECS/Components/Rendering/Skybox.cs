@@ -19,10 +19,10 @@ namespace Editor.ECS.Components.Rendering
     /// </summary>
     public enum SkySunDisc
     {
-        /// <summary>A gradient sky and an 8-bit picture (.png / .jpg) draw it; a float picture (.hdr) carries its own sun and
-        /// does not, nor does a solid colour.</summary>
+        /// <summary>A gradient sky draws it (as it always drew a sun); a picture sky does not (it may carry its own sun, and a
+        /// project's sky does not change by itself), nor does a solid colour.</summary>
         Auto,
-        /// <summary>Always — e.g. on an .hdr without a sun in it (an overcast or night panorama).</summary>
+        /// <summary>Always — on a picture too: a .png / .jpg, or an .hdr without a sun in it (an overcast or night panorama).</summary>
         On,
         /// <summary>Never.</summary>
         Off
@@ -234,9 +234,11 @@ namespace Editor.ECS.Components.Rendering
         private float _sunGlow = 1f;
 
         /// <summary>
-        /// The sun's disc at the scene's Directional Light (#499): Auto draws it on a gradient and an 8-bit picture, not on an
-        /// .hdr (which carries its own sun) nor on a solid colour. It sits where the light comes from, whatever the picture's
-        /// rotation, and blooms like a lamp; geometry in front of it hides it.
+        /// The sun's disc at the scene's Directional Light (#499): Auto draws it on the gradient sky (as before); a picture sky
+        /// shows it when it is On (a picture may carry its own sun); a solid colour never. It sits where the light comes from,
+        /// whatever the picture's rotation, takes the light's colour, brightens with its intensity (full at the Light's default
+        /// 2.5), sets behind the horizon and is hidden by geometry in front of it. On an .hdr sky through the scene's exposure
+        /// it blooms like a lamp; elsewhere it is a crisp disc with a darker rim.
         /// </summary>
         [DataMember(Name = "sunDisc", Order = 70)]
         public SkySunDisc SunDisc
@@ -256,7 +258,7 @@ namespace Editor.ECS.Components.Rendering
         }
 
         /// <summary>
-        /// The disc's brightness (1 = a white-hot disc that blooms; below ~0.1 it keeps the light's colour).
+        /// The disc's brightness (1 = full: white at the centre for a white light, its rim darker; higher washes the rim out).
         /// </summary>
         [DataMember(Name = "sunIntensity", Order = 72)]
         public float SunIntensity

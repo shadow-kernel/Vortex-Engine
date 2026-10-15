@@ -13,23 +13,33 @@ layout(set = 2, binding = 2) uniform sampler2D u_blend2;
 layout(location = 0) in  vec3 v_world_dir;
 layout(location = 0) out vec4 o_color;
 
-// The sun's disc at the scene's directional light (#499) — see skybox.metal: hdr = linear radiance before the tonemapper,
-// else display values; the disc is the light's (the picture's rotation / exposure do not move or dim it).
-vec3 sun_disc(vec3 dir, bool hdr)
+// The sun's disc at the scene's directional light (#499), its corona and aureole, as that light's (skybox.metal sun_light):
+// in its colour, brightening with its intensity, cut off by the horizon. hdr = linear radiance before the tonemapper, else
+// display values for sun_over(); the disc is the light's (the picture's rotation / exposure do not move or dim it).
+vec3 sun_light(vec3 dir, bool hdr)
 {
 	vec3 to_sun = -c.glow_dir.xyz;
 	float d = length(dir - to_sun);
 	float t = d / max(c.sun_disc.x, 1e-5);
 	float aa = clamp(fwidth(t), 0.02, 0.5);   // before the branch below
 	if (d > max(0.3, 9.0 * c.sun_disc.x)) return vec3(0.0);   // the aureole is gone 17° out, the corona 9 radii out
+	float above = smoothstep(-0.01, 0.01, dir.y);   // the horizon hides what is below it
 	float disc = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, t);
-	float limb = 0.6 + 0.4 * sqrt(saturate(1.0 - t * t));
-	float corona = exp(-max(t - 1.0, 0.0) * 0.8);
+	float limb = sqrt(saturate(1.0 - t * t));
 	float aureole = pow(saturate(1.0 - 0.5 * d * d), 256.0);
-	vec3 col = c.glow_color.rgb;
-	return hdr ? col * (disc * limb * 40.0 * c.sun_disc.y + c.sun_disc.z * (1.5 * corona + 0.35 * aureole))
-	           : col * (disc * limb * 10.0 * c.sun_disc.y + c.sun_disc.z * (0.5 * corona + 0.5 * aureole));
+	float li = c.glow_color.w * 0.4;   // the light's intensity against the default sun's 2.5
+	if (hdr)
+	{
+		float corona = exp(-max(t - 1.0, 0.0) * 0.8);
+		return c.glow_color.rgb * (li * above) * (disc * (0.6 + 0.4 * limb) * 40.0 * c.sun_disc.y + c.sun_disc.z * (1.5 * corona + 0.35 * aureole));
+	}
+	float corona = exp(-max(t - 1.0, 0.0) * 2.5);
+	vec3 hue = c.glow_color.rgb / max(max(c.glow_color.r, c.glow_color.g), max(c.glow_color.b, 1e-4));
+	return hue * (saturate(li) * above) * (disc * (0.55 + 0.45 * limb) * c.sun_disc.y + (1.0 - disc) * c.sun_disc.z * (0.18 * corona + 0.15 * aureole));
 }
+
+// Display values: the sun laid over the sky like a light (screen), never past white.
+vec3 sun_over(vec3 sky, vec3 sun) { return 1.0 - (1.0 - saturate(sky)) * (1.0 - saturate(sun)); }
 
 // One equirect picture as the display values the pass writes (skybox.metal sky_picture): mode > 0 through the haze, the
 // scene exposure and the tonemapper; < 0 a float picture the classic way; 0 an 8-bit picture as it is.
@@ -48,14 +58,14 @@ vec3 sky_picture(vec3 dir, float u0, float v, sampler2D tex, float exposure, flo
 		vec3 hz = c.haze.rgb + c.glow_color.rgb * (c.glow_dir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
 		sky = mix(sky, hz, f);
 	}
-	if (sun && mode > 0.0) sky += sun_disc(dir, true);   // on top of the haze: a setting sun stays a disc
+	if (sun && mode > 0.0) sky += sun_light(dir, true);   // on top of the haze: a setting sun stays a disc
 	if (mode < 0.0) sky = pow(saturate(sky), vec3(1.0 / 2.2));   // a float picture the classic way: gamma-encoded, clamped
 	else if (mode > 0.0)
 	{
 		// an HDR picture: the scene exposure + ACES + gamma of the lit surfaces, so the sky and the world agree
 		sky = pow(tonemap_scene(sky, mode, c.tonemapper > 0.5 ? 1u : 0u), vec3(1.0 / 2.2));
 	}
-	if (sun && mode <= 0.0) sky += sun_disc(dir, false);   // an 8-bit picture / the classic float one: display values
+	if (sun && mode <= 0.0) sky = sun_over(sky, sun_light(dir, false));   // an 8-bit picture / the classic float one: display values
 	return sky;
 }
 
@@ -78,9 +88,9 @@ vec3 sky_gradient(vec3 dir, bool sun)
 	// the sun at the scene's directional light (#499 — it used to sit at a fixed direction whatever the light did)
 	if (sun)
 	{
-		color += sun_disc(dir, false);
 		float horizon_glow = pow(1.0 - abs(y), 4.0) * pow(max(dot(dir, normalize(-c.glow_dir.xyz)), 0.0), 2.0);
-		color += c.glow_color.rgb * horizon_glow * 0.3 * c.sun_disc.z;
+		color += c.glow_color.rgb * horizon_glow * 0.3 * c.sun_disc.z * saturate(c.glow_color.w * 0.4);
+		color = sun_over(color, sun_light(dir, false));
 	}
 
 	float noise = fract(sin(dot(dir.xz, vec2(12.9898, 78.233))) * 43758.5453);

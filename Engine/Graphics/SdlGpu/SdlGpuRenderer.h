@@ -306,9 +306,9 @@ namespace vortex::graphics::sdlgpu
 			m_sun_direction = direction; m_sun_color = color; m_sun_intensity = intensity;
 		}
 		// The sun's disc in the sky (#499), drawn at the scene's directional light on the gradient AND the texture sky. mode:
-		// 0 = auto (on a gradient sky and an 8-bit picture, off on a float picture — an .hdr carries its own sun — and on a
-		// solid colour), 1 = always, 2 = never. size = the angular diameter in degrees (the real sun: 0.53), intensity scales the
-		// disc, glow its corona + aureole.
+		// 0 = auto (on the gradient sky; off on a picture — it may carry its own sun, and a project's sky must not change by
+		// itself — and on a solid colour), 1 = always, 2 = never. size = the angular diameter in degrees (the real sun: 0.53),
+		// intensity scales the disc, glow its corona + aureole; the light's colour and intensity tint and scale both.
 		void set_sky_sun(int mode, float size_degrees, float intensity, float glow)
 		{
 			m_sky_sun_mode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
