@@ -48,6 +48,7 @@ namespace VortexEditor.Claude
             var undo = UndoRedoManager.Instance;
             int undoBefore = undo.UndoCount;
             Scene test = null;
+            string terrainFile = null;
             using var http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + port), Timeout = TimeSpan.FromSeconds(60) };
             async Task<JsonNode> Raw(string tool, JsonObject args) => await McpTestClient.Call(http, tool, args);
             async Task<JsonNode> C(string tool, JsonObject args) => McpTestClient.Json(await Raw(tool, args));
@@ -124,14 +125,44 @@ namespace VortexEditor.Claude
                 var pos = got["transform"]?["position"] as JsonArray;
                 if (pos == null || (double)pos[0] != 1 || (double)pos[1] != 2 || (double)pos[2] != 3) return Fail("get_entity after the reload: " + got.ToJsonString());
 
-                // ================= File ▸ Revert Scene: nothing to discard, so it reverts without asking
+                // ================= File ▸ Revert Scene: the scene is its file now — nothing is read, nothing asked
                 await EditorCommands.RevertScene(test);
                 await SmokeRegistry.Settle(150);   // the toast is posted
                 string toast = EditorCommands.Window?.LastToast ?? "";
-                var probe3 = test.Entities.FirstOrDefault(e => e.Name == "Revert Probe");
-                if (!toast.StartsWith("Reverted", StringComparison.Ordinal) || probe3 == null || ReferenceEquals(probe3, probe2))
-                    return Fail("Revert Scene did not read the scene again: " + toast);
-                log.Log("[smoke] mcp scene revert: " + r.ToJsonString());
+                if (!toast.Contains("already matches its file") || !ReferenceEquals(test.Entities.FirstOrDefault(e => e.Name == "Revert Probe"), probe2))
+                    return Fail("Revert Scene on an unchanged scene: " + toast);
+
+                // ================= save, then revert: nothing to discard, the undo history stays (#411 review)
+                await C("set_transform", new JsonObject { ["entity"] = probeId, ["position"] = new JsonArray(4, 4, 4) });
+                await C("save_scene", new JsonObject());
+                int stepsSaved = undo.UndoCount;
+                var same = await C("open_scene", new JsonObject { ["scene"] = name, ["reload"] = true });
+                if ((bool?)same["unchanged"] != true || undo.UndoCount != stepsSaved) return Fail("a revert right after a save must change nothing: " + same.ToJsonString());
+
+                // ================= terrain: a stroke writes its data file at once; a revert puts the saved heights back (#411 review)
+                await C("create_terrain", new JsonObject { ["position"] = new JsonArray(400, 0, 400), ["size"] = 16, ["resolution"] = 33, ["name"] = "Revert Hill" });
+                await C("save_scene", new JsonObject());
+                var terrainComp = SceneModel.Resolve("Revert Hill").GetComponent<Editor.ECS.Components.Rendering.Terrain>();
+                terrainFile = Editor.Core.Services.Terrain.TerrainService.ResolvePath(terrainComp?.DataPath);
+                if (terrainFile == null || !File.Exists(terrainFile)) return Fail("create_terrain left the terrain without a data file");
+                var onDiskScene = Editor.Core.Serialization.DataSerializer.LoadFromBinary<Scene>(path);
+                if (!onDiskScene.Entities.Any(e => e.Name == "Revert Hill" && !string.IsNullOrEmpty(e.GetComponent<Editor.ECS.Components.Rendering.Terrain>()?.DataPath)))
+                    return Fail("the scene's save did not record the terrain's data path");
+                byte[] savedHeights = File.ReadAllBytes(terrainFile);
+                await C("sculpt_terrain", new JsonObject { ["terrain"] = "Revert Hill", ["point"] = new JsonArray(408, 408), ["op"] = "raise", ["radius"] = 4, ["amount"] = 5 });
+                if (File.ReadAllBytes(terrainFile).AsSpan().SequenceEqual(savedHeights)) return Fail("the stroke did not reach the data file");
+                var asked = await C("open_scene", new JsonObject { ["scene"] = name });
+                if ((bool?)asked["unsaved_changes"] != true || ((int?)asked["reload_drops_undo_steps"] ?? 0) < 1) return Fail("open_scene must say what a reload drops: " + asked.ToJsonString());
+                var back = await C("open_scene", new JsonObject { ["scene"] = name, ["reload"] = true });
+                var restoredFiles = (back["data_files_restored"] as JsonArray)?.Select(x => (string)x).ToList() ?? new System.Collections.Generic.List<string>();
+                if ((bool?)back["reloaded"] != true || !restoredFiles.Any(f => f.EndsWith(".vterrain", StringComparison.Ordinal)))
+                    return Fail("the reload must put the terrain file back: " + back.ToJsonString());
+                if (!File.ReadAllBytes(terrainFile).AsSpan().SequenceEqual(savedHeights)) return Fail("the terrain file is not the saved one");
+                await SmokeRegistry.Settle(300);   // the reloaded terrain renders and reads its file
+                var height = await C("terrain_height", new JsonObject { ["points"] = new JsonArray(new JsonArray(408, 408)) });
+                var at = (height as JsonArray)?[0];
+                if (at == null || Math.Abs((double)at["y"]) > 0.01) return Fail("the reverted terrain is not the saved, flat one: " + height?.ToJsonString());
+                log.Log("[smoke] mcp scene revert: " + r.ToJsonString() + " | terrain: " + back.ToJsonString());
                 return true;
             }
             catch (Exception ex) { return Fail(ex.Message); }
@@ -145,8 +176,9 @@ namespace VortexEditor.Claude
                     try { test.DeactivateEntities(); test.ReleaseEngineScene(); } catch { }
                     project.Scenes.Remove(test);
                 }
-                foreach (var f in new[] { path, scriptFile })
+                foreach (var f in new[] { path, scriptFile, terrainFile })
                 {
+                    if (f == null) continue;
                     try { if (File.Exists(f)) File.Delete(f); } catch { }
                     try { if (File.Exists(f + ".vmeta")) File.Delete(f + ".vmeta"); } catch { }
                 }

@@ -169,41 +169,169 @@ namespace VortexTests
         }
 
         [Test]
-        public static void UnsavedChangesAreWhatTheFileDoesNotHave(TestContext t)
+        public static void UnsavedChangesFollowTheEditsAndTheFile(TestContext t)
         {
+            SceneDirtyTracker.Install();
+            var undo = UndoRedoManager.Instance;
+            var outer = undo.SaveHistory();
+            try
+            {
+                var scene = SavedScene(t, "Yard");
+                byte[] original = File.ReadAllBytes(scene.FilePath);
+                t.False(scene.IsDirty || SceneService.Instance.HasUnsavedChanges(scene), "a scene just read has none (reading its name used to mark it)");
+                t.False(SceneService.Instance.FileChangedOnDisk(scene), "and its file is the one it was read from");
+
+                Move(undo, scene.Entities[0], new Vector3(9, 9, 9));
+                t.True(SceneService.Instance.HasUnsavedChanges(scene), "an edit through the undo stack marks it — an inspector row, a gizmo, a tool");
+                SceneService.Instance.SaveScene(scene);
+                t.False(SceneService.Instance.HasUnsavedChanges(scene), "saved: none");
+                undo.Undo();
+                t.True(SceneService.Instance.HasUnsavedChanges(scene), "an undo is an edit too");
+                SceneService.Instance.SaveScene(scene);
+
+                File.WriteAllBytes(scene.FilePath, original);   // a git checkout puts another version of the file there
+                File.SetLastWriteTimeUtc(scene.FilePath, DateTime.UtcNow.AddMinutes(1));
+                t.False(SceneService.Instance.HasUnsavedChanges(scene), "nothing in memory is unsaved");
+                t.True(SceneService.Instance.FileChangedOnDisk(scene), "but the file changed on disk");
+
+                var unsaved = new Scene(null, "Fresh") { FilePath = t.Path("Fresh.vscene") };
+                t.True(SceneService.Instance.HasUnsavedChanges(unsaved), "a new scene has nothing saved");
+            }
+            finally { undo.RestoreHistory(outer); }
+        }
+
+        [Test]
+        public static void AStepMarksTheScenesItTouchesAndStopPutsTheFlagsBack(TestContext t)
+        {
+            var a = SavedScene(t, "A");
+            var b = SavedScene(t, "B");
+            SceneDirtyTracker.MarkScenesOf(new ActionCommand("move", Capture(a.Entities[0].Transform), Capture(null)));
+            t.True(a.IsDirty && !b.IsDirty, "a step on A's transform marks A only");
+            SceneDirtyTracker.MarkScenesOf(new ActionCommand("note", Capture(new Note()), Capture(null)));
+            t.False(b.IsDirty, "a step about no scene marks none");
+            SceneDirtyTracker.MarkScenesOf(new CollectionAddCommand<Scene>(new ObservableCollection<Scene> { a, b }, new Scene(null, "C"), "Scenes"));
+            t.False(b.IsDirty, "adding a scene to the project's list is no edit of the others");
+            t.False(DataSerializer.FromBinary<Scene>(DataSerializer.ToBinary(a)).IsDirty, "a scene that comes out of the serializer is not dirty");
+
+            var snap = PlaySnapshot.Take(new[] { a, b });
+            b.IsDirty = true;
+            a.IsDirty = false;
+            snap.Restore();
+            t.True(a.IsDirty && !b.IsDirty, "Stop puts back the flags of Play: what play changed is gone");
+        }
+
+        [Test]
+        public static void ARevertWithNothingToDiscardDoesNothing(TestContext t)
+        {
+            SceneDirtyTracker.Install();
+            var undo = UndoRedoManager.Instance;
+            var outer = undo.SaveHistory();
+            try
+            {
+                undo.Clear();
+                var scene = SavedScene(t, "Yard");
+                Move(undo, scene.Entities[0], new Vector3(9, 9, 9));
+                SceneService.Instance.SaveScene(scene);   // saved after the edit: memory and file agree
+
+                var pv = SceneService.Instance.PreviewReload(scene);
+                t.True(pv.Blocked == null && !pv.Differs && pv.UndoSteps == 0, "the preview says there is nothing to do");
+                var r = SceneService.Instance.ReloadScene(scene);
+                t.True(r.Unchanged && !r.Reloaded && r.Error == null && r.UndoStepsDropped == 0, "nothing was read");
+                t.Equal(1, undo.UndoCount, "and the step stays: it can still be undone (the review's save-then-revert)");
+
+                Move(undo, scene.Entities[0], new Vector3(5, 5, 5));
+                pv = SceneService.Instance.PreviewReload(scene);
+                t.True(pv.Differs && pv.Unsaved && pv.UndoSteps == 2, "after another edit: it differs, and both steps would go");
+            }
+            finally { undo.RestoreHistory(outer); }
+        }
+
+        [Test]
+        public static void RevertPutsBackTheDataFilesWrittenSinceTheSave(TestContext t)
+        {
+            var previous = ProjectData.Current;
+            var undo = UndoRedoManager.Instance;
+            var outer = undo.SaveHistory();
+            try
+            {
+                ProjectData.Current = new ProjectData(Guid.NewGuid(), t.Dir, "P");
+                var scene = new Scene { Name = "Yard" };
+                var zone = EntityIdsWith(scene, "Zone", "Assets/Areas/Zone.varea");
+                string zoneFile = t.Path("Assets", "Areas", "Zone.varea");
+                new Editor.Core.Areas.AreaDefinition { Name = "v1" }.Save(zoneFile);
+                string path = t.Path("Yard.vscene");
+                DataSerializer.SaveAsBinary(scene, path);
+                scene = SceneService.Instance.LoadScene(path);   // the baseline: the scene and its area file as saved
+
+                new Editor.Core.Areas.AreaDefinition { Name = "v2" }.Save(zoneFile);                    // written since the save
+                EntityIdsWith(scene, "New", "Assets/Areas/New.varea");
+                string newFile = t.Path("Assets", "Areas", "New.varea");
+                new Editor.Core.Areas.AreaDefinition { Name = "made" }.Save(newFile);                   // made since the save
+
+                var pv = SceneService.Instance.PreviewReload(scene);
+                t.True(pv.Differs && pv.DataFiles.Count == 2, "the preview lists both files: " + string.Join(", ", pv.DataFiles));
+                var r = SceneService.Instance.ReloadScene(scene);
+                t.True(r.Reloaded && r.DiscardedChanges && r.DataFilesRestored.Count == 2, "both put back: " + string.Join(", ", r.DataFilesRestored));
+                t.True(File.ReadAllText(zoneFile).Contains("\"v1\""), "the area file is the saved one again");
+                t.False(File.Exists(newFile), "and the one made since is gone, like its area");
+                t.Equal(0, SceneDataFiles.Pending(scene).Count, "the files on disk are the baseline now");
+            }
+            finally { ProjectData.Current = previous; undo.RestoreHistory(outer); SceneDataFiles.Clear(); }
+        }
+
+        private static GameEntity EntityIdsWith(Scene scene, string name, string areaFile)
+        {
+            var e = EntityIdTests.Entity(scene, name, new Vector3(0, 0, 0));
+            e.AddComponentDirect(new Editor.ECS.Components.World.Area(e) { DataPath = areaFile });
+            return e;
+        }
+
+        [Test]
+        public static void ARevertNeverPutsOneEntityIntoTwoScenes(TestContext t)
+        {
+            var project = new ProjectData(Guid.NewGuid(), t.Dir, "P");
+            var a = SavedScene(t, "A");
+            var b = SavedScene(t, "B");
+            a.Project = b.Project = project;
+            project.Scenes.Add(a);
+            project.Scenes.Add(b);
+            var crate = a.Entities[0];
+            a.Entities.Remove(crate);   // moved to B since A was saved
+            b.Entities.Add(crate);
+            crate.Scene = b;
+
+            var r = SceneService.Instance.ReloadScene(a);
+            t.True(!r.Reloaded && (r.Error ?? "").Contains("'Crate' (now in 'B')"), "refused, naming the entity and where it is: " + r.Error);
+            t.True(b.Entities.Contains(crate) && a.Entities.Count == 1, "nothing changed");
+            t.True(SceneService.Instance.PreviewReload(a).Blocked != null, "the preview says so too");
+        }
+
+        [Test]
+        public static void ARevertTakesTheFilesIdentity(TestContext t)
+        {
+            var project = new ProjectData(Guid.NewGuid(), t.Dir, "P");
             var scene = SavedScene(t, "Yard");
-            byte[] original = File.ReadAllBytes(scene.FilePath);
-            t.False(SceneService.Instance.HasUnsavedChanges(scene), "a scene just read has none");
+            Guid fileId = scene.Id;
+            scene.Project = project;
+            project.Scenes.Add(scene);
+            scene.Id = Guid.NewGuid();   // the scene in memory came to carry another id
+            project.StartSceneId = scene.Id;
 
-            scene.Entities[0].Transform.LocalPosition = new Vector3(9, 9, 9);
-            t.True(SceneService.Instance.HasUnsavedChanges(scene), "a move counts, dirty flag or not");
-            SceneService.Instance.SaveScene(scene);
-            t.False(SceneService.Instance.HasUnsavedChanges(scene), "saved: none");
-
-            File.WriteAllBytes(scene.FilePath, original);   // a git checkout puts the old file back
-            t.True(SceneService.Instance.HasUnsavedChanges(scene), "the file changed on disk: the scene in memory no longer matches it");
             var r = SceneService.Instance.ReloadScene(scene);
-            t.True(r.Reloaded && r.DiscardedChanges && At(scene.Entities[0], 1, 2, 3), "the revert reads the checked-out file");
-            t.False(SceneService.Instance.HasUnsavedChanges(scene), "and matches it");
-
-            scene.IsDirty = true;
-            t.False(SceneService.Instance.HasUnsavedChanges(scene), "the dirty flag alone says nothing: reading a scene sets it");
-            var unsaved = new Scene(null, "Fresh") { FilePath = t.Path("Fresh.vscene") };
-            t.True(SceneService.Instance.HasUnsavedChanges(unsaved), "a scene without a file has nothing saved");
-
-            var again = SceneService.Instance.ReloadScene(scene);
-            t.True(again.Reloaded && !again.DiscardedChanges, "a revert with nothing to discard says so");
+            t.True(r.Reloaded && scene.Id == fileId, "the id is the file's again");
+            t.True(project.StartSceneId == fileId, "and the project's start scene still points at it");
         }
 
         private sealed class Hit { }
         private sealed class Counter { public int Runs; }
+        private struct Plain { public float X, Y, Z; public int Kind; }
         private static Action Capture(object o) => () => GC.KeepAlive(o);
         private static IEnumerable<object> Lazy(Counter c) { c.Runs++; yield return new Hit(); }
 
         [Test]
         public static void TheUndoWalkFindsClosuresAndListsButRunsNoQuery(TestContext t)
         {
-            bool? Classify(object o) => o is Hit ? true : (o is GameEntity ? false : (bool?)null);
+            UndoRef Classify(object o) => o is Hit ? UndoRef.Target : (o is GameEntity ? UndoRef.Skip : UndoRef.LookInto);
 
             t.True(UndoReferences.Uses(new ActionCommand("closure", Capture(new Hit()), Capture(null)), Classify), "a closure that captured it");
             t.True(UndoReferences.Uses(new CollectionAddCommand<object>(new List<object> { 1, "x", new Hit() }, "y", "List"), Classify), "a list that holds it");
@@ -216,8 +344,30 @@ namespace VortexTests
             var query = Enumerable.Range(0, 3).Select(i => { counter.Runs++; return (object)new Hit(); });
             t.False(UndoReferences.Uses(new ActionCommand("query", Capture(query), Capture(null)), Classify), "nor is a LINQ query");
             t.Equal(0, counter.Runs, "the walk never runs one");
-            t.True(UndoReferences.Uses(new ActionCommand("big", Capture(Enumerable.Range(0, 500).Select(i => (object)new GameEntity("E" + i)).ToList()), Capture(null)), Classify, budget: 50),
+            t.True(UndoReferences.Uses(new ActionCommand("big", Capture(Enumerable.Range(0, 500).Select(i => (object)new object()).ToList()), Capture(null)), Classify, budget: 50),
                 "a walk out of budget counts as a hit: dropping a step too many is safe");
+        }
+
+        [Test]
+        public static void AnotherScenesStepStaysWhateverItHolds(TestContext t)
+        {
+            var a = new Scene { Name = "A" };
+            var b = new Scene { Name = "B" };
+            var inB = new GameEntity(b, "Foliage B");
+            UndoRef Classify(object o) => o switch
+            {
+                GameEntity e => ReferenceEquals(e.Scene, a) ? UndoRef.Target : UndoRef.Elsewhere,
+                Scene s => ReferenceEquals(s, a) ? UndoRef.Target : UndoRef.Elsewhere,
+                _ => UndoRef.LookInto,
+            };
+            // what a foliage stroke of scene B records: its entity and 120,000 instances (plain structs)
+            var instances = new Dictionary<string, List<Plain>> { ["grass"] = Enumerable.Repeat(new Plain { X = 1 }, 120_000).ToList() };
+            var paint = new ActionCommand("Paint foliage", Capture(new object[] { inB, instances }), Capture(null));
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            t.False(UndoReferences.Uses(paint, Classify), "B's stroke is not A's: lists of plain values are not walked");
+            t.True(sw.ElapsedMilliseconds < 1000, "and the walk is quick: " + sw.ElapsedMilliseconds + " ms");
+            var crowded = new ActionCommand("Crowd", Capture(new object[] { inB, Enumerable.Range(0, 200_000).Select(i => new object()).ToList() }), Capture(null));
+            t.False(UndoReferences.Uses(crowded, Classify, budget: 1000), "a step that runs out of budget after meeting another scene's entity stays theirs");
         }
     }
 
@@ -275,6 +425,51 @@ namespace VortexTests
             {
                 try { scene.DeactivateEntities(); scene.ReleaseEngineScene(); } catch { }
                 undo.RestoreHistory(outer);
+            }
+        }
+
+        [Test]
+        public static void ANewTerrainOwnsItsDataAndARevertPutsTheSculptingBack(TestContext t)
+        {
+            if (!Native()) return;
+            var previous = ProjectData.Current;
+            var undo = UndoRedoManager.Instance;
+            var outer = undo.SaveHistory();
+            try
+            {
+                ProjectData.Current = new ProjectData(Guid.NewGuid(), t.Dir, "P");
+                var scene = new Scene(ProjectData.Current, "Land") { FilePath = t.Path("Land.vscene") };
+                var hill = new GameEntity(scene, "Hill");
+                var terrain = new Editor.ECS.Components.Rendering.Terrain(hill) { Size = 32, Resolution = 33 };
+                hill.AddComponentDirect(terrain);
+                scene.Entities.Add(hill);
+
+                // what create_terrain does: the terrain never rendered, yet it owns its file at once (#411 review, finding 12)
+                t.True(Editor.Core.Services.Terrain.TerrainService.Save(hill), "a terrain that never rendered saves");
+                string file = Editor.Core.Services.Terrain.TerrainService.ResolvePath(terrain.DataPath);
+                t.True(file != null && File.Exists(file), "it owns its data file from the start: " + terrain.DataPath);
+                scene.Save();
+                var back = DataSerializer.LoadFromBinary<Scene>(scene.FilePath);
+                t.Equal(terrain.DataPath, back.Entities[0].GetComponent<Editor.ECS.Components.Rendering.Terrain>()?.DataPath, "the scene's first save records the path");
+                byte[] saved = File.ReadAllBytes(file);
+
+                // sculpting writes the file at once — what sculpt_terrain and the brush do
+                Editor.Core.Services.Terrain.TerrainService.TryGetData(hill, out var data, out _);
+                data.Raise(16, 16, 6, 5f, 0.2f);
+                Editor.Core.Services.Terrain.TerrainService.Save(hill);
+                t.False(File.ReadAllBytes(file).AsSpan().SequenceEqual(saved), "the stroke is on disk");
+                t.True(SceneService.Instance.HasUnsavedChanges(scene), "and counts as unsaved");
+
+                var r = SceneService.Instance.ReloadScene(scene);
+                t.True(r.Reloaded && r.DataFilesRestored.Any(p => string.Equals(p, file, StringComparison.OrdinalIgnoreCase)), "the revert puts the terrain file back: " + string.Join(", ", r.DataFilesRestored));
+                t.True(File.ReadAllBytes(file).AsSpan().SequenceEqual(saved), "to the saved heights");
+            }
+            finally
+            {
+                ProjectData.Current = previous;
+                undo.RestoreHistory(outer);
+                try { Editor.Core.Services.Terrain.TerrainService.Clear(); } catch { }
+                SceneDataFiles.Clear();
             }
         }
     }

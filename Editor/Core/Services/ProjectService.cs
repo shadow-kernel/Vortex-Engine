@@ -163,6 +163,7 @@ namespace Editor.Core.Services
                         scene.FilePath = sceneFilePath;
                         scene.Project = project;
                         scene.Load();
+                        scene.NoteFileState();   // what "changed on disk" compares with (#411)
                         project.Scenes.Add(scene);
                         loadedSceneIds.Add(scene.Id);
                     }
@@ -190,6 +191,7 @@ namespace Editor.Core.Services
                         scene.FilePath = file;
                         scene.Project = project;
                         scene.Load();
+                        scene.NoteFileState();
                         project.Scenes.Add(scene);
                         loadedSceneIds.Add(scene.Id);
                         System.Diagnostics.Debug.WriteLine("[LoadProject] recovered orphan scene '" + scene.Name + "' from " + Path.GetFileName(file));
@@ -549,11 +551,12 @@ namespace Editor.Core.Services
                 scene.FilePath = Path.Combine(scenesPath, $"{SanitizeFileName(scene.Name)}.vscene");
             }
 
+            Scene.RaiseSaving(scene);   // terrain / foliage data first: a data path assigned now is saved with the scene (#411)
             // the editor's view travels with the scene (see EditorViewState)
             try { if (ReferenceEquals(project.ActiveScene, scene)) EditorViewState.Capture(scene); } catch { }
             // Speichere Szene als Bin�r
             DataSerializer.SaveAsBinary(scene, scene.FilePath);
-            scene.IsDirty = false;
+            scene.NoteFileState();
         }
 
         /// <summary>

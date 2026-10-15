@@ -306,6 +306,7 @@ namespace Editor.Core.Services.Foliage
             string abs = TerrainService.ResolvePath(f.DataPath);
             if (abs == null) return false;
             bool created = !File.Exists(abs);
+            SceneDataFiles.BeforeWrite(abs);   // a revert puts the saved version back (#411)
             try { rt.Data.Save(abs); rt.Unsaved = false; PlaySession.NoteWrite(abs, created); return true; }   // a layer made in play takes its file along (#423)
             catch (Exception ex) { Log("Foliage save failed: " + ex.Message); return false; }
         }
@@ -324,7 +325,8 @@ namespace Editor.Core.Services.Foliage
         {
             if (_hooked) return;
             _hooked = true;
-            try { SceneService.Instance.SceneSaved += (s, scene) => { try { SaveAll(scene); } catch { } }; } catch { }
+            // before the scene file is written, by every save path: a data path assigned now is saved with the scene (#411 review)
+            Scene.Saving += scene => { try { SaveAll(scene); } catch { } };
         }
 
         // ---------------------------------------------------------------- editing

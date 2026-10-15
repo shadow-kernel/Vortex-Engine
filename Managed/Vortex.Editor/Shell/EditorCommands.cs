@@ -244,19 +244,29 @@ namespace VortexEditor.Shell
         }
 
         /// <summary>File ▸ Revert Scene (#411), like the Revert of the Material, VFX, Prefab and Behavior Tree editors: discard
-        /// the active scene's in-memory state and read its .vscene again. Asks first when the scene has unsaved changes.</summary>
+        /// the active scene's in-memory state and read its .vscene again. Asks first — saying what goes — when the scene has
+        /// unsaved changes, data files to put back or undo steps to drop; does nothing when the scene already is its file.</summary>
         public static async Task RevertScene(Scene scene = null)
         {
             scene = scene ?? ActiveScene;
             if (scene == null) { Toast("Open a project first"); return; }
-            if (PlayModeService.Instance.IsPlaying) { Toast("Stop play mode first: Stop puts the scenes of Play back"); return; }
-            if (string.IsNullOrEmpty(scene.FilePath) || !File.Exists(scene.FilePath)) { Toast(scene.Name + " was never saved: there is no file to revert to"); return; }
-            if (SceneService.Instance.HasUnsavedChanges(scene)
-                && !await Dialogs.Confirm("Revert “" + scene.Name + "”?", "Discards every unsaved change of the scene and reloads it from disk. Its undo history goes too — this cannot be undone.", "Revert", "Cancel", destructive: true))
-                return;
+            var pv = SceneService.Instance.PreviewReload(scene);
+            if (pv.Blocked != null) { Toast(pv.Blocked); return; }
+            if (!pv.Differs) { Toast(scene.Name + " already matches its file"); return; }
+            if (pv.Unsaved || pv.UndoSteps > 0 || pv.DataFiles.Count > 0)
+            {
+                var what = new List<string>();
+                if (pv.Unsaved) what.Add("discards every unsaved change of the scene");
+                if (pv.DataFiles.Count > 0) what.Add("puts back " + Plural(pv.DataFiles.Count, "terrain, foliage or area file", "terrain, foliage or area files") + " written since the save");
+                what.Add(pv.UndoSteps > 0 ? "drops its " + Plural(pv.UndoSteps, "undo step", "undo steps") : "keeps the undo history (no step is about this scene)");
+                string text = "Reloads the scene from disk: " + string.Join(", ", what) + ". This cannot be undone.";
+                if (!await Dialogs.Confirm("Revert “" + scene.Name + "”?", text, "Revert", "Cancel", destructive: true)) return;
+            }
             var r = ReloadSceneFromDisk(scene);
-            Toast(r.Reloaded ? "Reverted " + scene.Name : r.Error);
+            Toast(r.Reloaded ? "Reverted " + scene.Name : r.Unchanged ? scene.Name + " already matches its file" : r.Error);
         }
+
+        private static string Plural(int n, string one, string many) => n + " " + (n == 1 ? one : many);
 
         /// <summary>Read a scene's .vscene again, discarding its in-memory state (#411) — File ▸ Revert Scene and the MCP
         /// open_scene reload run this, without asking. Nothing stays selected that was replaced, the viewport re-submits the
@@ -280,7 +290,9 @@ namespace VortexEditor.Shell
             SceneRenderService.StaticDirty = true;
             AfterSceneEdit();
             ConsoleService.Instance.LogSystem("Reverted '" + scene.Name + "' to its file" + (r.DiscardedChanges ? " — unsaved changes discarded" : "")
-                + (r.UndoStepsDropped > 0 ? ", " + r.UndoStepsDropped + (r.UndoStepsDropped == 1 ? " undo step" : " undo steps") + " dropped" : ""));
+                + (r.DataFilesRestored.Count > 0 ? ", " + Plural(r.DataFilesRestored.Count, "data file", "data files") + " put back (" + string.Join(", ", r.DataFilesRestored.Select(Path.GetFileName)) + ")" : "")
+                + (r.UndoStepsDropped > 0 ? ", " + Plural(r.UndoStepsDropped, "undo step", "undo steps") + " dropped" : "")
+                + (r.DataFilesKept.Count > 0 ? "; kept " + string.Join(", ", r.DataFilesKept.Select(Path.GetFileName)) + " (another scene uses it)" : ""));
             return r;
         }
 

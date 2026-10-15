@@ -65,6 +65,7 @@ namespace Editor.Core.Editing
         {
             if (project == null) return false;
             EnsureEngine();
+            SceneDirtyTracker.Install();   // every undo step marks the scenes it touches unsaved (#411)
             if (ProjectData.Current != null && !ReferenceEquals(ProjectData.Current, project)) CloseProject(keepLastProject: true);
             ProjectData.Current = project;
             try { Editor.Core.Assets.AssetTagService.Instance.Initialize(project.Path); } catch { }
@@ -127,6 +128,7 @@ namespace Editor.Core.Editing
                     try { s.DeactivateEntities(); s.ReleaseEngineScene(); } catch { }
                 }
             project?.Unload();
+            try { SceneDataFiles.Clear(); } catch { }   // the copies a revert would have put back (#411)
             ProjectData.Current = null;
             Hierarchy.SetProject(null);
             if (!keepLastProject) EditorStateService.Instance.ClearLastProject();

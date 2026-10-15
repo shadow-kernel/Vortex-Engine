@@ -85,6 +85,7 @@ namespace Editor.Core.Areas
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             bool created = !File.Exists(path);
+            Services.SceneDataFiles.BeforeWrite(path);   // a revert of the scene puts the saved version back (#411)
             File.WriteAllText(path, ToJson());
             Services.PlaySession.NoteWrite(path, created);   // a file saved in play for an area Stop reverts goes with it (#423)
         }

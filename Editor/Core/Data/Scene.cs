@@ -264,6 +264,7 @@ namespace Editor.Core.Data
             _settings = file._settings;
             ActiveFlagsVersion = file.ActiveFlagsVersion;
             if (!string.IsNullOrEmpty(file._name)) SetProperty(ref _name, file._name, nameof(Name));
+            if (file._id != Guid.Empty) Id = file._id;   // the file's identity too: everything of the scene is the file's now
             foreach (var entity in _entities)
                 SetEntityReferencesRecursive(entity);
             SelectedEntity = null;
@@ -271,7 +272,7 @@ namespace Editor.Core.Data
             OnPropertyChanged(nameof(Settings));
 
             if (active) ActivateEntities();
-            IsDirty = false;
+            NoteFileState();
             return old;
         }
 
@@ -290,11 +291,12 @@ namespace Editor.Core.Data
                 Directory.CreateDirectory(directory);
             }
 
+            RaiseSaving(this);   // terrain / foliage data first: a data path assigned now is saved with the scene
             // the editor's view travels with the scene: whoever opens it next starts where it was saved from
             try { if (ReferenceEquals(ProjectData.Current?.ActiveScene, this)) Services.EditorViewState.Capture(this); } catch { }
             bool created = !File.Exists(FilePath);
             Serialization.DataSerializer.SaveAsBinary(this, FilePath);
-            IsDirty = false;
+            NoteFileState();
             Services.PlaySession.NoteWrite(FilePath, created);   // a scene saved while playing may refer to data files play created (#423)
         }
 
@@ -553,6 +555,53 @@ namespace Editor.Core.Data
             IsLoaded = true;
 			_engineHandle = SceneHandle.Invalid;
 			_isActive = false;
+            // reading the name went through its setter, which marks an edit: a scene just read has nothing unsaved (#411)
+            _isDirty = false;
+        }
+
+        /// <summary>Raised before a scene is written to its file (by any save path): the terrain and foliage data are written
+        /// first, so a data path they assign is in the file (#411 review).</summary>
+        internal static event Action<Scene> Saving;
+
+        internal static void RaiseSaving(Scene scene)
+        {
+            var handlers = Saving;
+            if (handlers == null || scene == null) return;
+            foreach (Action<Scene> h in handlers.GetInvocationList())
+            {
+                try { h(scene); } catch (Exception ex) { Debug.WriteLine("[Scene] before-save hook failed: " + ex.Message); }
+            }
+        }
+
+        private long _stampLength = -1;
+        private DateTime _stampTimeUtc;
+
+        /// <summary>The scene was just read from or written to its file (#411): nothing is unsaved, the file's size and time are
+        /// what <see cref="FileChangedOnDisk"/> compares with, and its data files are the baseline of a revert now.</summary>
+        internal void NoteFileState()
+        {
+            IsDirty = false;
+            try
+            {
+                var fi = string.IsNullOrEmpty(FilePath) ? null : new FileInfo(FilePath);
+                if (fi != null && fi.Exists) { _stampLength = fi.Length; _stampTimeUtc = fi.LastWriteTimeUtc; }
+                else _stampLength = -1;
+            }
+            catch { _stampLength = -1; }
+            try { Services.SceneDataFiles.Forget(this); } catch { }
+        }
+
+        /// <summary>Whether the scene's file was changed on disk (a git checkout, another program) since the editor read or wrote
+        /// it — the scene in memory does not show that version. False when the editor never read or wrote it.</summary>
+        internal bool FileChangedOnDisk()
+        {
+            if (_stampLength < 0 || string.IsNullOrEmpty(FilePath)) return false;
+            try
+            {
+                var fi = new FileInfo(FilePath);
+                return !fi.Exists || fi.Length != _stampLength || fi.LastWriteTimeUtc != _stampTimeUtc;
+            }
+            catch { return false; }
         }
     }
 
