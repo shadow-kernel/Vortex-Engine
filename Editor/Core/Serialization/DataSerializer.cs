@@ -71,6 +71,7 @@ namespace Editor.Core.Serialization
             // AI & Navigation (#110 / #112 / #114)
             typeof(Editor.ECS.Components.AI.NavAgent), typeof(Editor.ECS.Components.AI.AIPerception), typeof(Editor.ECS.Components.AI.PatrolPath),
             typeof(Editor.ECS.Components.AI.BehaviorTreeAgent),   // #111
+            typeof(Editor.ECS.Components.AI.NavMeshObstacle),     // #435
             
             // Audio
             typeof(AudioSource),

@@ -60,7 +60,8 @@ namespace Vortex
         /// Ragdoll.Deactivate — send it again then). Calling it again with a new point (a moving player) re-plans.</summary>
         public static bool SetDestination(long entity, Vector3 point) { return NavigationService.SetDestination(E(entity), V(point)); }
 
-        /// <summary>Stop the agent (the destination is cleared; it slows to a halt).</summary>
+        /// <summary>Stop the agent (the destination is cleared; it slows to a halt — with Update Position off its
+        /// <see cref="DesiredVelocity"/> runs down to zero).</summary>
         public static void Stop(long entity) { NavigationService.Stop(E(entity)); }
 
         /// <summary>Freeze the agent in place without losing its destination (true) / let it continue (false).</summary>
@@ -96,6 +97,35 @@ namespace Vortex
         /// <summary>The next path corner the agent walks towards — aim the head / flashlight there.</summary>
         public static Vector3 SteeringTarget(long entity) { return V(NavigationService.GetSteeringTarget(E(entity))); }
 
+        /// <summary>The velocity the agent wants this frame (m/s): along its path and around the other agents (local
+        /// avoidance), before its acceleration limit — zero without a path. With Update Position off this is what your code
+        /// moves the entity by (Unity's desiredVelocity):
+        /// <c>_feet = Physics.MoveCharacter(_feet, 0.35f, 1.8f, Navigation.DesiredVelocity(EntityId) * dt, EntityId);</c>
+        /// or pick the walk / run clip from its length when root motion moves the entity.</summary>
+        public static Vector3 DesiredVelocity(long entity) { return V(NavigationService.GetDesiredVelocity(E(entity))); }
+
+        /// <summary>Where the agent's simulation is after this frame's step: its feet on the navmesh (Unity's nextPosition).
+        /// With Update Position on the entity is put there (plus its Base Offset); off, it is where the agent would be.</summary>
+        public static Vector3 NextPosition(long entity) { return V(NavigationService.GetNextPosition(E(entity))); }
+
+        /// <summary>Switch the agent's Update Position at runtime (the component is not changed; play stays non-destructive).
+        /// Off: the agent still plans, follows its path and avoids the other agents, but never moves the entity — a script, root
+        /// motion or a ragdoll does (by <see cref="DesiredVelocity"/>), and every frame the agent follows the entity wherever it
+        /// was moved: along the navmesh with its path kept, or — when the entity went somewhere the navmesh does not lead (a
+        /// teleport, a jump, through a wall) — placed there with its destination kept. <see cref="Warp"/> still moves both.
+        /// <see cref="Stop"/> clears the destination as always.</summary>
+        public static void SetUpdatePosition(long entity, bool updatePosition) { NavigationService.SetUpdatePosition(E(entity), updatePosition); }
+
+        /// <summary>True while the agent moves its entity (its runtime setting, else the component's Update Position).</summary>
+        public static bool GetUpdatePosition(long entity) { return NavigationService.GetUpdatePosition(E(entity)); }
+
+        /// <summary>Switch the agent's Update Rotation at runtime (the component is not changed): on, the entity turns (yaw)
+        /// toward the agent's velocity — with Update Position off too.</summary>
+        public static void SetUpdateRotation(long entity, bool updateRotation) { NavigationService.SetUpdateRotation(E(entity), updateRotation); }
+
+        /// <summary>True while the agent turns its entity (its runtime setting, else the component's Update Rotation).</summary>
+        public static bool GetUpdateRotation(long entity) { return NavigationService.GetUpdateRotation(E(entity)); }
+
         /// <summary>The corners of the agent's remaining path (empty without one).</summary>
         public static Vector3[] GetPath(long entity)
         {
@@ -105,8 +135,9 @@ namespace Vortex
             return result;
         }
 
-        /// <summary>Teleport the agent (its path is cleared). False when the point is not on / near the navmesh, or while the
-        /// agent is a ragdoll (warp it after Ragdoll.Deactivate).</summary>
+        /// <summary>Teleport the agent and its entity (the path is cleared) — with Update Position off too: the one call that
+        /// moves the entity then. False when the point is not on / near the navmesh, or while the agent is a ragdoll (warp it
+        /// after Ragdoll.Deactivate).</summary>
         public static bool Warp(long entity, Vector3 position) { return NavigationService.Warp(E(entity), V(position)); }
 
         /// <summary>Override the agent's speed at runtime (m/s) — walk 1.5 on patrol, run 5 in a chase. Negative = back to the
@@ -183,6 +214,98 @@ namespace Vortex
             bool blocked = NavigationService.Raycast(V(from), V(to), out h, out n);
             hit = V(h);
             return blocked;
+        }
+
+        // ---- dynamic obstacles (#435) ----
+
+        /// <summary>Switch an obstacle on or off for this play session: an entity's Nav Mesh Obstacle (the component is not
+        /// changed; play stays non-destructive) or a script obstacle from <see cref="AddObstacle"/>. A carving obstacle
+        /// blocks or frees its piece of the navmesh at once — no rebuild: shut a door with
+        /// <c>Navigation.SetObstacleEnabled(_door, true)</c> and the agents whose way led through it re-plan.</summary>
+        public static void SetObstacleEnabled(long obstacle, bool enabled)
+        {
+            AiRuntime.EnsureRunning();
+            NavigationService.SetObstacleEnabled(Entity(obstacle), ScriptObstacle(obstacle), enabled);
+        }
+
+        /// <summary>True while the obstacle is on (its runtime switch, else its component and entity).</summary>
+        public static bool IsObstacleEnabled(long obstacle)
+        {
+            return NavigationService.IsObstacleEnabled(Entity(obstacle), ScriptObstacle(obstacle));
+        }
+
+        /// <summary>True when the obstacle is in the navmesh as it stands: carved where it is (the tiles around it rebuilt —
+        /// a few milliseconds after it was added or moved) or, not carving, steered around.</summary>
+        public static bool IsObstacleReady(long obstacle)
+        {
+            return NavigationService.IsObstacleReady(Entity(obstacle), ScriptObstacle(obstacle));
+        }
+
+        /// <summary>An obstacle made by code — rubble that fell, a barricade that was built — without an entity: a box of
+        /// <paramref name="halfExtents"/> turned by <paramref name="rotation"/> (Euler degrees). <paramref name="carve"/>: cut
+        /// out of the navmesh (paths go around it; its tiles are rebuilt in the background — while it is moved it is only
+        /// steered around, see <see cref="MoveObstacle"/>); false: agents only steer around it. Returns its id for
+        /// <see cref="MoveObstacle"/> / <see cref="SetObstacleEnabled"/> / <see cref="RemoveObstacle"/> (0 without a running
+        /// navmesh). It goes when play stops.</summary>
+        public static long AddObstacle(Vector3 center, Vector3 halfExtents, Vector3 rotation = default(Vector3), bool carve = true)
+        {
+            AiRuntime.EnsureRunning();
+            return NavigationService.AddObstacle(S(center), S(halfExtents), Rot(rotation), false, carve);
+        }
+
+        /// <summary>An upright cylinder obstacle (a pillar, a barrel stack) — see <see cref="AddObstacle"/>.</summary>
+        public static long AddCylinderObstacle(Vector3 center, float radius, float height, bool carve = true)
+        {
+            AiRuntime.EnsureRunning();
+            return NavigationService.AddObstacle(S(center), new System.Numerics.Vector3(radius, height * 0.5f, radius), System.Numerics.Quaternion.Identity, true, carve);
+        }
+
+        /// <summary>Move an obstacle from <see cref="AddObstacle"/>. A carving one follows the rules of a Nav Mesh Obstacle with
+        /// Carve Only Stationary: moved more than 0.1 m from where it stood, it is only steered around until it has stood still
+        /// for half a second — then it is carved where it is (its tiles rebuilt). Moving it every frame is fine.</summary>
+        public static bool MoveObstacle(long obstacle, Vector3 center, Vector3 rotation = default(Vector3))
+        {
+            return NavigationService.MoveObstacle(obstacle, S(center), Rot(rotation));
+        }
+
+        /// <summary>Remove an obstacle from <see cref="AddObstacle"/>: its piece of the navmesh opens at once.</summary>
+        public static void RemoveObstacle(long obstacle) { NavigationService.RemoveObstacle(obstacle); }
+
+        /// <summary>Re-bake the navmesh inside a box from the scene as it is now — after a wall was blown away (destroy or
+        /// deactivate its entity first). The scene geometry is gathered again over the next frames (a few milliseconds each;
+        /// call it once per event, not every frame), then the tiles over the box are rebuilt in the background. False without
+        /// a running navmesh.</summary>
+        public static bool Rebake(Vector3 center, Vector3 halfExtents)
+        {
+            AiRuntime.EnsureRunning();
+            return NavigationService.Rebake(S(center), S(halfExtents));
+        }
+
+        /// <summary>Navmesh tiles still being rebuilt (obstacles that just appeared or moved, <see cref="Rebake"/>).</summary>
+        public static int PendingRebuilds => NavigationService.PendingRebuilds;
+
+        /// <summary>Milliseconds per frame the game thread may spend putting rebuilt tiles into the navmesh (default 2; one
+        /// tile a frame at least — the building itself runs on a worker thread).</summary>
+        public static float RebuildBudgetMs
+        {
+            get { return NavigationService.RebuildBudgetMs; }
+            set { NavigationService.RebuildBudgetMs = value; }
+        }
+
+        private static Editor.ECS.GameEntity Entity(long obstacle)
+        {
+            return obstacle > 0 && obstacle < NavigationService.ScriptObstacleBase ? ScriptRuntime.Instance.FindEntityByHandle(obstacle) : null;
+        }
+
+        private static long ScriptObstacle(long obstacle) { return obstacle >= NavigationService.ScriptObstacleBase ? obstacle : 0; }
+
+        private static System.Numerics.Vector3 S(Vector3 v) { return new System.Numerics.Vector3(v.X, v.Y, v.Z); }
+
+        /// <summary>Engine Euler degrees (an entity's Rotation) as a quaternion.</summary>
+        private static System.Numerics.Quaternion Rot(Vector3 euler)
+        {
+            return System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromRotationMatrix(
+                Editor.Core.Animation.BoneSocketService.EulerZXY(new System.Numerics.Vector3(euler.X, euler.Y, euler.Z))));
         }
 
         /// <summary>Draw the navmesh + the agents' paths over the game (debug).</summary>
@@ -326,7 +449,11 @@ namespace Vortex
         /// <summary>Hide a target from every agent (the player climbs into a locker) / reveal it again.</summary>
         public static void SetHidden(long target, bool hidden) { PerceptionService.SetHidden(E(target), hidden); }
 
-        /// <summary>The height the sight rays aim at on a target: 1.7 standing (default), ~1.0 crouched.</summary>
+        /// <summary>How tall <paramref name="target"/> is for the sight rays, in metres above its FEET — they aim at 25, 60 and
+        /// 95 % of it (knees, chest, head). Its feet are the bottom of the capsule of the character it moves (Physics.MoveCharacter
+        /// with its EntityId, or its Nav Agent), else its position. Without this call a character target is as tall as its
+        /// capsule — a crouch that moves a shorter capsule is aimed lower by itself — and any other target 1.7. Call it for a
+        /// pose the capsule does not show (lying prone: 0.5), not to correct the camera height of a first-person player.</summary>
         public static void SetTargetHeight(long target, float height) { PerceptionService.SetTargetHeight(E(target), height); }
 
         /// <summary>Let an agent also look for <paramref name="target"/> (besides its Target Tag).</summary>

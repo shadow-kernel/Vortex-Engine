@@ -33,7 +33,10 @@ namespace Editor.Core.Services.AI
     /// per-agent memory of the last seen / heard position. Sight = inside the vision cone (or the proximity radius) and
     /// within the view distance, confirmed by line-of-sight raycasts (the Jolt world when it is built, else the static
     /// collision world) to three points on the target (feet + 25 / 60 / 95 % of its height) — hiding behind a crate,
-    /// crouched, breaks it. Checks run every <see cref="AIPerception.UpdateInterval"/> seconds, staggered across agents.
+    /// crouched, breaks it. A target that moves a character capsule (Physics.MoveCharacter with its EntityId, a Nav
+    /// Agent) stands on the capsule's feet and is as tall as the capsule: a first-person player's entity is its camera, at
+    /// eye height, and aiming above it saw the player over walls up to ~2.6 m. Other targets stand on their position and
+    /// are 1.7 m tall. Checks run every <see cref="AIPerception.UpdateInterval"/> seconds, staggered across agents.
     /// Hearing = <see cref="MakeNoise"/>: heard when the loudness reaches the agent's threshold and the distance is within
     /// hearing range × loudness (halved when geometry is in between). Lifecycle owned by <see cref="AiRuntime"/>.
     /// </summary>
@@ -150,7 +153,7 @@ namespace Editor.Core.Services.AI
 
         private static void Remember(Agent a, GameEntity t)
         {
-            var p = Animation.BoneSocketService.EntityWorld(t).Translation;
+            TargetBody(t, out var p, out _);   // where it stands: a character's feet, not its camera
             a.HasSeen = true;
             a.LastSeenPosition = new Vector3(p.X, p.Y, p.Z);
             a.LastSeenTime = _time;
@@ -173,8 +176,7 @@ namespace Editor.Core.Services.AI
         private static bool CheckVisible(Agent a, SysVec eye, SysVec forward, GameEntity target, out SysVec seenPoint)
         {
             var s = a.Sensor;
-            var feet = Animation.BoneSocketService.EntityWorld(target).Translation;
-            float h = _targetHeights.TryGetValue(target, out var th) ? th : DefaultTargetHeight;
+            TargetBody(target, out var feet, out float h);
             float cosHalf = (float)Math.Cos(Math.Min(180f, s.FieldOfView * 0.5f) * Math.PI / 180.0);
             seenPoint = feet;
             foreach (var f in SampleFractions)
@@ -192,6 +194,24 @@ namespace Editor.Core.Services.AI
                 if (HasLineOfSight(ToEcs(eye), ToEcs(p), a.Entity, target)) { seenPoint = p; return true; }
             }
             return false;
+        }
+
+        /// <summary>Where a target stands and how tall it is for the sight rays: the capsule of the character it moves when
+        /// it moves one — its feet and its height (a crouched capsule is shorter) — else its position and
+        /// <see cref="DefaultTargetHeight"/>. <see cref="SetTargetHeight"/> replaces the height, measured from those feet.</summary>
+        internal static void TargetBody(GameEntity target, out SysVec feet, out float height)
+        {
+            if (CollisionService.TryGetCharacterOf(target, out var f, out _, out var h) && h > 0.01f)
+            {
+                feet = new SysVec(f.X, f.Y, f.Z);
+                height = h;
+            }
+            else
+            {
+                feet = Animation.BoneSocketService.EntityWorld(target).Translation;
+                height = DefaultTargetHeight;
+            }
+            if (_targetHeights.TryGetValue(target, out var th)) height = th;
         }
 
         private static void GetEye(Agent a, out SysVec eye, out SysVec forward)
@@ -353,7 +373,9 @@ namespace Editor.Core.Services.AI
 
         public static bool IsHidden(GameEntity target) => target != null && _hidden.Contains(target);
 
-        /// <summary>The height (m) the sight rays aim at on a target: 1.7 standing, ~1.0 crouched.</summary>
+        /// <summary>The target's height (m) above its feet for the sight rays (25 / 60 / 95 % of it): 1.7 standing, ~1.0
+        /// crouched. Its feet are the bottom of the capsule of the character it moves, else its position; without this call
+        /// the height is that capsule's, else 1.7.</summary>
         public static void SetTargetHeight(GameEntity target, float height)
         {
             if (target == null) return;

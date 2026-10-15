@@ -41,6 +41,22 @@ static_assert(offsetof(PhysicsContact, impulse) == offsetof(phys::contact_event,
 static_assert(offsetof(PhysicsContact, kind) == offsetof(phys::contact_event, kind));
 static_assert(offsetof(PhysicsContact, isTrigger) == offsetof(phys::contact_event, is_trigger));
 
+// One hit of PhysicsRaycastAll / PhysicsShapeCast (#480).
+typedef struct PhysicsHit {
+	float point[3]; float normal[3];   // the normal faces the query (against the cast direction)
+	float distance;                    // from the query's origin; 0 = it starts on / in the body
+	uint32_t body;                     // 0 = a character capsule (entity = (1 << 63) | character handle)
+	uint64_t entity;
+} PhysicsHit;
+
+// PhysicsRaycastAll / PhysicsShapeCast hand the engine's hits out through a reinterpret_cast, so the two layouts must agree.
+static_assert(std::is_standard_layout_v<PhysicsHit> && std::is_standard_layout_v<phys::query_hit>);
+static_assert(sizeof(PhysicsHit) == sizeof(phys::query_hit) && sizeof(PhysicsHit) == 40, "PhysicsHit / query_hit layout drift");
+static_assert(offsetof(PhysicsHit, normal) == offsetof(phys::query_hit, normal));
+static_assert(offsetof(PhysicsHit, distance) == offsetof(phys::query_hit, distance));
+static_assert(offsetof(PhysicsHit, body) == offsetof(phys::query_hit, body));
+static_assert(offsetof(PhysicsHit, entity) == offsetof(phys::query_hit, entity));
+
 // ---- World ----
 
 EDITOR_INTERFACE int32_t PhysicsInit(void)                 { return phys::init() ? 1 : 0; }   // 1 = Jolt world ready, 0 = stub / no physics
@@ -143,6 +159,37 @@ EDITOR_INTERFACE int32_t PhysicsOverlapPoint(const float* point, uint32_t layerM
 	uint64_t* outEntities, uint32_t* outBodies, int32_t maxCount)
 {
 	return phys::overlap_point(point, layerMask, outEntities, outBodies, maxCount);
+}
+
+// #480: every body along the ray, the first hit on each, sorted by distance (PhysicsRaycastEx's rules and ignore lists).
+// Returns the count written.
+EDITOR_INTERFACE int32_t PhysicsRaycastAll(const float* origin, const float* dir /*unit*/, float maxDist, uint32_t layerMask,
+	const uint32_t* ignoreBodies, int32_t ignoreBodyCount, const uint32_t* ignoreCharacters, int32_t ignoreCharacterCount,
+	PhysicsHit* outHits, int32_t maxHits)
+{
+	return phys::raycast_all(origin, dir, maxDist, layerMask, ignoreBodies, ignoreBodyCount, ignoreCharacters, ignoreCharacterCount,
+		reinterpret_cast<phys::query_hit*>(outHits), maxHits);
+}
+
+// #480: sweep a sphere (shape 1, dims radius), capsule (2, dims radius + half height of the cylinder part, local Y) or box
+// (0, dims half extents) from pos / quat along dir for maxDist. all = 0: the first hit only; 1: the first hit on each body,
+// sorted. A body the shape overlaps at the start is hit at distance 0 when the sweep moves deeper into it, not when it moves
+// out. Returns the count written.
+EDITOR_INTERFACE int32_t PhysicsShapeCast(int32_t shapeType, const float* dims, const float* pos, const float* quat, const float* dir,
+	float maxDist, uint32_t layerMask, const uint32_t* ignoreBodies, int32_t ignoreBodyCount, const uint32_t* ignoreCharacters,
+	int32_t ignoreCharacterCount, int32_t all, PhysicsHit* outHits, int32_t maxHits)
+{
+	return phys::shape_cast(shapeType, dims, pos, quat, dir, maxDist, layerMask, ignoreBodies, ignoreBodyCount, ignoreCharacters,
+		ignoreCharacterCount, all != 0, reinterpret_cast<phys::query_hit*>(outHits), maxHits);
+}
+
+// #480: every body the shape (as for PhysicsShapeCast) overlaps or touches, one entry per body; returns the count written.
+EDITOR_INTERFACE int32_t PhysicsOverlapShape(int32_t shapeType, const float* dims, const float* pos, const float* quat, uint32_t layerMask,
+	const uint32_t* ignoreBodies, int32_t ignoreBodyCount, const uint32_t* ignoreCharacters, int32_t ignoreCharacterCount,
+	uint64_t* outEntities, uint32_t* outBodies, int32_t maxCount)
+{
+	return phys::overlap_shape(shapeType, dims, pos, quat, layerMask, ignoreBodies, ignoreBodyCount, ignoreCharacters, ignoreCharacterCount,
+		outEntities, outBodies, maxCount);
 }
 
 // Returns the count written and drains those events from the queue.

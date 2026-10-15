@@ -92,14 +92,15 @@ namespace Vortex.Tasks
         public override string Description { get { return "Clears a blackboard value"; } }
     }
 
-    /// <summary>Condition: the agent is within <c>distance</c> of <c>target</c> (a blackboard key holding a position or an entity).</summary>
+    /// <summary>Condition: the agent is within <c>distance</c> of <c>target</c> (a blackboard key holding a position or an
+    /// entity). An entity that moves a character is where its capsule's feet are (a first-person player's entity is its camera).</summary>
     public sealed class IsNear : BtTask
     {
         public override BtStatus OnTick(float dt)
         {
             Vector3 p;
             if (!Targets.Resolve(Blackboard, Param("target", "Target"), out p)) return BtStatus.Failure;
-            var me = Scene.WorldPositionOf(Agent);
+            var me = Targets.Feet(Agent);
             float d = ParamFloat("distance", 1.5f);
             float dx = p.X - me.X, dy = p.Y - me.Y, dz = p.Z - me.Z;
             return dx * dx + dy * dy + dz * dz <= d * d ? BtStatus.Success : BtStatus.Failure;
@@ -113,7 +114,8 @@ namespace Vortex.Tasks
     }
 
     /// <summary>Walks the Nav Agent to <c>target</c> (a blackboard key holding a position or an entity; a moving entity is
-    /// followed). Success on arrival, Failure when there is no agent / no path.</summary>
+    /// followed — where its character's feet are when it moves one, so a first-person player is walked to, not its camera).
+    /// Success on arrival, Failure when there is no agent / no path.</summary>
     public sealed class MoveTo : BtTask
     {
         private Vector3 _sent;
@@ -144,7 +146,7 @@ namespace Vortex.Tasks
             float acceptance = ParamFloat("acceptance", 0f);
             if (acceptance > 0f)
             {
-                var me = Scene.WorldPositionOf(Agent);
+                var me = Targets.Feet(Agent);
                 if (Dist2(me, p) <= acceptance * acceptance) return BtStatus.Success;
             }
             return Navigation.HasArrived(Agent) ? BtStatus.Success : BtStatus.Running;
@@ -326,12 +328,21 @@ namespace Vortex.Tasks
             object v = bb.Get(key);
             if (v == null) return false;
             if (v is Vector3) { position = (Vector3)v; return true; }
-            if (v is long) { long h = (long)v; if (h == 0) return false; position = Scene.WorldPositionOf(h); return true; }
-            if (v is int) { position = Scene.WorldPositionOf((int)v); return true; }
+            if (v is long) { long h = (long)v; if (h == 0) return false; position = Feet(h); return true; }
+            if (v is int) { position = Feet((int)v); return true; }
             object parsed;
             if (Blackboard.TryConvert(v, typeof(Vector3), out parsed)) { position = (Vector3)parsed; return true; }
-            if (Blackboard.TryConvert(v, typeof(long), out parsed) && (long)parsed != 0) { position = Scene.WorldPositionOf((long)parsed); return true; }
+            if (Blackboard.TryConvert(v, typeof(long), out parsed) && (long)parsed != 0) { position = Feet((long)parsed); return true; }
             return false;
+        }
+
+        /// <summary>Where an entity stands: the feet of the character capsule it moves, else its position (#518 made a
+        /// capsule's entity known; a first-person player's entity is its camera, 1.6 m above the ground).</summary>
+        public static Vector3 Feet(long entity)
+        {
+            Vector3 feet; float r, h;
+            Physics.CharacterCapsule(entity, out feet, out r, out h);
+            return feet;
         }
 
         public static long Entity(Blackboard bb, string key, long fallback)

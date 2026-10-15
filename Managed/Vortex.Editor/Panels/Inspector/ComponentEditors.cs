@@ -54,6 +54,7 @@ namespace VortexEditor.Panels.Inspector
                 case Editor.ECS.Components.AI.BehaviorTreeAgent _: return ("Flow", "VxTealBrush");
                 case Editor.ECS.Components.AI.AIPerception _: return ("Eye", "VxTealBrush");
                 case Editor.ECS.Components.AI.PatrolPath _: return ("Link", "VxTealBrush");
+                case Editor.ECS.Components.AI.NavMeshObstacle _: return ("Collider", "VxTealBrush");
                 case Editor.ECS.Components.Rendering.ParticleSystem _: return ("Sparkle", "VxOrangeBrush");
                 case Editor.ECS.Components.Rendering.Decal _: return ("Image", "VxPinkBrush");
                 case Editor.ECS.Components.Rendering.Terrain _: return ("World", "VxGreenBrush");

@@ -21,7 +21,7 @@ namespace Editor.Core.Services.Physics
     /// (Primitive:Cube/Plane/…) collides as its exact analytic shape; an imported model collides against its real
     /// triangles (via <see cref="MeshTriangleProvider"/>), so collision matches what's rendered — not a bounding box.
     /// </summary>
-    public static class CollisionService
+    public static partial class CollisionService
     {
         // ---- tiny math (kept local so it doesn't depend on Vector3 having operators) ----
         private struct V3
@@ -84,9 +84,11 @@ namespace Editor.Core.Services.Physics
                 return Grid.QueryRay(Rot.Inverse(o - Origin), Rot.Inverse(dir), maxDist, out count);
             }
 
-            public int[] QueryBox(V3 qmin, V3 qmax, out int count)
+            /// <summary>Triangles in the cells of the world box; <paramref name="fresh"/> false continues the previous query
+            /// (only triangles it did not return yet — a sweep walked in pieces).</summary>
+            public int[] QueryBox(V3 qmin, V3 qmax, out int count, bool fresh = true)
             {
-                if (LocalTris == null) return Grid.QueryBox(qmin, qmax, out count);
+                if (LocalTris == null) return Grid.QueryBox(qmin, qmax, out count, fresh);
                 // the world box rotated into local space: the AABB of its corners (conservative)
                 var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
                 for (int i = 0; i < 8; i++)
@@ -96,7 +98,7 @@ namespace Editor.Core.Services.Physics
                     mn = new V3(Math.Min(mn.X, l.X), Math.Min(mn.Y, l.Y), Math.Min(mn.Z, l.Z));
                     mx = new V3(Math.Max(mx.X, l.X), Math.Max(mx.Y, l.Y), Math.Max(mx.Z, l.Z));
                 }
-                return Grid.QueryBox(mn, mx, out count);
+                return Grid.QueryBox(mn, mx, out count, fresh);
             }
         }
 
@@ -119,6 +121,9 @@ namespace Editor.Core.Services.Physics
             private int[] _buf = new int[64]; private int _n;  // reusable candidate buffer
 
             private TriGrid(int triCount) { _stamp = new int[triCount]; }
+
+            /// <summary>The edge of a cell (m, in the grid's space).</summary>
+            public float Cell => _cell;
 
             public static TriGrid Build(V3[] tris, V3 mn, V3 mx)
             {
@@ -184,10 +189,11 @@ namespace Editor.Core.Services.Physics
                 _buf[_n++] = tri;
             }
 
-            /// <summary>Triangle indices whose cells overlap the box [qmin,qmax]. Returns the shared buffer; read [0,count).</summary>
-            public int[] QueryBox(V3 qmin, V3 qmax, out int count)
+            /// <summary>Triangle indices whose cells overlap the box [qmin,qmax]. Returns the shared buffer; read [0,count).
+            /// <paramref name="fresh"/> false: only triangles the previous queries since the last fresh one did not return.</summary>
+            public int[] QueryBox(V3 qmin, V3 qmax, out int count, bool fresh = true)
             {
-                Begin();
+                if (fresh) Begin(); else _n = 0;
                 int x0 = Cx(qmin.X), x1 = Cx(qmax.X), y0 = Cy(qmin.Y), y1 = Cy(qmax.Y), z0 = Cz(qmin.Z), z1 = Cz(qmax.Z);
                 for (int z = z0; z <= z1; z++) for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++)
                 {
@@ -344,8 +350,9 @@ namespace Editor.Core.Services.Physics
         // collide against it — you can't walk through another player's character. Keyed by a caller id (e.g. entity id).
         // Owner (#417) = the entity the character moves, when the caller knows it (a script passing its own EntityId):
         // its own colliders never block or touch the character, and it goes with that entity (#407).
-        private struct CharCap { public V3 Feet; public float R, H; public GameEntity Owner; }
+        private struct CharCap { public V3 Feet; public float R, H; public GameEntity Owner; public long Seq; public long Stamp; }
         private static readonly Dictionary<long, CharCap> _chars = new Dictionary<long, CharCap>();
+        private static long _charSeq;   // stamps every registration: the latest capsule of an owner wins (TryGetCharacterOf)
         /// <summary>Drop a character's capsule (#407: PhysicsService.RemoveCharacter also drops its Jolt character). True
         /// when one was registered under the id; its next MoveCharacter registers it again.</summary>
         public static bool RemoveCharacter(long id) => _chars.Remove(id);
@@ -358,6 +365,40 @@ namespace Editor.Core.Services.Physics
         }
         /// <summary>Is a character capsule registered under the id?</summary>
         public static bool HasCharacter(long id) => _chars.ContainsKey(id);
+        /// <summary>The character capsule <paramref name="owner"/> moves — with either controller (#406 names its owner): the
+        /// feet (the bottom of the capsule), radius and total height of the one it moved last. False when it moves none (or
+        /// is switched off / limp: its capsule is gone), and when that capsule is not its body any more: not moved for
+        /// <see cref="CharacterFreshSeconds"/> (the owner got into a car, a cutscene or a ladder script took over) or away from
+        /// the entity (it was teleported by its Position) — then the entity's own position is where it is. For an entity whose
+        /// position is not where it stands: a first-person player's entity is its camera, at eye height — the AI aims its
+        /// sight at the capsule and walks to its feet.</summary>
+        public static bool TryGetCharacterOf(GameEntity owner, out Vector3 feet, out float radius, out float height)
+        {
+            feet = default(Vector3); radius = 0f; height = 0f;
+            if (owner == null || _chars.Count == 0) return false;
+            long seq = -1;
+            CharCap best = default(CharCap);
+            foreach (var c in _chars.Values)
+            {
+                if (!ReferenceEquals(c.Owner, owner) || c.Seq <= seq) continue;
+                seq = c.Seq; best = c;
+            }
+            if (seq < 0) return false;
+            if (Now() - best.Stamp > (long)(CharacterFreshSeconds * System.Diagnostics.Stopwatch.Frequency)) return false;
+            // the entity: on the capsule's axis (a camera at eye height, a pivot at the feet or in the middle) — within a metre
+            // and a half of it, not further below its feet or above its head
+            var at = Editor.Core.Animation.BoneSocketService.EntityWorld(owner).Translation;
+            float dx = at.X - best.Feet.X, dz = at.Z - best.Feet.Z;
+            float reach = Math.Max(1.5f, best.R + 1f);
+            if (dx * dx + dz * dz > reach * reach || at.Y < best.Feet.Y - 1.5f || at.Y > best.Feet.Y + best.H + 1.5f) return false;
+            feet = To(best.Feet); radius = best.R; height = best.H;
+            return true;
+        }
+
+        /// <summary>How long a character capsule stays its owner's body after the owner last moved it (s).</summary>
+        public const float CharacterFreshSeconds = 0.25f;
+
+        private static long Now() => System.Diagnostics.Stopwatch.GetTimestamp();
         /// <summary>#406: the owner the character <paramref name="id"/> is registered with (null = none, or anonymous). A move
         /// that names no owner keeps it — a capsule does not lose its entity because another script's code moved it.</summary>
         public static GameEntity KnownOwner(long id) => id != 0 && _chars.TryGetValue(id, out var c) ? c.Owner : null;
@@ -370,7 +411,7 @@ namespace Editor.Core.Services.Physics
             if (id == 0) return;
             owner ??= KnownOwner(id);
             if (!MayRegister(owner)) return;
-            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height, Owner = owner };
+            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height, Owner = owner, Seq = ++_charSeq, Stamp = Now() };
         }
         public static void ClearCharacters() { _chars.Clear(); }
 
@@ -600,9 +641,10 @@ namespace Editor.Core.Services.Physics
         /// contains the origin is not hit; a mesh collider is a surface and is hit from either side (normal flipped
         /// towards the origin). An origin ON a surface (within <see cref="RaySurfaceSkin"/> of it) pointing into it hits it
         /// at distance 0; pointing away it does not, for meshes too. <paramref name="ignore"/> and everything under it are
-        /// never hit (#406 / #418) — a ray that starts deep inside the caller's own collider passes through it.</summary>
+        /// never hit (#406 / #418) — a ray that starts deep inside the caller's own collider passes through it.
+        /// <paramref name="triggers"/> (#480): trigger colliders count as well, under the same rules.</summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask,
-            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist, GameEntity ignore = null)
+            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist, GameEntity ignore = null, bool triggers = false)
         {
             hitPoint = origin; hitNormal = new Vector3(0, 1, 0); hitEntity = null; hitDist = 0f;
             V3 d = From(direction).Norm();
@@ -614,27 +656,16 @@ namespace Editor.Core.Services.Physics
             // a surface exactly maxDist away still counts (Jolt's fraction 1 does): a hair of slack, the distance clamped
             float reach = maxDist + RaySurfaceSkin;
             float bestT = reach + reach * 1e-6f + 1e-6f; Shape best = null; V3 bestN = new V3(0, 1, 0);
-            for (int list = 0; list < 2; list++)
+            for (int list = 0; list < (triggers ? 3 : 2); list++)
             {
-                var shapes = list == 0 ? _world : _dynamic;   // static level + the simulated rigid bodies
+                var shapes = list == 0 ? _world : list == 1 ? _dynamic : _triggers;   // static level + the simulated rigid bodies (+ triggers, #480)
                 foreach (var s in shapes)
                 {
                     if (s == null) continue;
                     if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
-                    float t; V3 n;
-                    bool got;
-                    if (s.Kind == Kind.Tris && s.Tris != null)
-                    {
-                        // the ray must enter the mesh's box before any triangle is worth testing (#362)
-                        if (!RayTouchesAabb(o, d, s.Min, s.Max, bestT)) continue;
-                        got = RayTris(o, d, s, bestT, out t, out n, 2f * RaySurfaceSkin);
-                    }
-                    else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
-                    else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
-                    else got = RayCapsule(o, d, s.A, s.B, s.Radius, bestT, out t, out n);
                     // the ignored subtree is asked only about a hit that would be the closest (#406: after the shape test —
                     // a parent walk per shape cost a third of the cast)
-                    if (!got || t >= bestT || (ignore != null && IsUnder(s.Owner, ignore))) continue;
+                    if (!RayShape(o, d, s, bestT, out float t, out V3 n) || t >= bestT || (ignore != null && IsUnder(s.Owner, ignore))) continue;
                     bestT = t; best = s; bestN = n;
                 }
             }
@@ -650,6 +681,23 @@ namespace Editor.Core.Services.Physics
         /// <summary>How far behind its origin <see cref="Raycast"/> starts (1 mm, the Jolt cast's skin too): a ray that
         /// starts on a surface still hits it.</summary>
         public const float RaySurfaceSkin = 0.001f;
+
+        /// <summary>One shape against a ray that already starts <see cref="RaySurfaceSkin"/> behind its origin (Raycast,
+        /// RaycastAll): the entry hit of a box, sphere or capsule (none from inside), the first triangle of a mesh from
+        /// either side — except the surface the origin lies on, seen from behind.</summary>
+        private static bool RayShape(V3 o, V3 d, Shape s, float maxT, out float t, out V3 n)
+        {
+            t = 0f; n = new V3(0, 1, 0);
+            if (s.Kind == Kind.Tris)
+            {
+                // the ray must enter the mesh's box before any triangle is worth testing (#362)
+                if (s.Tris == null || !RayTouchesAabb(o, d, s.Min, s.Max, maxT)) return false;
+                return RayTris(o, d, s, maxT, out t, out n, 2f * RaySurfaceSkin);
+            }
+            if (s.Kind == Kind.Box) return RayObb(o, d, s, maxT, out t, out n);
+            if (s.Kind == Kind.Sphere) return RaySphere(o, d, s.Center, s.Radius, maxT, out t, out n);
+            return RayCapsule(o, d, s.A, s.B, s.Radius, maxT, out t, out n);
+        }
 
         /// <summary>#418: every entity whose solid collider contains <paramref name="point"/> — the collision world's answer
         /// to Physics.OverlapPoint when no Jolt world runs, with the Jolt query's contract: boxes, spheres and capsules
@@ -1336,7 +1384,7 @@ namespace Editor.Core.Services.Physics
             if (!IsBuilt || (_world.Count == 0 && _chars.Count == 0 && _dynamic.Count == 0))
             {
                 var np = new Vector3(feet.X + displacement.X, feet.Y + displacement.Y, feet.Z + displacement.Z);
-                if (register) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height, Owner = owner };
+                if (register) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height, Owner = owner, Seq = ++_charSeq, Stamp = Now() };
                 return np;
             }
             if (maxSlopeDeg < 10f) maxSlopeDeg = 10f; else if (maxSlopeDeg > 85f) maxSlopeDeg = 85f;
@@ -1438,7 +1486,7 @@ namespace Editor.Core.Services.Physics
 
             grounded = g;
             _curOwner = null;
-            if (register) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height, Owner = owner };
+            if (register) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height, Owner = owner, Seq = ++_charSeq, Stamp = Now() };
             return To(p);
         }
 

@@ -99,6 +99,162 @@ namespace VortexTests
             finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
         }
 
+        // ---- #480: shape casts, all-hit rays, shape overlaps — the checks of PhysicsQueryTests on the Jolt world ----
+
+        private static void OnTheJoltWorld(TestContext t, Action<TestContext, PhysicsQueryTests.Path, Dictionary<string, GameEntity>> check)
+        {
+            if (!Jolt()) return;
+            var scene = PhysicsQueryTests.QueryScene(out var e);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = PhysicsRaycastTests.RoomProvider;
+            try
+            {
+                BuildWorlds(scene);
+                t.True(PhysicsService.IsBuilt, "(the Jolt world is up)");
+                check(t, new PhysicsQueryTests.Path(false), e);
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        [Test] public static void SphereCastCatchesTheGapOnJolt(TestContext t) => OnTheJoltWorld(t, PhysicsQueryTests.SphereCastCatchesTheGap);
+        [Test] public static void RaycastAllReportsEveryColliderOnJolt(TestContext t) => OnTheJoltWorld(t, PhysicsQueryTests.RaycastAllReportsEveryColliderInOrder);
+        [Test] public static void SweepsThatStartInContactOnJolt(TestContext t) => OnTheJoltWorld(t, PhysicsQueryTests.SweepsThatStartInContact);
+        [Test] public static void CapsuleAndBoxCastsOnJolt(TestContext t) => OnTheJoltWorld(t, PhysicsQueryTests.CapsuleAndBoxCasts);
+        [Test] public static void SweepsAndMeshesOnJolt(TestContext t) => OnTheJoltWorld(t, PhysicsQueryTests.SweepsAndMeshes);
+        [Test] public static void OverlapsFindWhatTouchesOnJolt(TestContext t) => OnTheJoltWorld(t, PhysicsQueryTests.OverlapsFindWhatTouches);
+        [Test] public static void SweepsFilterAndCollectOnJolt(TestContext t) => OnTheJoltWorld(t, PhysicsQueryTests.SweepsFilterAndCollect);
+
+        /// <summary>#480: the two paths agree sweep for sweep — spheres, capsules and boxes cast over a grid of starts across
+        /// the whole test level (the crate, the posts, the glass / guard / wall row, the mesh room, the floor): the same hit
+        /// or none, the same entity, the same distance within 2 cm, normals facing back. Starts that already overlap
+        /// something are left to SweepsThatStartInContact: there the in / out decision of a sweep that runs along the face it
+        /// overlaps is a matter of the margin, not of agreement.</summary>
+        [Test]
+        public static void ShapeCastsAgreeOnBothPaths(TestContext t)
+        {
+            if (!Jolt()) return;
+            var scene = PhysicsQueryTests.QueryScene(out var e);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = PhysicsRaycastTests.RoomProvider;
+            try
+            {
+                BuildWorlds(scene);
+                var jolt = new PhysicsQueryTests.Path(false);
+                var managed = new PhysicsQueryTests.Path(true);
+                var turn = System.Numerics.Quaternion.CreateFromYawPitchRoll(0.4f, 0.2f, 0.1f);
+                var dirs = new[] { new Vector3(0, 0, 1), new Vector3(1, 0, 0), new Vector3(0, -1, 0), new Vector3(0.6f, -0.3f, 0.74f) };
+                int compared = 0, hits = 0;
+                for (int ix = 0; ix < 12; ix++)
+                    for (int iz = -2; iz <= 2; iz++)
+                        foreach (var d in dirs)
+                        {
+                            var o = new Vector3(-1.37f + 4.43f * ix, 1.13f + 0.3f * (iz & 1), 1.71f * iz + 0.07f);
+                            foreach (var q in new[]
+                            {
+                                QueryShape.Sphere(o, 0.3f),
+                                QueryShape.Capsule(new Vector3(o.X, o.Y - 0.4f, o.Z), new Vector3(o.X + 0.2f, o.Y + 0.4f, o.Z), 0.25f),
+                                QueryShape.Box(o, new Vector3(0.3f, 0.2f, 0.4f), turn),
+                            })
+                            {
+                                if (managed.Check(q) || jolt.Check(q)) continue;   // starts in contact: SweepsThatStartInContact
+                                bool j = jolt.Cast(q, d, 12f, out var jh);
+                                bool m = managed.Cast(q, d, 12f, out var mh);
+                                compared++;
+                                string what = "a " + (q.Type == 0 ? "box" : q.Type == 1 ? "sphere" : "capsule") + " from " + o + " along " + d;
+                                t.Equal(j, m, what + ": both hit or both miss (Jolt " + jh.Entity?.Name + " at " + jh.Distance + ", managed " + mh.Entity?.Name + " at " + mh.Distance + ")");
+                                if (!j || !m) continue;
+                                hits++;
+                                t.True(jh.Entity == mh.Entity && Math.Abs(jh.Distance - mh.Distance) < PhysicsQueryTests.Tol,
+                                       what + ": the same entity at the same distance (Jolt " + jh.Entity?.Name + " at " + jh.Distance + ", managed " + mh.Entity?.Name + " at " + mh.Distance + ")");
+                                t.True(Dot(jh.Normal, d) <= 1e-3f && Dot(mh.Normal, d) <= 1e-3f, what + ": both normals face back (" + jh.Normal + " / " + mh.Normal + ")");
+                            }
+                        }
+                Console.WriteLine("        " + compared + " sweeps compared, " + hits + " hits");
+                t.True(hits > 150, "most sweeps hit something (" + hits + " of " + compared + ")");
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        /// <summary>#480 with the "jolt" controller: a sweep, an all-hit ray and an overlap report a character capsule as the
+        /// entity that moves it, and ignoring that entity passes through its capsule — also from inside it.</summary>
+        [Test]
+        public static void ShapeQueriesSeeJoltCharacters(TestContext t)
+        {
+            if (!Jolt()) return;
+            var s = new Scene { Name = "Characters" };
+            PhysicsRaycastTests.Add(s, null, "Floor", new Vector3(0, -0.5f, 0), x => x.AddComponentDirect(new BoxCollider(x) { Size = new Vector3(40f, 1f, 40f) }));
+            var a = PhysicsRaycastTests.Add(s, null, "GuardA", new Vector3(0, 0, 0), null);
+            var b = PhysicsRaycastTests.Add(s, null, "GuardB", new Vector3(0, 0, 6f), null);
+            var wall = PhysicsRaycastTests.Add(s, null, "Wall", new Vector3(0, 1.5f, 10f), x => x.AddComponentDirect(new BoxCollider(x) { Size = new Vector3(4f, 3f, 0.5f) }));
+            PhysicsRaycastTests.AsLoaded(s);
+            try
+            {
+                BuildWorlds(s);
+                PhysicsService.JoltCharacters = true;
+                var down = new Vector3(0, -0.05f, 0);
+                PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 0), 0.35f, 1.8f, down, PhysicsService.FixedStep, out _, 21, 0.35f, 50f, a);
+                PhysicsService.MoveCharacterJolt(new Vector3(0, 0, 6f), 0.35f, 1.8f, down, PhysicsService.FixedStep, out _, 22, 0.35f, 50f, b);
+                PhysicsService.Step(PhysicsService.FixedStep);
+                var fwd = new Vector3(0, 0, 1);
+                var ball = QueryShape.Sphere(new Vector3(0, 1f, 0f), 0.2f);   // inside A's capsule
+                t.True(PhysicsService.ShapeCast(ball, fwd, 20f, out var h, PhysicsService.SolidLayerMask, a) && h.Entity == b && Math.Abs(h.Distance - (6f - 0.35f - 0.2f)) < 0.03f,
+                       "a sweep from inside A, ignoring A, meets B and reports B (" + h.Entity?.Name + " at " + h.Distance + ")");
+                var all = new List<PhysicsQueryHit>();
+                PhysicsService.RaycastAll(new Vector3(0, 1f, -3f), fwd, 20f, all);
+                t.True(all.Count == 3 && all[0].Entity == a && all[1].Entity == b && all[2].Entity == wall,
+                       "RaycastAll from behind: A, B, the wall (" + string.Join(", ", all.ConvertAll(x => x.Entity?.Name + "@" + x.Distance)) + ")");
+                var near = PhysicsService.OverlapShape(QueryShape.Capsule(new Vector3(-1f, 1f, 6f), new Vector3(1f, 1f, 6f), 0.1f));
+                t.True(near.Count == 1 && near[0] == b, "an overlap across B's capsule reports B (" + string.Join(", ", near.ConvertAll(x => x.Name)) + ")");
+                t.True(PhysicsService.CheckShape(QueryShape.Sphere(new Vector3(0, 1f, 6f), 0.1f)), "CheckShape inside B's capsule");
+                t.False(PhysicsService.CheckShape(QueryShape.Sphere(new Vector3(0, 1f, 6f), 0.1f), PhysicsService.SolidLayerMask, b), "… not when ignoring B");
+            }
+            finally { ClearWorlds(); }
+        }
+
+        /// <summary>#480's performance check: 1,000 sphere casts of a third-person camera (0.2 m, 4 m) per frame through the
+        /// Jolt world. This debug build prints the time (the acceptance number, &lt; 1 ms on an M1 Max, is a release-build
+        /// figure); the bound here only catches a regression by an order of magnitude.</summary>
+        [Test]
+        public static void ThousandSphereCastsPerFrame(TestContext t)
+        {
+            if (!Jolt()) return;
+            var scene = PhysicsQueryTests.QueryScene(out _);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = PhysicsRaycastTests.RoomProvider;
+            try
+            {
+                BuildWorlds(scene);
+                var rng = new Random(480);
+                var shapes = new QueryShape[1000];
+                var dirs = new Vector3[1000];
+                for (int i = 0; i < shapes.Length; i++)
+                {
+                    shapes[i] = QueryShape.Sphere(new Vector3((float)rng.NextDouble() * 52f - 1f, 0.3f + (float)rng.NextDouble() * 2f, (float)rng.NextDouble() * 20f - 10f), 0.2f);
+                    double yaw = rng.NextDouble() * Math.PI * 2, pitch = (rng.NextDouble() - 0.5) * 0.8;
+                    dirs[i] = new Vector3((float)(Math.Cos(pitch) * Math.Sin(yaw)), (float)Math.Sin(pitch), (float)(Math.Cos(pitch) * Math.Cos(yaw)));
+                }
+                double best = double.MaxValue;
+                int hitCount = 0;
+                for (int round = 0; round < 5; round++)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    hitCount = 0;
+                    for (int i = 0; i < shapes.Length; i++) if (PhysicsService.ShapeCast(shapes[i], dirs[i], 4f, out _)) hitCount++;
+                    best = Math.Min(best, sw.Elapsed.TotalMilliseconds);
+                }
+                double managedBest = double.MaxValue;
+                for (int round = 0; round < 3; round++)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    for (int i = 0; i < shapes.Length; i++) CollisionService.ShapeCast(shapes[i], dirs[i], 4f, ~0, out _);
+                    managedBest = Math.Min(managedBest, sw.Elapsed.TotalMilliseconds);
+                }
+                Console.WriteLine("        1,000 sphere casts (0.2 m, 4 m): Jolt " + best.ToString("0.00") + " ms (" + hitCount + " hits), collision world " + managedBest.ToString("0.00") + " ms");
+                t.True(best < 50.0, "1,000 sphere casts stay well within a frame even in a debug build (" + best.ToString("0.00") + " ms)");
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
         /// <summary>#498: a box with pitch, yaw and roll (and one under a rotated parent) is the same box in the character
         /// world as the Jolt body — rays from above, below and the side meet both at the same distance.</summary>
         [Test]
@@ -627,6 +783,104 @@ namespace VortexTests
                 t.True(pa.Y > 0.3f || Math.Abs(pa.X - 10f) > 0.3f || Math.Abs(pa.Z) > 0.3f, "a character whose id names no entity is pushed out of the pillar (" + pa.X + ", " + pa.Y + ", " + pa.Z + ")");
             }
             finally { ClearWorlds(); }
+        }
+    
+        /// <summary>#480 review: NaN / infinite numbers make no query on either path (Jolt cast from the world origin, the
+        /// collision world missed), and maxDist beyond <c>Physics.MaxQueryDistance</c> — float.MaxValue, infinity — is cut to it:
+        /// both paths report the same, no false hit at the start or at 3.4e38 m.</summary>
+        [Test]
+        public static void DegenerateQueriesAgreeOnBothPaths(TestContext t)
+        {
+            if (!Jolt()) return;
+            var scene = PhysicsQueryTests.QueryScene(out var e);
+            var old = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = PhysicsRaycastTests.RoomProvider;
+            try
+            {
+                BuildWorlds(scene);
+                var o = new Vortex.Vector3(15f, 1f, 0f);
+                var x = new Vortex.Vector3(1f, 0f, 0f);
+                const int Managed = 0x7FFFFFFF;
+                string Hit(bool got, Vortex.RaycastHit h) => got ? h.Name + "@" + h.Distance.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) : "miss";
+                void Same(string what, Func<int, string> run, string expect = null)
+                {
+                    string j = run(~0), m = run(Managed);
+                    t.Equal(j, m, what + ": Jolt and the collision world agree");
+                    if (expect != null) t.Equal(expect, j, what);
+                }
+                foreach (float md in new[] { float.MaxValue, float.PositiveInfinity, 1e20f })
+                {
+                    Same("SphereCast maxDist " + md, mask => Hit(Vortex.Physics.SphereCast(o, 0.3f, x, md, out var h, mask), h), "Crate@3.70");
+                    Same("Raycast maxDist " + md, mask => Hit(Vortex.Physics.Raycast(o, x, md, out var h, mask, 0), h), "Crate@4.00");
+                    Same("RaycastAll maxDist " + md, mask => Vortex.Physics.RaycastAll(o, x, md, mask).Length.ToString(), "3");
+                }
+                Same("SphereCast maxDist NaN", mask => Hit(Vortex.Physics.SphereCast(o, 0.3f, x, float.NaN, out var h, mask), h), "miss");
+                var nanOrigin = new Vortex.Vector3(float.NaN, 1f, 0f);
+                var infOrigin = new Vortex.Vector3(float.PositiveInfinity, 1f, 0f);
+                foreach (var org in new[] { nanOrigin, infOrigin })
+                {
+                    Same("RaycastAll from a non-finite origin", mask => Vortex.Physics.RaycastAll(org, x, 100f, mask).Length.ToString(), "0");
+                    Same("Raycast from a non-finite origin", mask => Hit(Vortex.Physics.Raycast(org, x, 100f, out var h, mask, 0), h), "miss");
+                    Same("SphereCast from a non-finite origin", mask => Hit(Vortex.Physics.SphereCast(org, 0.3f, x, 100f, out var h, mask), h), "miss");
+                }
+                var nanRot = new Vortex.Vector3(float.NaN, 0f, 0f);
+                Same("BoxCast with a NaN rotation", mask => Hit(Vortex.Physics.BoxCast(o, new Vortex.Vector3(0.3f, 0.3f, 0.3f), nanRot, x, 10f, out var h, mask), h), "miss");
+                Same("OverlapBox with a NaN rotation", mask => Vortex.Physics.OverlapBox(new Vortex.Vector3(20f, 1f, 0f), new Vortex.Vector3(0.3f, 0.3f, 0.3f), nanRot, mask).Length.ToString(), "0");
+                Same("CapsuleCast with an infinite point", mask => Hit(Vortex.Physics.CapsuleCast(o, new Vortex.Vector3(15f, float.PositiveInfinity, 0f), 0.3f, x, 10f, out var h, mask), h), "miss");
+                Same("SphereCast with a NaN radius", mask => Hit(Vortex.Physics.SphereCast(o, float.NaN, x, 10f, out var h, mask), h), "miss");
+                Same("SphereCast along a NaN direction", mask => Hit(Vortex.Physics.SphereCast(o, 0.3f, new Vortex.Vector3(float.NaN, 0f, 0f), 10f, out var h, mask), h), "miss");
+                t.Equal(0, Vortex.Physics.OverlapPoint(nanOrigin).Length, "OverlapPoint at NaN finds nothing");
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = old; }
+        }
+
+        /// <summary>#480 review: a long sweep over a big mesh on the collision world walks the triangle grid along its way in
+        /// pieces — the first hit ends it — instead of testing every triangle in the box of the whole sweep (an 800 m sweep
+        /// over a 180k-triangle terrain took 30 ms); it hits what Jolt hits.</summary>
+        [Test]
+        public static void LongSweepsOverABigMeshAreQuick(TestContext t)
+        {
+            if (!Jolt()) return;
+            int n = 300; float size = 600f;
+            var tris = new float[(n - 1) * (n - 1) * 18];
+            float step = size / (n - 1);
+            float H(int x, int z) => 1.5f * (float)Math.Sin(x * 0.11) * (float)Math.Cos(z * 0.07);
+            int k = 0;
+            for (int z = 0; z < n - 1; z++)
+                for (int x = 0; x < n - 1; x++)
+                {
+                    float x0 = -size / 2 + x * step, x1 = x0 + step, z0 = -size / 2 + z * step, z1 = z0 + step;
+                    foreach (var v in new[] { x0, H(x, z), z0, x0, H(x, z + 1), z1, x1, H(x + 1, z), z0, x1, H(x + 1, z), z0, x0, H(x, z + 1), z1, x1, H(x + 1, z + 1), z1 })
+                        tris[k++] = v;
+                }
+            var old = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = p => p == "Assets/terrain.glb" ? tris : null;
+            var s = new Scene { Name = "Big", IsActive = true };
+            PhysicsRaycastTests.Add(s, null, "Ground", new Vector3(0, 0, 0), e =>
+            {
+                e.AddComponentDirect(new MeshRenderer(e) { MeshPath = "Assets/terrain.glb" });
+                e.AddComponentDirect(new MeshCollider(e));
+            });
+            PhysicsRaycastTests.AsLoaded(s);
+            try
+            {
+                BuildWorlds(s);
+                // clear of the ground at the start (it rises 1.5 m at most), sinking 2 mm a metre: it touches far down the sweep
+                var o = new Vortex.Vector3(-280f, 2.5f, -280f);
+                var d = new Vortex.Vector3(1f, -0.003f, 1f);
+                Vortex.Physics.SphereCast(o, 0.3f, d, 800f, out _, 0x7FFFFFFF);   // (warm-up)
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                bool hm = Vortex.Physics.SphereCast(o, 0.3f, d, 800f, out var mh, 0x7FFFFFFF);
+                double ms = sw.Elapsed.TotalMilliseconds;
+                bool hj = Vortex.Physics.SphereCast(o, 0.3f, d, 800f, out var jh, ~0);
+                Console.WriteLine("        800 m sphere sweep over " + tris.Length / 9 + " triangles on the collision world: " + ms.ToString("0.00") + " ms, hit at "
+                    + mh.Distance.ToString("0.00") + " m (Jolt " + jh.Distance.ToString("0.00") + " m)");
+                t.True(hm && hj && mh.Distance > 50f && Math.Abs(mh.Distance - jh.Distance) < 0.05f, "it hits the ground far down the sweep, where Jolt does");
+                t.True(ms < 10.0, "in a few milliseconds, not 30 (" + ms.ToString("0.00") + " ms)");
+                bool miss = Vortex.Physics.SphereCast(new Vortex.Vector3(-280f, 2.5f, -280f), 0.3f, new Vortex.Vector3(1f, 0f, 1f), 800f, out _, 0x7FFFFFFF);
+                t.False(miss, "a level sweep that clears the ground hits nothing");
+            }
+            finally { ClearWorlds(); CollisionService.MeshTriangleProvider = old; }
         }
     }
 }

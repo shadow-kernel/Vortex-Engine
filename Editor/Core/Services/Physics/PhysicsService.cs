@@ -26,6 +26,74 @@ namespace Editor.Core.Services.Physics
         public float Impulse;
     }
 
+    /// <summary>One hit of a query that can report several (#480: RaycastAll, shape casts), resolved to its entity (null
+    /// for an anonymous character capsule).</summary>
+    public struct PhysicsQueryHit
+    {
+        /// <summary>World-space point on what was hit.</summary>
+        public Vector3 Point;
+        /// <summary>Unit normal facing the query (against the cast direction).</summary>
+        public Vector3 Normal;
+        /// <summary>From the query's origin along the cast; 0 = the query starts on / in it.</summary>
+        public float Distance;
+        public GameEntity Entity;
+    }
+
+    /// <summary>The world-space shape of a sweep or overlap query (#480): a sphere, a capsule between two cap centres, or an
+    /// oriented box. Both physics paths take it — the Jolt world (<see cref="PhysicsService"/>) and the collision world
+    /// (<see cref="CollisionService"/>).</summary>
+    public struct QueryShape
+    {
+        /// <summary>PhysicsService shape type: 0 box, 1 sphere, 2 capsule.</summary>
+        public int Type;
+        public Vector3 Center;
+        /// <summary>Box / capsule orientation (a capsule's segment runs along its local Y).</summary>
+        public SysQuat Rotation;
+        /// <summary>Sphere / capsule radius.</summary>
+        public float Radius;
+        /// <summary>Capsule: half the distance between the centres of its caps.</summary>
+        public float HalfHeight;
+        /// <summary>Box half extents along its local axes.</summary>
+        public Vector3 HalfExtents;
+
+        public static QueryShape Sphere(Vector3 center, float radius)
+            => new QueryShape { Type = PhysicsService.ShapeSphere, Center = center, Rotation = SysQuat.Identity, Radius = radius };
+
+        /// <summary>The capsule whose caps are centred on <paramref name="point1"/> and <paramref name="point2"/> (Unity's
+        /// CapsuleCast points); the same points make a sphere.</summary>
+        public static QueryShape Capsule(Vector3 point1, Vector3 point2, float radius)
+        {
+            var a = new SysVec(point1.X, point1.Y, point1.Z);
+            var b = new SysVec(point2.X, point2.Y, point2.Z);
+            var axis = b - a;
+            float len = axis.Length();
+            var c = (a + b) * 0.5f;
+            var s = new QueryShape { Type = PhysicsService.ShapeCapsule, Center = new Vector3(c.X, c.Y, c.Z), Rotation = SysQuat.Identity, Radius = radius, HalfHeight = len * 0.5f };
+            if (len > 1e-6f)
+            {
+                // the rotation that turns the local Y axis onto the segment
+                var d = axis / len;
+                float dot = Math.Max(-1f, Math.Min(1f, d.Y));
+                if (dot < -0.999999f) s.Rotation = SysQuat.CreateFromAxisAngle(SysVec.UnitX, (float)Math.PI);
+                else if (dot < 0.999999f) s.Rotation = SysQuat.Normalize(SysQuat.CreateFromAxisAngle(SysVec.Normalize(SysVec.Cross(SysVec.UnitY, d)), (float)Math.Acos(dot)));
+            }
+            return s;
+        }
+
+        public static QueryShape Box(Vector3 center, Vector3 halfExtents, SysQuat rotation)
+            => new QueryShape { Type = PhysicsService.ShapeBox, Center = center, HalfExtents = halfExtents, Rotation = rotation };
+
+        /// <summary>Is every number of the shape finite (no NaN, no infinity)? A query with one that is not finds nothing.</summary>
+        public bool IsFinite =>
+            float.IsFinite(Center.X) && float.IsFinite(Center.Y) && float.IsFinite(Center.Z)
+            && float.IsFinite(Rotation.X) && float.IsFinite(Rotation.Y) && float.IsFinite(Rotation.Z) && float.IsFinite(Rotation.W)
+            && float.IsFinite(Radius) && float.IsFinite(HalfHeight)
+            && float.IsFinite(HalfExtents.X) && float.IsFinite(HalfExtents.Y) && float.IsFinite(HalfExtents.Z);
+
+        /// <summary>The same shape moved by <paramref name="offset"/>.</summary>
+        public QueryShape Moved(Vector3 offset) { var s = this; s.Center = new Vector3(Center.X + offset.X, Center.Y + offset.Y, Center.Z + offset.Z); return s; }
+    }
+
     /// <summary>A breakable joint exceeded its Break Force (issue #103): <see cref="Entity"/> owns the
     /// <see cref="Joint"/> component, <see cref="Connected"/> is the other body's entity (null = the world),
     /// <see cref="Force"/> the force in N that broke it. The joint is disabled (re-enable it to repair).</summary>
@@ -169,7 +237,7 @@ namespace Editor.Core.Services.Physics
         /// <summary>Draw the live physics shapes (cyan wire lines) over the play view — View ▸ Physics Debug.</summary>
         public static bool ShowPhysicsDebug;
         /// <summary>#106: which debug layers draw while <see cref="ShowPhysicsDebug"/> is on.</summary>
-        [Flags] public enum DebugLayer { None = 0, Bodies = 1, Joints = 2, Characters = 4, Contacts = 8, All = 15 }
+        [Flags] public enum DebugLayer { None = 0, Bodies = 1, Joints = 2, Characters = 4, Contacts = 8, Queries = 16, All = 31 }
         public static DebugLayer DebugLayers = DebugLayer.All;
         private static byte[] _dbgKinds;
         private static readonly System.Collections.Generic.List<float> _dbgContacts = new System.Collections.Generic.List<float>();   // 6 floats per contact: point, normal
@@ -240,6 +308,7 @@ namespace Editor.Core.Services.Physics
             _byEntity.Clear(); _byId.Clear(); _bodies.Clear(); _publish.Clear(); _pushes.Clear(); _stayThisFrame.Clear();
             _solidBodiesOf.Clear();
             ClearJoltCharacters();
+            QueriesHitTriggers = false;
             _accumulator = 0f;
             LastStepCount = 0;
             IsBuilt = false;
@@ -379,6 +448,108 @@ namespace Editor.Core.Services.Physics
                 }
                 VortexAPI.RenderPhysicsDebugLines(segs, o, kinds, 1 << 6);
             }
+            SubmitQueryDebugDraw();
+        }
+
+        // ---- #480: the swept shapes of this frame's script queries (the Queries debug layer) ----
+
+        private struct DebugQuery { public QueryShape Shape; public bool IsRay; public Vector3 Origin, Direction; public float Travel; public bool Hit; public Vector3 Point, Normal; }
+        private static readonly List<DebugQuery> _dbgQueries = new List<DebugQuery>();
+
+        /// <summary>Script queries recorded for the next debug draw (smoke checks).</summary>
+        internal static int RecordedQueryCount => _dbgQueries.Count;
+        private const int MaxDebugQueries = 16;
+
+        /// <summary>True while the Queries debug layer draws (the script queries record themselves only then).</summary>
+        public static bool RecordsQueries => ShowPhysicsDebug && (DebugLayers & DebugLayer.Queries) != 0;
+
+        /// <summary>Remember a script query for the Queries debug layer: its shape (null = a ray from <paramref name="origin"/>),
+        /// the direction, how far it got and its first hit. Drawn — and forgotten — by the next <see cref="SubmitDebugDraw"/>;
+        /// at most <see cref="MaxDebugQueries"/> a frame.</summary>
+        public static void RecordQuery(QueryShape? shape, Vector3 origin, Vector3 direction, float maxDist, bool hit, PhysicsQueryHit first)
+        {
+            if (!RecordsQueries || _dbgQueries.Count >= MaxDebugQueries) return;
+            float len = (float)Math.Sqrt(direction.X * direction.X + direction.Y * direction.Y + direction.Z * direction.Z);
+            if (len < 1e-6f || !(maxDist > 0f) || float.IsInfinity(maxDist)) return;
+            _dbgQueries.Add(new DebugQuery
+            {
+                Shape = shape ?? default(QueryShape), IsRay = shape == null, Origin = shape?.Center ?? origin,
+                Direction = new Vector3(direction.X / len, direction.Y / len, direction.Z / len), Travel = hit ? first.Distance : maxDist,
+                Hit = hit, Point = first.Point, Normal = first.Normal
+            });
+        }
+
+        private static void SubmitQueryDebugDraw()
+        {
+            if (_dbgQueries.Count == 0) return;
+            if ((DebugLayers & DebugLayer.Queries) != 0)
+            {
+                var segs = new List<float>(_dbgQueries.Count * 40 * 6);
+                foreach (var q in _dbgQueries)
+                {
+                    var d = ToSys(q.Direction);
+                    var start = ToSys(q.Origin);
+                    var end = start + d * q.Travel;
+                    Seg(segs, start, end);
+                    if (!q.IsRay)
+                    {
+                        QueryOutline(segs, q.Shape, start, d);
+                        QueryOutline(segs, q.Shape, end, d);
+                    }
+                    if (q.Hit)
+                    {
+                        var p = ToSys(q.Point);
+                        Seg(segs, p, p + ToSys(q.Normal) * 0.3f);
+                        Seg(segs, p - SysVec.UnitX * 0.05f, p + SysVec.UnitX * 0.05f);
+                        Seg(segs, p - SysVec.UnitY * 0.05f, p + SysVec.UnitY * 0.05f);
+                        Seg(segs, p - SysVec.UnitZ * 0.05f, p + SysVec.UnitZ * 0.05f);
+                    }
+                }
+                var arr = segs.ToArray();
+                var kinds = new byte[arr.Length / 6];
+                for (int i = 0; i < kinds.Length; i++) kinds[i] = 7;
+                VortexAPI.RenderPhysicsDebugLines(arr, arr.Length, kinds, 1 << 7);
+            }
+            _dbgQueries.Clear();
+        }
+
+        private static void Seg(List<float> s, SysVec a, SysVec b) { s.Add(a.X); s.Add(a.Y); s.Add(a.Z); s.Add(b.X); s.Add(b.Y); s.Add(b.Z); }
+
+        /// <summary>A coarse wireframe of the query shape centred at <paramref name="c"/>: a sphere's two great circles around the
+        /// sweep, a capsule's cap rings and sides, a box's twelve edges.</summary>
+        private static void QueryOutline(List<float> segs, QueryShape q, SysVec c, SysVec dir)
+        {
+            var rot = q.Rotation.X == 0f && q.Rotation.Y == 0f && q.Rotation.Z == 0f && q.Rotation.W == 0f ? SysQuat.Identity : SysQuat.Normalize(q.Rotation);
+            if (q.Type == ShapeBox)
+            {
+                var h = new SysVec(Math.Abs(q.HalfExtents.X), Math.Abs(q.HalfExtents.Y), Math.Abs(q.HalfExtents.Z));
+                SysVec Corner(int i) => c + SysVec.Transform(new SysVec((i & 1) != 0 ? h.X : -h.X, (i & 2) != 0 ? h.Y : -h.Y, (i & 4) != 0 ? h.Z : -h.Z), rot);
+                for (int i = 0; i < 8; i++)
+                    for (int bit = 1; bit < 8; bit <<= 1)
+                        if ((i & bit) == 0) Seg(segs, Corner(i), Corner(i | bit));
+                return;
+            }
+            // two unit vectors perpendicular to the sweep (or to the capsule's segment) span the rings
+            var axis = q.Type == ShapeCapsule ? SysVec.Transform(SysVec.UnitY, rot) : dir;
+            var u = SysVec.Cross(axis, Math.Abs(axis.Y) < 0.9f ? SysVec.UnitY : SysVec.UnitX);
+            u = SysVec.Normalize(u);
+            var v = SysVec.Cross(axis, u);
+            float r = q.Radius;
+            void Ring(SysVec centre, SysVec a, SysVec b)
+            {
+                const int n = 10;
+                for (int i = 0; i < n; i++)
+                {
+                    double t0 = i * 2 * Math.PI / n, t1 = (i + 1) * 2 * Math.PI / n;
+                    Seg(segs, centre + (a * (float)Math.Cos(t0) + b * (float)Math.Sin(t0)) * r, centre + (a * (float)Math.Cos(t1) + b * (float)Math.Sin(t1)) * r);
+                }
+            }
+            if (q.Type == ShapeSphere) { Ring(c, u, v); Ring(c, u, axis); return; }
+            var off = axis * Math.Max(0f, q.HalfHeight);
+            Ring(c - off, u, v);
+            Ring(c + off, u, v);
+            Seg(segs, c - off + u * r, c + off + u * r); Seg(segs, c - off - u * r, c + off - u * r);
+            Seg(segs, c - off + v * r, c + off + v * r); Seg(segs, c - off - v * r, c + off - v * r);
         }
 
         /// <summary>Script / View-menu switch for the debug layers (#106).</summary>
@@ -554,6 +725,10 @@ namespace Editor.Core.Services.Physics
         /// <summary>Layer mask that hits solid bodies only (static, dynamic, character, debris — not triggers).</summary>
         public const uint SolidLayerMask = (1u << LayerStatic) | (1u << LayerDynamic) | (1u << LayerCharacter) | (1u << LayerDebris);
 
+        /// <summary>#480: do the script queries (Physics.Raycast, SphereCast, OverlapSphere …) hit trigger colliders when they
+        /// ask for <c>QueryTriggerInteraction.UseGlobal</c>? Off — what Raycast always did. Reset by <see cref="Clear"/>.</summary>
+        public static bool QueriesHitTriggers;
+
         /// <summary>Closest solid hit along <paramref name="direction"/> (normalised inside). Returns the hit point,
         /// unit normal, entity and distance. <paramref name="layerMask"/> is the OBJECT-layer mask (bit i = layer i).
         /// A box / sphere / capsule / convex collider that contains the origin is not hit, meshes are hit from either
@@ -643,9 +818,11 @@ namespace Editor.Core.Services.Physics
             ids[n++] = id;
         }
 
-        /// <summary>Every entity whose body overlaps the sphere (solid layers by default; deduplicated).</summary>
+        /// <summary>Every entity whose body overlaps or touches the sphere (solid layers by default; deduplicated). Mesh
+        /// colliders count from either side (#480).</summary>
         public static List<GameEntity> OverlapSphere(Vector3 center, float radius, uint layerMask = SolidLayerMask, int maxCount = 256)
         {
+            if (!_shapeQueriesUnavailable) return OverlapShape(QueryShape.Sphere(center, radius), layerMask, null, maxCount);
             var result = new List<GameEntity>();
             if (!IsBuilt || radius <= 0f) return result;
             var ents = new ulong[Math.Max(1, maxCount)];
@@ -660,6 +837,181 @@ namespace Editor.Core.Services.Physics
                 if (e != null && !result.Contains(e)) result.Add(e);
             }
             return result;
+        }
+
+        // ---- shape casts, all-hit rays, shape overlaps (#480) -----------------------------------------------------
+
+        private static bool _shapeQueriesUnavailable;   // an engine library from before #480
+        private static readonly float[] _qDims = new float[3], _qPos = new float[3], _qRot = new float[4], _qDir = new float[3];
+        private static PhysicsHit[] _hitBuf = new PhysicsHit[64];
+
+        private static bool FillShape(QueryShape s)
+        {
+            float extent;
+            switch (s.Type)
+            {
+                case ShapeSphere: _qDims[0] = s.Radius; _qDims[1] = _qDims[2] = 0f; extent = s.Radius; break;
+                case ShapeCapsule: _qDims[0] = s.Radius; _qDims[1] = Math.Max(0f, s.HalfHeight); _qDims[2] = 0f; extent = s.Radius; break;
+                case ShapeBox: _qDims[0] = Math.Abs(s.HalfExtents.X); _qDims[1] = Math.Abs(s.HalfExtents.Y); _qDims[2] = Math.Abs(s.HalfExtents.Z);
+                    extent = Math.Min(_qDims[0], Math.Min(_qDims[1], _qDims[2])); break;
+                default: return false;
+            }
+            if (!(extent > 0f) || float.IsInfinity(extent)) return false;
+            _qPos[0] = s.Center.X; _qPos[1] = s.Center.Y; _qPos[2] = s.Center.Z;
+            _qRot[0] = s.Rotation.X; _qRot[1] = s.Rotation.Y; _qRot[2] = s.Rotation.Z; _qRot[3] = s.Rotation.W;
+            if (_qRot[0] == 0f && _qRot[1] == 0f && _qRot[2] == 0f && _qRot[3] == 0f) _qRot[3] = 1f;   // default(SysQuat): no rotation
+            return true;
+        }
+
+        private static bool FillDirection(Vector3 direction, float maxDist)
+        {
+            float len = (float)Math.Sqrt(direction.X * direction.X + direction.Y * direction.Y + direction.Z * direction.Z);
+            if (len < 1e-6f || !(maxDist > 0f) || float.IsNaN(len)) return false;
+            _qDir[0] = direction.X / len; _qDir[1] = direction.Y / len; _qDir[2] = direction.Z / len;
+            return true;
+        }
+
+        /// <summary>Hits of the native query in <see cref="_hitBuf"/> into <paramref name="results"/>: resolved to their
+        /// entities, one per entity (the first along the cast — the native hits are sorted), anonymous capsules kept apart.</summary>
+        private static int AppendHits(int n, List<PhysicsQueryHit> results)
+        {
+            int start = results.Count;
+            for (int i = 0; i < n && i < _hitBuf.Length; i++)
+            {
+                var h = _hitBuf[i];
+                var e = EntityOfHit(h.Body, h.Entity);
+                if (e != null)
+                {
+                    bool known = false;
+                    for (int k = start; k < results.Count && !known; k++) known = ReferenceEquals(results[k].Entity, e);
+                    if (known) continue;
+                }
+                results.Add(new PhysicsQueryHit
+                {
+                    Point = new Vector3(h.PointX, h.PointY, h.PointZ), Normal = new Vector3(h.NormalX, h.NormalY, h.NormalZ),
+                    Distance = h.Distance, Entity = e
+                });
+            }
+            return results.Count - start;
+        }
+
+        /// <summary>The ignore lists of a query that must not see <paramref name="ignore"/> or anything under it (#406).</summary>
+        private static void IgnoreLists(GameEntity ignore, out int bodies, out int chars)
+        {
+            bodies = ignore != null ? SubtreeBodies(ignore, ref _ignoreBodies) : 0;
+            chars = ignore != null ? SubtreeCharacters(ignore, ref _ignoreChars) : 0;
+        }
+
+        /// <summary>#480: sweep <paramref name="shape"/> along <paramref name="direction"/> for <paramref name="maxDist"/>
+        /// through the Jolt world; the first hit. What a sweep that STARTS in contact reports: a collider the shape already
+        /// overlaps (or touches) is hit at distance 0 when the sweep moves deeper into it — <see cref="PhysicsQueryHit.Point"/>
+        /// is then the deepest point of the overlap and the normal the way out — and not at all when the sweep moves out of
+        /// it or along it. Meshes and terrain are surfaces (hit from either side); normals face the cast; "jolt" character
+        /// capsules report the entity that moves them; <paramref name="ignore"/> and everything under it are never hit.</summary>
+        public static bool ShapeCast(QueryShape shape, Vector3 direction, float maxDist, out PhysicsQueryHit hit,
+            uint layerMask = SolidLayerMask, GameEntity ignore = null)
+        {
+            hit = default(PhysicsQueryHit);
+            _oneHit.Clear();
+            if (CastShape(shape, direction, maxDist, layerMask, ignore, false, _oneHit) == 0) return false;
+            hit = _oneHit[0];
+            return true;
+        }
+
+        private static readonly List<PhysicsQueryHit> _oneHit = new List<PhysicsQueryHit>(1);
+
+        /// <summary>#480: every entity the sweep meets (the first hit on each), sorted by distance, into
+        /// <paramref name="results"/> (appended); returns how many. The rules of <see cref="ShapeCast"/>.</summary>
+        public static int ShapeCastAll(QueryShape shape, Vector3 direction, float maxDist, List<PhysicsQueryHit> results,
+            uint layerMask = SolidLayerMask, GameEntity ignore = null)
+            => CastShape(shape, direction, maxDist, layerMask, ignore, true, results);
+
+        private static int CastShape(QueryShape shape, Vector3 direction, float maxDist, uint layerMask, GameEntity ignore, bool all, List<PhysicsQueryHit> results)
+        {
+            if (!IsBuilt || _shapeQueriesUnavailable || results == null || !FillShape(shape) || !FillDirection(direction, maxDist)) return 0;
+            IgnoreLists(ignore, out int ib, out int ic);
+            for (;;)
+            {
+                int n;
+                try
+                {
+                    n = VortexAPI.PhysicsShapeCast(shape.Type, _qDims, _qPos, _qRot, _qDir, maxDist, layerMask, ib > 0 ? _ignoreBodies : null, ib,
+                        ic > 0 ? _ignoreChars : null, ic, all ? 1 : 0, _hitBuf, all ? _hitBuf.Length : 1);
+                }
+                catch (EntryPointNotFoundException) { _shapeQueriesUnavailable = true; return 0; }
+                catch { return 0; }
+                if (all && n >= _hitBuf.Length && _hitBuf.Length < 4096) { _hitBuf = new PhysicsHit[_hitBuf.Length * 4]; continue; }
+                return AppendHits(n, results);
+            }
+        }
+
+        /// <summary>#480: every entity along the ray (the first hit on each), sorted by distance, into
+        /// <paramref name="results"/> (appended); returns how many. The rules of <see cref="Raycast"/> (#418): a convex
+        /// collider that contains the origin is not hit, meshes are hit from either side (once: where the ray meets them
+        /// first), a ray starting on a surface hits it at distance 0.</summary>
+        public static int RaycastAll(Vector3 origin, Vector3 direction, float maxDist, List<PhysicsQueryHit> results,
+            uint layerMask = SolidLayerMask, GameEntity ignore = null)
+        {
+            if (!IsBuilt || _shapeQueriesUnavailable || results == null || !FillDirection(direction, maxDist)) return 0;
+            _qPos[0] = origin.X; _qPos[1] = origin.Y; _qPos[2] = origin.Z;
+            IgnoreLists(ignore, out int ib, out int ic);
+            for (;;)
+            {
+                int n;
+                try
+                {
+                    n = VortexAPI.PhysicsRaycastAll(_qPos, _qDir, maxDist, layerMask, ib > 0 ? _ignoreBodies : null, ib,
+                        ic > 0 ? _ignoreChars : null, ic, _hitBuf, _hitBuf.Length);
+                }
+                catch (EntryPointNotFoundException) { _shapeQueriesUnavailable = true; return 0; }
+                catch { return 0; }
+                if (n >= _hitBuf.Length && _hitBuf.Length < 4096) { _hitBuf = new PhysicsHit[_hitBuf.Length * 4]; continue; }
+                return AppendHits(n, results);
+            }
+        }
+
+        /// <summary>#480: every entity whose body overlaps or touches <paramref name="shape"/> (solid layers by default;
+        /// deduplicated; meshes count from either side; "jolt" character capsules report the entity that moves them);
+        /// <paramref name="ignore"/> and everything under it are left out. Empty without a physics world.</summary>
+        public static List<GameEntity> OverlapShape(QueryShape shape, uint layerMask = SolidLayerMask, GameEntity ignore = null, int maxCount = 256)
+        {
+            var result = new List<GameEntity>();
+            if (!IsBuilt || _shapeQueriesUnavailable || !FillShape(shape)) return result;
+            IgnoreLists(ignore, out int ib, out int ic);
+            var ents = new ulong[Math.Max(1, maxCount)];
+            var bodies = new uint[ents.Length];
+            int n;
+            try
+            {
+                n = VortexAPI.PhysicsOverlapShape(shape.Type, _qDims, _qPos, _qRot, layerMask, ib > 0 ? _ignoreBodies : null, ib,
+                    ic > 0 ? _ignoreChars : null, ic, ents, bodies, ents.Length);
+            }
+            catch (EntryPointNotFoundException) { _shapeQueriesUnavailable = true; return shape.Type == ShapeSphere ? OverlapSphere(shape.Center, shape.Radius, layerMask, maxCount) : result; }
+            catch { return result; }
+            for (int i = 0; i < n && i < ents.Length; i++)
+            {
+                var e = EntityOfHit(bodies[i], ents[i]);
+                if (e != null && !result.Contains(e)) result.Add(e);
+            }
+            return result;
+        }
+
+        private static readonly ulong[] _checkEnt = new ulong[1];
+        private static readonly uint[] _checkBody = new uint[1];
+
+        /// <summary>#480: does anything overlap or touch <paramref name="shape"/>? <see cref="OverlapShape"/> without the list
+        /// (an anonymous character capsule counts too).</summary>
+        public static bool CheckShape(QueryShape shape, uint layerMask = SolidLayerMask, GameEntity ignore = null)
+        {
+            if (!IsBuilt || _shapeQueriesUnavailable || !FillShape(shape)) return false;
+            IgnoreLists(ignore, out int ib, out int ic);
+            try
+            {
+                return VortexAPI.PhysicsOverlapShape(shape.Type, _qDims, _qPos, _qRot, layerMask, ib > 0 ? _ignoreBodies : null, ib,
+                    ic > 0 ? _ignoreChars : null, ic, _checkEnt, _checkBody, 1) > 0;
+            }
+            catch (EntryPointNotFoundException) { _shapeQueriesUnavailable = true; return false; }
+            catch { return false; }
         }
 
         /// <summary>#418: every entity whose body CONTAINS the point — the "am I inside something?" question rays no longer

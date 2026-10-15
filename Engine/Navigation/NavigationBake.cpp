@@ -1,5 +1,6 @@
 #include "NavigationWorld.h"
 #include "NavigationFormat.h"
+#include "NavigationRebuild.h"
 
 // ============================================================================
 // Navmesh baking (issue #109): world-space triangles + solid boxes -> tiled Detour navmesh -> ".vnav" blob.
@@ -64,7 +65,8 @@ namespace vortex::navigation {
 	// Detour and everything that links it with DT_POLYREF64. A build without it would write another tile layout.
 	static_assert(sizeof(dtPolyRef) == 8, "Vortex navigation needs recastnavigation built with DT_POLYREF64 (#517)");
 
-	namespace {
+	// (named, not anonymous: the runtime rebuild source of #435 below holds a bake_job)
+	namespace bake_detail {
 
 		void log(const char* fmt, ...)
 		{
@@ -338,6 +340,7 @@ namespace vortex::navigation {
 			const s32* tris;
 			std::vector<u8> tri_area;              // final area per triangle (slope applied)
 			std::vector<solid_box> boxes;
+			s32 input_triangles{ 0 };              // triangles that passed validation
 
 			std::vector<std::vector<s32>> tile_tris;
 			std::vector<std::vector<s32>> tile_boxes;
@@ -424,7 +427,20 @@ namespace vortex::navigation {
 			return true;
 		}
 
-		void build_tile(bake_job& job, s32 tx, s32 tz, bake_job::tile_out& result)
+		// #435: a carving obstacle's volume becomes its carve area — after the erosion (its footprint is already grown by the
+		// agent radius) and before the regions, so its surface is split off into polygons of their own.
+		void mark_carve(rcContext& ctx, const rebuild::carve_volume& v, rcCompactHeightfield& chf)
+		{
+			const unsigned char area = v.area >= area_carved_first && v.area <= area_carved ? v.area : area_carved;
+			if (v.hull_count == 0)
+			{
+				const f32 base[3] = { v.center[0], v.ymin, v.center[1] };
+				rcMarkCylinderArea(&ctx, base, v.radius, v.ymax - v.ymin, area, chf);
+			}
+			else rcMarkConvexPolyArea(&ctx, v.hull, v.hull_count, v.ymin, v.ymax, area, chf);
+		}
+
+		void build_tile(const bake_job& job, s32 tx, s32 tz, bake_job::tile_out& result, const std::vector<rebuild::carve_volume>* carves = nullptr)
 		{
 			const s32 index = tz * job.tiles_x + tx;
 			const auto& tri_list = job.tile_tris[index];
@@ -547,6 +563,7 @@ namespace vortex::navigation {
 				fail("erode");
 				return;
 			}
+			if (carves) for (const auto& v : *carves) mark_carve(ctx, v, *chf);
 
 			bool regions_ok = false;
 			switch (job.s.partition)
@@ -704,7 +721,198 @@ namespace vortex::navigation {
 				&& s.agent_height > 0.0f && s.agent_radius >= 0.0f && s.agent_max_climb >= 0.0f
 				&& s.agent_max_slope >= 0.0f && s.agent_max_slope < 90.0f;
 		}
+
+		// Everything a bake does before it builds tiles: the settings sanitised, the triangles validated and given their
+		// slope area, the boxes prepared, the bounds and tile grid set, the geometry binned into the tiles. Shared by bake()
+		// and the runtime rebuild source (#435) — `loaded` = the header of a loaded navmesh whose bounds and grid the job
+		// must reproduce; null = the bake's own (explicit bounds, else the geometry's). job.s holds the settings. Returns 0 or
+		// a bake_error_*.
+		s32 prepare_job(bake_job& job, const f32* verts, s32 vert_count, const s32* tris, s32 tri_count, const u8* tri_areas,
+			const f32* boxes, s32 box_count, const u8* box_areas, const format::file_header* loaded)
+		{
+			bake_settings& s = job.s;
+			if (!sane(s)) { log("bake: invalid settings"); return bake_error_bad_settings; }
+			s.verts_per_poly = rcClamp(s.verts_per_poly, 3, (int)DT_VERTS_PER_POLYGON);
+			s.tile_size = rcClamp(s.tile_size, 16, 1024);
+			s.region_min_size = std::max(0.0f, s.region_min_size);
+			s.region_merge_size = std::max(0.0f, s.region_merge_size);
+			s.edge_max_len = std::max(0.0f, s.edge_max_len);
+			s.edge_max_error = std::max(0.1f, s.edge_max_error);
+			s.detail_sample_dist = std::max(0.0f, s.detail_sample_dist);
+			s.detail_sample_max_error = std::max(0.0f, s.detail_sample_max_error);
+			if (s.partition < partition_watershed || s.partition > partition_layers) s.partition = partition_watershed;
+
+			if (vert_count < 0 || tri_count < 0 || box_count < 0) return bake_error_no_geometry;
+			if (tri_count > 0 && (!verts || !tris)) return bake_error_no_geometry;
+			if (box_count > 0 && !boxes) return bake_error_no_geometry;
+			job.verts = verts;
+			job.tris = tris;
+			job.walkable_cos = std::cos(s.agent_max_slope / 180.0f * k_pi);
+
+			// Validate the triangles, apply the slope test and gather the geometry bounds.
+			f32 gmin[3] = { 3.0e38f, 3.0e38f, 3.0e38f }, gmax[3] = { -3.0e38f, -3.0e38f, -3.0e38f };
+			auto grow = [&](f32 x, f32 y, f32 z)
+			{
+				gmin[0] = std::min(gmin[0], x); gmin[1] = std::min(gmin[1], y); gmin[2] = std::min(gmin[2], z);
+				gmax[0] = std::max(gmax[0], x); gmax[1] = std::max(gmax[1], y); gmax[2] = std::max(gmax[2], z);
+			};
+			job.tri_area.assign((size_t)tri_count, (u8)RC_NULL_AREA);
+			std::vector<s32> tri_index;   // triangles that passed validation
+			tri_index.reserve((size_t)tri_count);
+			for (s32 t = 0; t < tri_count; ++t)
+			{
+				const s32* ti = &tris[t * 3];
+				if (ti[0] < 0 || ti[1] < 0 || ti[2] < 0 || ti[0] >= vert_count || ti[1] >= vert_count || ti[2] >= vert_count) continue;
+				const f32* a = &verts[ti[0] * 3];
+				const f32* b = &verts[ti[1] * 3];
+				const f32* c = &verts[ti[2] * 3];
+				bool ok = true;
+				for (int k = 0; k < 3; ++k) ok = ok && finite(a[k]) && finite(b[k]) && finite(c[k]);
+				if (!ok) continue;
+				const u8 user = tri_areas ? (u8)std::min<u32>(tri_areas[t], area_ground) : area_ground;
+				job.tri_area[(size_t)t] = slope_area({ a[0], a[1], a[2] }, { b[0], b[1], b[2] }, { c[0], c[1], c[2] }, user, job.walkable_cos);
+				grow(a[0], a[1], a[2]); grow(b[0], b[1], b[2]); grow(c[0], c[1], c[2]);
+				tri_index.push_back(t);
+			}
+
+			job.boxes.reserve((size_t)box_count);
+			for (s32 i = 0; i < box_count; ++i)
+			{
+				solid_box b{};
+				const u8 user = box_areas ? (u8)std::min<u32>(box_areas[i], area_ground) : area_ground;
+				if (!prepare_box(&boxes[i * box_floats], user, job.walkable_cos, b)) continue;
+				grow(b.bmin.x, b.bmin.y, b.bmin.z);
+				grow(b.bmax.x, b.bmax.y, b.bmax.z);
+				job.boxes.push_back(b);
+			}
+			if (tri_index.empty() && job.boxes.empty())
+			{
+				log("bake: no geometry");
+				return bake_error_no_geometry;
+			}
+			job.input_triangles = (s32)tri_index.size();
+
+			if (loaded)
+			{
+				// a rebuild: exactly the bounds the bake used (stored after its flat-world fix below)
+				for (int k = 0; k < 3; ++k) { job.bmin[k] = loaded->stats.bounds_min[k]; job.bmax[k] = loaded->stats.bounds_max[k]; }
+			}
+			else
+			{
+				// Bounds: explicit (min < max on every axis) or the geometry's.
+				const bool explicit_bounds = s.bounds_min[0] < s.bounds_max[0] && s.bounds_min[1] < s.bounds_max[1] && s.bounds_min[2] < s.bounds_max[2];
+				for (int k = 0; k < 3; ++k)
+				{
+					job.bmin[k] = explicit_bounds ? s.bounds_min[k] : gmin[k];
+					job.bmax[k] = explicit_bounds ? s.bounds_max[k] : gmax[k];
+				}
+				// A flat world still needs a y range for the spans; keep the tile grid aligned to the cell size.
+				if (job.bmax[1] - job.bmin[1] < s.cell_height * 4.0f) job.bmax[1] = job.bmin[1] + s.cell_height * 4.0f;
+			}
+
+			// The tile grid. #517: the 32-bit poly ref split 22 bits between the tile index and the polygon index by the tile
+			// count of this grid, so the polygons a tile could hold shrank as the bounds grew (and a smaller Tile Size, with
+			// more tiles, shrank them as fast). With 64-bit refs a tile's polygons only meet the fixed per-tile limits in
+			// build_tile, and the grid only bounds the bake's own bookkeeping (max_bake_tiles), counted in 64 bits — cell counts
+			// beyond an int are refused before rcCalcGridSize converts them.
+			const d64 cells_x = (d64)(job.bmax[0] - job.bmin[0]) / s.cell_size, cells_z = (d64)(job.bmax[2] - job.bmin[2]) / s.cell_size;
+			s64 grid_tiles = (s64)max_bake_tiles + 1;
+			if (cells_x < 1.0e9 && cells_z < 1.0e9)
+			{
+				int gw = 0, gh = 0;
+				rcCalcGridSize(job.bmin, job.bmax, s.cell_size, &gw, &gh);
+				job.tiles_x = std::max(1, (gw + s.tile_size - 1) / s.tile_size);
+				job.tiles_z = std::max(1, (gh + s.tile_size - 1) / s.tile_size);
+				grid_tiles = (s64)job.tiles_x * job.tiles_z;
+			}
+			if (grid_tiles > max_bake_tiles)
+			{
+				log("bake: the bounds need %.0f x %.0f tiles, more than the %d a bake handles - raise the tile size or the cell size",
+					std::ceil(cells_x / s.tile_size), std::ceil(cells_z / s.tile_size), max_bake_tiles);
+				return bake_error_too_many_tiles;
+			}
+			if (loaded && (job.tiles_x != loaded->stats.tiles_x || job.tiles_z != loaded->stats.tiles_z))
+			{
+				log("rebuild: the navmesh's tile grid (%d x %d) does not come out of its own bounds (%d x %d)",
+					loaded->stats.tiles_x, loaded->stats.tiles_z, job.tiles_x, job.tiles_z);
+				return bake_error_failed;
+			}
+			const s32 tile_total = (s32)grid_tiles;
+			job.tile_world = s.tile_size * s.cell_size;
+
+			rcConfig& cfg = job.base;
+			std::memset(&cfg, 0, sizeof(cfg));
+			cfg.cs = s.cell_size;
+			cfg.ch = s.cell_height;
+			cfg.walkableSlopeAngle = s.agent_max_slope;
+			cfg.walkableHeight = std::max(3, (int)std::ceil(s.agent_height / cfg.ch));
+			cfg.walkableClimb = std::min(cfg.walkableHeight - 1, (int)std::floor(s.agent_max_climb / cfg.ch));
+			cfg.walkableRadius = (int)std::ceil(s.agent_radius / cfg.cs);
+			cfg.maxEdgeLen = (int)(s.edge_max_len / s.cell_size);
+			cfg.maxSimplificationError = s.edge_max_error;
+			cfg.minRegionArea = (int)rcSqr(s.region_min_size);
+			cfg.mergeRegionArea = (int)rcSqr(s.region_merge_size);
+			cfg.maxVertsPerPoly = s.verts_per_poly;
+			cfg.tileSize = s.tile_size;
+			cfg.borderSize = cfg.walkableRadius + 3;
+			cfg.width = cfg.tileSize + cfg.borderSize * 2;
+			cfg.height = cfg.tileSize + cfg.borderSize * 2;
+			cfg.detailSampleDist = s.detail_sample_dist < 0.9f ? 0.0f : s.cell_size * s.detail_sample_dist;
+			cfg.detailSampleMaxError = s.cell_height * s.detail_sample_max_error;
+
+			// #451: one heightfield column holds RC_SPAN_MAX_HEIGHT cells of the cell height (819 m at 0.1 m). Every tile
+			// used to span the whole level's height, so in a taller level everything that high above the lowest geometry
+			// was lost — Recast squashes such triangles onto the column's top cell, the box fill skipped them — while the
+			// bake reported success. Such a level bakes every tile in its own height window instead (fit_tile_window); a
+			// level that fits keeps the one shared window, unchanged.
+			const int column_cells = RC_SPAN_MAX_HEIGHT - k_window_margin_cells;
+			job.tile_windows = job.bmax[1] - job.bmin[1] > (f32)column_cells * s.cell_height;
+			if (job.tile_windows && !loaded)
+				log("bake: the level spans %.1f m of height, more than %d x Cell Height %.2f = %.1f m - every tile gets its own height window",
+					job.bmax[1] - job.bmin[1], column_cells, s.cell_height, (f32)column_cells * s.cell_height);
+
+			// Bin the geometry into the tiles whose (border-expanded) bounds it overlaps.
+			const f32 border = cfg.borderSize * cfg.cs;
+			job.tile_tris.assign((size_t)tile_total, {});
+			job.tile_boxes.assign((size_t)tile_total, {});
+			auto tile_range = [&](f32 minx, f32 maxx, f32 minz, f32 maxz, int& tx0, int& tx1, int& tz0, int& tz1) -> bool
+			{
+				tx0 = (int)std::floor((minx - border - job.bmin[0]) / job.tile_world);
+				tx1 = (int)std::floor((maxx + border - job.bmin[0]) / job.tile_world);
+				tz0 = (int)std::floor((minz - border - job.bmin[2]) / job.tile_world);
+				tz1 = (int)std::floor((maxz + border - job.bmin[2]) / job.tile_world);
+				if (tx1 < 0 || tz1 < 0 || tx0 >= job.tiles_x || tz0 >= job.tiles_z) return false;
+				tx0 = std::max(tx0, 0); tz0 = std::max(tz0, 0);
+				tx1 = std::min(tx1, job.tiles_x - 1); tz1 = std::min(tz1, job.tiles_z - 1);
+				return true;
+			};
+			for (s32 t : tri_index)
+			{
+				const s32* ti = &tris[t * 3];
+				f32 minx = 3.0e38f, maxx = -3.0e38f, minz = 3.0e38f, maxz = -3.0e38f;
+				for (int k = 0; k < 3; ++k)
+				{
+					const f32* v = &verts[ti[k] * 3];
+					minx = std::min(minx, v[0]); maxx = std::max(maxx, v[0]);
+					minz = std::min(minz, v[2]); maxz = std::max(maxz, v[2]);
+				}
+				int tx0, tx1, tz0, tz1;
+				if (!tile_range(minx, maxx, minz, maxz, tx0, tx1, tz0, tz1)) continue;
+				for (int tz = tz0; tz <= tz1; ++tz)
+					for (int tx = tx0; tx <= tx1; ++tx) job.tile_tris[(size_t)(tz * job.tiles_x + tx)].push_back(t);
+			}
+			for (s32 i = 0; i < (s32)job.boxes.size(); ++i)
+			{
+				const solid_box& b = job.boxes[(size_t)i];
+				int tx0, tx1, tz0, tz1;
+				if (!tile_range(b.bmin.x, b.bmax.x, b.bmin.z, b.bmax.z, tx0, tx1, tz0, tz1)) continue;
+				for (int tz = tz0; tz <= tz1; ++tz)
+					for (int tx = tx0; tx <= tx1; ++tx) job.tile_boxes[(size_t)(tz * job.tiles_x + tx)].push_back(i);
+			}
+			return 0;
+		}
 	}
+	using namespace bake_detail;
 
 	s32 bake(const f32* verts, s32 vert_count, const s32* tris, s32 tri_count, const u8* tri_areas,
 		const f32* boxes, s32 box_count, const u8* box_areas, const bake_settings* settings, bake_stats* out_stats)
@@ -724,170 +932,11 @@ namespace vortex::navigation {
 		const auto t0 = std::chrono::steady_clock::now();
 		bake_job job{};
 		if (settings) job.s = *settings; else default_settings(&job.s);
-		bake_settings& s = job.s;
-		if (!sane(s)) { log("bake: invalid settings"); return bake_error_bad_settings; }
-		s.verts_per_poly = rcClamp(s.verts_per_poly, 3, (int)DT_VERTS_PER_POLYGON);
-		s.tile_size = rcClamp(s.tile_size, 16, 1024);
-		s.region_min_size = std::max(0.0f, s.region_min_size);
-		s.region_merge_size = std::max(0.0f, s.region_merge_size);
-		s.edge_max_len = std::max(0.0f, s.edge_max_len);
-		s.edge_max_error = std::max(0.1f, s.edge_max_error);
-		s.detail_sample_dist = std::max(0.0f, s.detail_sample_dist);
-		s.detail_sample_max_error = std::max(0.0f, s.detail_sample_max_error);
-		if (s.partition < partition_watershed || s.partition > partition_layers) s.partition = partition_watershed;
-
-		if (vert_count < 0 || tri_count < 0 || box_count < 0) return bake_error_no_geometry;
-		if (tri_count > 0 && (!verts || !tris)) return bake_error_no_geometry;
-		if (box_count > 0 && !boxes) return bake_error_no_geometry;
-		job.verts = verts;
-		job.tris = tris;
-		job.walkable_cos = std::cos(s.agent_max_slope / 180.0f * k_pi);
-
-		// Validate the triangles, apply the slope test and gather the geometry bounds.
-		f32 gmin[3] = { 3.0e38f, 3.0e38f, 3.0e38f }, gmax[3] = { -3.0e38f, -3.0e38f, -3.0e38f };
-		auto grow = [&](f32 x, f32 y, f32 z)
-		{
-			gmin[0] = std::min(gmin[0], x); gmin[1] = std::min(gmin[1], y); gmin[2] = std::min(gmin[2], z);
-			gmax[0] = std::max(gmax[0], x); gmax[1] = std::max(gmax[1], y); gmax[2] = std::max(gmax[2], z);
-		};
-		job.tri_area.assign((size_t)tri_count, (u8)RC_NULL_AREA);
-		std::vector<s32> tri_index;   // triangles that passed validation
-		tri_index.reserve((size_t)tri_count);
-		for (s32 t = 0; t < tri_count; ++t)
-		{
-			const s32* ti = &tris[t * 3];
-			if (ti[0] < 0 || ti[1] < 0 || ti[2] < 0 || ti[0] >= vert_count || ti[1] >= vert_count || ti[2] >= vert_count) continue;
-			const f32* a = &verts[ti[0] * 3];
-			const f32* b = &verts[ti[1] * 3];
-			const f32* c = &verts[ti[2] * 3];
-			bool ok = true;
-			for (int k = 0; k < 3; ++k) ok = ok && finite(a[k]) && finite(b[k]) && finite(c[k]);
-			if (!ok) continue;
-			const u8 user = tri_areas ? (u8)std::min<u32>(tri_areas[t], area_ground) : area_ground;
-			job.tri_area[(size_t)t] = slope_area({ a[0], a[1], a[2] }, { b[0], b[1], b[2] }, { c[0], c[1], c[2] }, user, job.walkable_cos);
-			grow(a[0], a[1], a[2]); grow(b[0], b[1], b[2]); grow(c[0], c[1], c[2]);
-			tri_index.push_back(t);
-		}
-
-		job.boxes.reserve((size_t)box_count);
-		for (s32 i = 0; i < box_count; ++i)
-		{
-			solid_box b{};
-			const u8 user = box_areas ? (u8)std::min<u32>(box_areas[i], area_ground) : area_ground;
-			if (!prepare_box(&boxes[i * box_floats], user, job.walkable_cos, b)) continue;
-			grow(b.bmin.x, b.bmin.y, b.bmin.z);
-			grow(b.bmax.x, b.bmax.y, b.bmax.z);
-			job.boxes.push_back(b);
-		}
-		if (tri_index.empty() && job.boxes.empty())
-		{
-			log("bake: no geometry");
-			return bake_error_no_geometry;
-		}
-
-		// Bounds: explicit (min < max on every axis) or the geometry's.
-		const bool explicit_bounds = s.bounds_min[0] < s.bounds_max[0] && s.bounds_min[1] < s.bounds_max[1] && s.bounds_min[2] < s.bounds_max[2];
-		for (int k = 0; k < 3; ++k)
-		{
-			job.bmin[k] = explicit_bounds ? s.bounds_min[k] : gmin[k];
-			job.bmax[k] = explicit_bounds ? s.bounds_max[k] : gmax[k];
-		}
-		// A flat world still needs a y range for the spans; keep the tile grid aligned to the cell size.
-		if (job.bmax[1] - job.bmin[1] < s.cell_height * 4.0f) job.bmax[1] = job.bmin[1] + s.cell_height * 4.0f;
-
-		// The tile grid. #517: the 32-bit poly ref split 22 bits between the tile index and the polygon index by the tile
-		// count of this grid, so the polygons a tile could hold shrank as the bounds grew (and a smaller Tile Size, with
-		// more tiles, shrank them as fast). With 64-bit refs a tile's polygons only meet the fixed per-tile limits in
-		// build_tile, and the grid only bounds the bake's own bookkeeping (max_bake_tiles), counted in 64 bits — cell counts
-		// beyond an int are refused before rcCalcGridSize converts them.
-		const d64 cells_x = (d64)(job.bmax[0] - job.bmin[0]) / s.cell_size, cells_z = (d64)(job.bmax[2] - job.bmin[2]) / s.cell_size;
-		s64 grid_tiles = (s64)max_bake_tiles + 1;
-		if (cells_x < 1.0e9 && cells_z < 1.0e9)
-		{
-			int gw = 0, gh = 0;
-			rcCalcGridSize(job.bmin, job.bmax, s.cell_size, &gw, &gh);
-			job.tiles_x = std::max(1, (gw + s.tile_size - 1) / s.tile_size);
-			job.tiles_z = std::max(1, (gh + s.tile_size - 1) / s.tile_size);
-			grid_tiles = (s64)job.tiles_x * job.tiles_z;
-		}
-		if (grid_tiles > max_bake_tiles)
-		{
-			log("bake: the bounds need %.0f x %.0f tiles, more than the %d a bake handles - raise the tile size or the cell size",
-				std::ceil(cells_x / s.tile_size), std::ceil(cells_z / s.tile_size), max_bake_tiles);
-			return bake_error_too_many_tiles;
-		}
-		const s32 tile_total = (s32)grid_tiles;
-		job.tile_world = s.tile_size * s.cell_size;
-
-		rcConfig& cfg = job.base;
-		std::memset(&cfg, 0, sizeof(cfg));
-		cfg.cs = s.cell_size;
-		cfg.ch = s.cell_height;
-		cfg.walkableSlopeAngle = s.agent_max_slope;
-		cfg.walkableHeight = std::max(3, (int)std::ceil(s.agent_height / cfg.ch));
-		cfg.walkableClimb = std::min(cfg.walkableHeight - 1, (int)std::floor(s.agent_max_climb / cfg.ch));
-		cfg.walkableRadius = (int)std::ceil(s.agent_radius / cfg.cs);
-		cfg.maxEdgeLen = (int)(s.edge_max_len / s.cell_size);
-		cfg.maxSimplificationError = s.edge_max_error;
-		cfg.minRegionArea = (int)rcSqr(s.region_min_size);
-		cfg.mergeRegionArea = (int)rcSqr(s.region_merge_size);
-		cfg.maxVertsPerPoly = s.verts_per_poly;
-		cfg.tileSize = s.tile_size;
-		cfg.borderSize = cfg.walkableRadius + 3;
-		cfg.width = cfg.tileSize + cfg.borderSize * 2;
-		cfg.height = cfg.tileSize + cfg.borderSize * 2;
-		cfg.detailSampleDist = s.detail_sample_dist < 0.9f ? 0.0f : s.cell_size * s.detail_sample_dist;
-		cfg.detailSampleMaxError = s.cell_height * s.detail_sample_max_error;
-
-		// #451: one heightfield column holds RC_SPAN_MAX_HEIGHT cells of the cell height (819 m at 0.1 m). Every tile
-		// used to span the whole level's height, so in a taller level everything that high above the lowest geometry
-		// was lost — Recast squashes such triangles onto the column's top cell, the box fill skipped them — while the
-		// bake reported success. Such a level bakes every tile in its own height window instead (fit_tile_window); a
-		// level that fits keeps the one shared window, unchanged.
+		const s32 prepared = prepare_job(job, verts, vert_count, tris, tri_count, tri_areas, boxes, box_count, box_areas, nullptr);
+		if (prepared < 0) return prepared;
+		const bake_settings& s = job.s;
+		const s32 tile_total = job.tiles_x * job.tiles_z;
 		const int column_cells = RC_SPAN_MAX_HEIGHT - k_window_margin_cells;
-		job.tile_windows = job.bmax[1] - job.bmin[1] > (f32)column_cells * s.cell_height;
-		if (job.tile_windows)
-			log("bake: the level spans %.1f m of height, more than %d x Cell Height %.2f = %.1f m - every tile gets its own height window",
-				job.bmax[1] - job.bmin[1], column_cells, s.cell_height, (f32)column_cells * s.cell_height);
-
-		// Bin the geometry into the tiles whose (border-expanded) bounds it overlaps.
-		const f32 border = cfg.borderSize * cfg.cs;
-		job.tile_tris.assign((size_t)tile_total, {});
-		job.tile_boxes.assign((size_t)tile_total, {});
-		auto tile_range = [&](f32 minx, f32 maxx, f32 minz, f32 maxz, int& tx0, int& tx1, int& tz0, int& tz1) -> bool
-		{
-			tx0 = (int)std::floor((minx - border - job.bmin[0]) / job.tile_world);
-			tx1 = (int)std::floor((maxx + border - job.bmin[0]) / job.tile_world);
-			tz0 = (int)std::floor((minz - border - job.bmin[2]) / job.tile_world);
-			tz1 = (int)std::floor((maxz + border - job.bmin[2]) / job.tile_world);
-			if (tx1 < 0 || tz1 < 0 || tx0 >= job.tiles_x || tz0 >= job.tiles_z) return false;
-			tx0 = std::max(tx0, 0); tz0 = std::max(tz0, 0);
-			tx1 = std::min(tx1, job.tiles_x - 1); tz1 = std::min(tz1, job.tiles_z - 1);
-			return true;
-		};
-		for (s32 t : tri_index)
-		{
-			const s32* ti = &tris[t * 3];
-			f32 minx = 3.0e38f, maxx = -3.0e38f, minz = 3.0e38f, maxz = -3.0e38f;
-			for (int k = 0; k < 3; ++k)
-			{
-				const f32* v = &verts[ti[k] * 3];
-				minx = std::min(minx, v[0]); maxx = std::max(maxx, v[0]);
-				minz = std::min(minz, v[2]); maxz = std::max(maxz, v[2]);
-			}
-			int tx0, tx1, tz0, tz1;
-			if (!tile_range(minx, maxx, minz, maxz, tx0, tx1, tz0, tz1)) continue;
-			for (int tz = tz0; tz <= tz1; ++tz)
-				for (int tx = tx0; tx <= tx1; ++tx) job.tile_tris[(size_t)(tz * job.tiles_x + tx)].push_back(t);
-		}
-		for (s32 i = 0; i < (s32)job.boxes.size(); ++i)
-		{
-			const solid_box& b = job.boxes[(size_t)i];
-			int tx0, tx1, tz0, tz1;
-			if (!tile_range(b.bmin.x, b.bmax.x, b.bmin.z, b.bmax.z, tx0, tx1, tz0, tz1)) continue;
-			for (int tz = tz0; tz <= tz1; ++tz)
-				for (int tx = tx0; tx <= tx1; ++tx) job.tile_boxes[(size_t)(tz * job.tiles_x + tx)].push_back(i);
-		}
 
 		// Build the tiles on a worker pool.
 		job.out.assign((size_t)tile_total, {});
@@ -921,7 +970,7 @@ namespace vortex::navigation {
 		bake_stats st{};
 		st.tiles_x = job.tiles_x;
 		st.tiles_z = job.tiles_z;
-		st.input_triangles = (s32)tri_index.size();
+		st.input_triangles = job.input_triangles;
 		st.input_boxes = (s32)job.boxes.size();
 		std::vector<s32> failed;
 		s32 coarse = 0, tallest = -1, cut = 0, first_cut = -1, densest = 0;
@@ -1059,6 +1108,99 @@ namespace vortex::navigation {
 		if (n > 0) std::memcpy(out, g_notes.data(), (size_t)n);
 		out[n] = '\0';
 		return n;
+	}
+}
+
+// ---- runtime tile rebuilds (#435) --------------------------------------------------------------------------------
+// The loaded navmesh's own bake input, prepared once the way bake() prepares it — with the bounds and grid of the
+// navmesh's header — so build_tile reproduces any tile: unchanged without obstacles, carved with them.
+
+namespace vortex::navigation::rebuild {
+
+	struct source
+	{
+		std::vector<f32> verts;
+		std::vector<s32> tris;
+		std::vector<u8> tri_areas;
+		std::vector<f32> boxes;
+		std::vector<u8> box_areas;
+		format::file_header header{};   // the navmesh it is binned for
+		bake_detail::bake_job job;      // its verts / tris point into the vectors above (prepare_source)
+	};
+
+	std::shared_ptr<source> copy_source(const format::file_header& header, const f32* verts, s32 vert_count, const s32* tris,
+		s32 tri_count, const u8* tri_areas, const f32* boxes, s32 box_count, const u8* box_areas)
+	{
+		if (header.magic != data_magic || header.stats.tiles_x <= 0 || header.stats.tiles_z <= 0) return nullptr;
+		if (vert_count < 0 || tri_count < 0 || box_count < 0) return nullptr;
+		auto src = std::make_shared<source>();
+		if (verts && vert_count > 0) src->verts.assign(verts, verts + (size_t)vert_count * 3);
+		if (tris && tri_count > 0) src->tris.assign(tris, tris + (size_t)tri_count * 3);
+		if (tri_areas && tri_count > 0) src->tri_areas.assign(tri_areas, tri_areas + tri_count);
+		if (boxes && box_count > 0) src->boxes.assign(boxes, boxes + (size_t)box_count * box_floats);
+		if (box_areas && box_count > 0) src->box_areas.assign(box_areas, box_areas + box_count);
+		src->header = header;
+		return src;
+	}
+
+	bool prepare_source(source& src)
+	{
+		src.job.s = src.header.settings;
+		const s32 r = bake_detail::prepare_job(src.job, src.verts.empty() ? nullptr : src.verts.data(), (s32)(src.verts.size() / 3),
+			src.tris.empty() ? nullptr : src.tris.data(), (s32)(src.tris.size() / 3), src.tri_areas.empty() ? nullptr : src.tri_areas.data(),
+			src.boxes.empty() ? nullptr : src.boxes.data(), (s32)(src.boxes.size() / box_floats), src.box_areas.empty() ? nullptr : src.box_areas.data(),
+			&src.header);
+		return r >= 0;
+	}
+
+	std::shared_ptr<const source> make_source(const format::file_header& header, const f32* verts, s32 vert_count, const s32* tris,
+		s32 tri_count, const u8* tri_areas, const f32* boxes, s32 box_count, const u8* box_areas)
+	{
+		auto src = copy_source(header, verts, vert_count, tris, tri_count, tri_areas, boxes, box_count, box_areas);
+		if (!src || !prepare_source(*src)) return nullptr;
+		return src;
+	}
+
+	s32 source_triangles(const source& s) { return s.job.input_triangles; }
+	s32 source_boxes(const source& s) { return (s32)s.job.boxes.size(); }
+
+	size_t source_bytes(const source& s)
+	{
+		size_t n = s.verts.size() * sizeof(f32) + s.tris.size() * sizeof(s32) + s.tri_areas.size() + s.boxes.size() * sizeof(f32) + s.box_areas.size()
+			+ s.job.tri_area.size() + s.job.boxes.size() * sizeof(bake_detail::solid_box);
+		for (const auto& l : s.job.tile_tris) n += l.capacity() * sizeof(s32) + sizeof(l);
+		for (const auto& l : s.job.tile_boxes) n += l.capacity() * sizeof(s32) + sizeof(l);
+		return n;
+	}
+
+	bool tile_range(const source& s, const f32* bmin, const f32* bmax, s32& tx0, s32& tz0, s32& tx1, s32& tz1)
+	{
+		const auto& job = s.job;
+		const f32 border = job.base.borderSize * job.base.cs;
+		tx0 = (s32)std::floor((bmin[0] - border - job.bmin[0]) / job.tile_world);
+		tx1 = (s32)std::floor((bmax[0] + border - job.bmin[0]) / job.tile_world);
+		tz0 = (s32)std::floor((bmin[2] - border - job.bmin[2]) / job.tile_world);
+		tz1 = (s32)std::floor((bmax[2] + border - job.bmin[2]) / job.tile_world);
+		if (tx1 < 0 || tz1 < 0 || tx0 >= job.tiles_x || tz0 >= job.tiles_z || tx0 > tx1 || tz0 > tz1) return false;
+		tx0 = std::max(tx0, 0); tz0 = std::max(tz0, 0);
+		tx1 = std::min(tx1, job.tiles_x - 1); tz1 = std::min(tz1, job.tiles_z - 1);
+		return true;
+	}
+
+	bool build_tile(const source& s, s32 tx, s32 tz, const std::vector<carve_volume>& carves, std::vector<u8>& out, std::string& error)
+	{
+		out.clear();
+		error.clear();
+		if (tx < 0 || tz < 0 || tx >= s.job.tiles_x || tz >= s.job.tiles_z) { error = "outside the tile grid"; return false; }
+		bake_detail::bake_job::tile_out result;
+		bake_detail::build_tile(s.job, tx, tz, result, carves.empty() ? nullptr : &carves);
+		if (result.failed)
+		{
+			error = std::string(result.reason ? result.reason : "failed") + (result.error.empty() ? "" : " (" + result.error + ")");
+			return false;
+		}
+		out.swap(result.data);
+		return true;
 	}
 }
 

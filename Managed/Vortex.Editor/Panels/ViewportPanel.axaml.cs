@@ -214,9 +214,10 @@ namespace VortexEditor.Panels
             m.Items.Add(new Separator());
             var phys = new MenuItem { Header = "Physics Debug (play)", ToggleType = MenuItemToggleType.CheckBox, IsChecked = Editor.Core.Services.Physics.PhysicsService.ShowPhysicsDebug };
             phys.Click += (a, b) => EditorCommands.TogglePhysicsDebug();
-            // #106: the debug layers — bodies (static grey / kinematic blue / dynamic cyan / sleeping dim), joints, characters, contacts
+            // #106: the debug layers — bodies (static grey / kinematic blue / dynamic cyan / sleeping dim), joints, characters, contacts;
+            // #480: the script queries (sphere / capsule / box casts and RaycastAll of the frame, magenta)
             var layers = new MenuItem { Header = "Physics Debug Layers" };
-            foreach (var (name, flag) in new[] { ("Bodies", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Bodies), ("Joints", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Joints), ("Characters", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Characters), ("Contacts", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Contacts) })
+            foreach (var (name, flag) in new[] { ("Bodies", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Bodies), ("Joints", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Joints), ("Characters", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Characters), ("Contacts", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Contacts), ("Queries", Editor.Core.Services.Physics.PhysicsService.DebugLayer.Queries) })
             {
                 var item = new MenuItem { Header = name, ToggleType = MenuItemToggleType.CheckBox, IsChecked = (Editor.Core.Services.Physics.PhysicsService.DebugLayers & flag) != 0 };
                 var f = flag;

@@ -2,10 +2,12 @@
 
 #include "../Engine/Navigation/NavigationWorld.h"
 #include "../Engine/Navigation/NavigationFormat.h"
+#include "../Engine/Navigation/NavigationRebuild.h"
 
 #include "Test.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -14,6 +16,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if VORTEX_HAS_RECAST
@@ -49,6 +52,8 @@ public:
 				run_query_tests();
 				run_serialization_tests();
 				run_crowd_tests();
+				run_follow_tests();
+				run_obstacle_tests();
 				run_tall_level_tests();   // replaces the loaded navmesh
 				run_legacy_file_tests();
 				run_corrupt_file_tests();
@@ -448,6 +453,549 @@ private:
 		navigation::load(_blob.data(), (s32)_blob.size());
 		check("reload drops agents", w != 0 && !navigation::agent_valid(w) && navigation::agent_count() == 0);
 	}
+
+	// ---- agents whose entity moves itself (#434: Update Position off) ----------------------------------------------------
+	// The game moves the entity (here: by the agent's desired velocity, the way a script would); every frame the agent
+	// follows it before the crowd step. It never fights the entity, keeps its path, avoids others, and re-plans after a jump.
+
+	struct follower
+	{
+		u32 agent{ 0 };
+		f32 pos[3]{};
+		f32 vel[3]{};
+	};
+
+	// One frame of a follower: the agent follows the entity, the crowd steps, the "script" moves the entity by the desired
+	// velocity. Returns agent_follow's answer (1 slid, 2 placed).
+	static s32 follow_step(follower& f)
+	{
+		const s32 r = navigation::agent_follow(f.agent, f.pos, f.vel);
+		return r;
+	}
+
+	static void move_by_desired(follower& f, bool move_entity)
+	{
+		navigation::agent_state st{};
+		navigation::agent_get_state(f.agent, &st);
+		for (int k = 0; k < 3; ++k) f.vel[k] = move_entity ? st.desired_velocity[k] : 0.0f;
+		f.vel[1] = 0.0f;
+		for (int k = 0; k < 3; ++k) f.pos[k] += f.vel[k] * k_dt;
+		f.pos[1] = st.position[1];   // the "script" keeps its feet on the ground under it
+	}
+
+	void run_follow_tests()
+	{
+		const auto p = params();
+		const f32 start[3] = { -5, 0, 0 }, goal[3] = { 5, 0, 0 };
+
+		// (a) the entity stands still: the agent stays with it, its desired velocity leads along the path at full speed
+		follower f{ navigation::agent_add(start, &p), { -5, 0, 0 }, {} };
+		navigation::agent_set_target(f.agent, goal);
+		navigation::agent_state st{};
+		bool stayed = true;
+		for (int i = 0; i < 30; ++i)
+		{
+			follow_step(f);
+			navigation::crowd_update(k_dt);
+			navigation::agent_get_state(f.agent, &st);
+			move_by_desired(f, false);
+		}
+		navigation::agent_follow(f.agent, f.pos, f.vel);
+		navigation::agent_get_state(f.agent, &st);
+		stayed = dist(st.position, f.pos) < 0.05f;
+		const f32 to_corner[3] = { st.next_corner[0] - f.pos[0], 0.0f, st.next_corner[2] - f.pos[2] };
+		const f32 corner_len = std::sqrt(to_corner[0] * to_corner[0] + to_corner[2] * to_corner[2]);
+		const f32 dv = std::sqrt(st.desired_velocity[0] * st.desired_velocity[0] + st.desired_velocity[2] * st.desired_velocity[2]);
+		const f32 along = corner_len > 1e-4f && dv > 1e-4f ? (st.desired_velocity[0] * to_corner[0] + st.desired_velocity[2] * to_corner[2]) / (corner_len * dv) : 0.0f;
+		std::printf("[info] follower standing still: agent at (%.2f, %.2f), desired velocity %.2f m/s, %.2f along the next corner, %d corners\n",
+			st.position[0], st.position[2], dv, along, st.corner_count);
+		check("follower: an entity that stands still keeps its agent with it", stayed);
+		check("follower: its desired velocity leads to the next corner at full speed", along > 0.8f && dv > 3.0f && dv < 3.6f);
+
+		// (b) the entity is moved by the desired velocity: it walks around the wall to the goal, the agent always slides
+		bool always_slid = true;
+		f32 clearance = 1.0e9f;
+		int arrive = -1;
+		for (int i = 0; i < 60 * 12 && arrive < 0; ++i)
+		{
+			always_slid = follow_step(f) == 1 && always_slid;
+			navigation::crowd_update(k_dt);
+			move_by_desired(f, true);
+			clearance = std::min(clearance, wall_distance(f.pos[0], f.pos[2]));
+			if (dist(f.pos, goal) < 0.4f) arrive = i;
+		}
+		std::printf("[info] follower walked by its desired velocity: arrived after %.2f s, wall clearance %.3f m, always slid %d\n",
+			arrive / 60.0f, clearance, always_slid ? 1 : 0);
+		check("follower: moved by its desired velocity the entity reaches the goal around the wall", arrive > 0);
+		check("follower: … keeping its radius from the wall (minus the simplification tolerance)", clearance > k_radius - 0.27f);
+		check("follower: … and the agent followed it along the navmesh every frame (never re-planned)", always_slid);
+
+		// (c) the entity jumps through the wall: the agent is placed on the other side and keeps its target
+		const f32 near_wall[3] = { -2, 0, 0 }, beyond[3] = { 2, 0, 0 };
+		navigation::agent_teleport(f.agent, near_wall);
+		navigation::agent_set_target(f.agent, goal);
+		for (int i = 0; i < 10; ++i) navigation::crowd_update(k_dt);
+		std::copy(beyond, beyond + 3, f.pos);
+		const f32 still[3] = { 0, 0, 0 };
+		const s32 jumped = navigation::agent_follow(f.agent, f.pos, still);
+		for (int i = 0; i < 20; ++i) navigation::crowd_update(k_dt);
+		navigation::agent_get_state(f.agent, &st);
+		std::printf("[info] follower through the wall: follow %d, state %d, remaining %.2f m\n", jumped, st.move_state, st.remaining_distance);
+		check("follower: an entity moved through the wall is followed by placing the agent there", jumped == 2);
+		check("follower: … which keeps its target and re-plans from there (~3 m straight, not around the wall)",
+			st.move_state == navigation::move_moving && st.remaining_distance > 2.0f && st.remaining_distance < 3.6f);
+
+		// (d) an entity just off the navmesh (a capsule pressed against the wall, inside the eroded margin) is still a slide
+		const f32 hugging[3] = { -0.6f, 0, 2 };
+		const f32 approach[3] = { -1.5f, 0, 2 };
+		navigation::agent_teleport(f.agent, approach);
+		navigation::agent_set_target(f.agent, goal);
+		for (int i = 0; i < 10; ++i) navigation::crowd_update(k_dt);
+		const s32 hugged = navigation::agent_follow(f.agent, hugging, still);
+		navigation::agent_get_state(f.agent, &st);
+		check("follower: an entity against the wall, off the eroded navmesh, keeps its path (a slide, no re-plan)",
+			hugged == 1 && st.move_state == navigation::move_moving);
+		navigation::crowd_clear();
+
+		// (e) two followers head-on: moved by their desired velocities they pass each other without touching
+		follower a{ navigation::agent_add(start, &p), {}, {} }, b{};
+		const f32 a0[3] = { -6, 0, -9 }, a1[3] = { 6, 0, -9 };
+		navigation::agent_teleport(a.agent, a0);
+		std::copy(a0, a0 + 3, a.pos);
+		b.agent = navigation::agent_add(a1, &p);
+		std::copy(a1, a1 + 3, b.pos);
+		navigation::agent_set_target(a.agent, a1);
+		navigation::agent_set_target(b.agent, a0);
+		f32 min_sep = 100.0f;
+		for (int i = 0; i < 60 * 15; ++i)
+		{
+			follow_step(a);
+			follow_step(b);
+			navigation::crowd_update(k_dt);
+			move_by_desired(a, true);
+			move_by_desired(b, true);
+			const f32 dx = a.pos[0] - b.pos[0], dz = a.pos[2] - b.pos[2];
+			min_sep = std::min(min_sep, std::sqrt(dx * dx + dz * dz));
+		}
+		std::printf("[info] head-on followers: min separation %.3f m, A (%.2f, %.2f) B (%.2f, %.2f)\n", min_sep, a.pos[0], a.pos[2], b.pos[0], b.pos[2]);
+		check("followers head-on: their desired velocities avoid each other (min separation > 0.9 x radii)", min_sep > 0.9f * 2.0f * k_radius);
+		check("followers head-on: both arrive", dist(a.pos, a1) < 0.6f && dist(b.pos, a0) < 0.6f);
+		navigation::crowd_clear();
+	}
+
+	// ---- dynamic obstacles and runtime tile rebuilds (#435) ---------------------------------------------------------------
+#if VORTEX_HAS_RECAST   // (the rebuild internals exist with Recast only; the stub build verifies the stub contract)
+	// The test level's wall (x -0.5..0.5, z -6..6) has a gap at each end to the floor's edge (z 6..15 and -15..-6). A box in
+	// the north gap closes it; paths and walking agents go south; removing it, or switching it off, opens the gap again.
+
+	static f32 path_extreme_z(const f32* a, const f32* b, s32* status, bool max)
+	{
+		std::vector<f32> pts(256 * 3);
+		*status = navigation::path_invalid;
+		const s32 n = navigation::find_path(a, b, nullptr, pts.data(), 256, status);
+		f32 z = max ? -1.0e9f : 1.0e9f;
+		for (s32 i = 0; i < n; ++i) z = max ? std::max(z, pts[(size_t)i * 3 + 2]) : std::min(z, pts[(size_t)i * 3 + 2]);
+		return n > 0 ? z : 0.0f;
+	}
+
+	// The north gap's blocker: 1 m thick, z 6.2 .. 14.8.
+	static constexpr f32 k_gate_center[3] = { 0.0f, 1.0f, 10.5f };
+	static constexpr f32 k_gate_half[3] = { 0.5f, 1.0f, 4.3f };
+
+	static bool baked_tiles_match(const std::vector<u8>& blob, const navigation::rebuild::source& src, int& compared)
+	{
+		namespace format = navigation::format;
+		format::file_header h{};
+		std::memcpy(&h, blob.data(), sizeof(h));
+		size_t off = sizeof(h);
+		compared = 0;
+		const std::vector<navigation::rebuild::carve_volume> none;
+		for (s32 i = 0; i < h.tile_count; ++i)
+		{
+			format::tile_header th{};
+			std::memcpy(&th, &blob[off], sizeof(th));
+			off += sizeof(th);
+			std::vector<u8> built;
+			std::string error;
+			if (!navigation::rebuild::build_tile(src, th.tx, th.tz, none, built, error)) return false;
+			if (built.size() != (size_t)th.size || std::memcmp(built.data(), &blob[off], built.size()) != 0) return false;
+			off += (size_t)format::padded(th.size);
+			++compared;
+		}
+		return true;
+	}
+
+	void run_obstacle_tests()
+	{
+		navigation::load(_blob.data(), (s32)_blob.size());
+		const s32 vcount = (s32)_verts.size() / 3, tcount = (s32)_tris.size() / 3, bcount = (s32)_boxes.size() / navigation::box_floats;
+		const f32 west[3] = { -5, 0, 3 }, east[3] = { 5, 0, 3 };
+		s32 status = 0;
+
+		// (a) the bake's own pipeline: every tile rebuilt from the same geometry without obstacles is the baked tile
+		navigation::format::file_header header{};
+		std::memcpy(&header, _blob.data(), sizeof(header));
+		const auto src = navigation::rebuild::make_source(header, _verts.data(), vcount, _tris.data(), tcount, nullptr, _boxes.data(), bcount, nullptr);
+		int compared = 0;
+		check("rebuild: a source made from the bake's geometry", src != nullptr);
+		check("rebuild: every tile rebuilt without obstacles is the baked tile, byte for byte", src && baked_tiles_match(_blob, *src, compared) && compared >= 4);
+
+		check("obstacles need a source: without one a carving obstacle is never ready and changes nothing", [&]
+		{
+			const u32 o = navigation::obstacle_add(navigation::obstacle_box, k_gate_center, k_gate_half, nullptr, navigation::obstacle_carve | navigation::obstacle_active);
+			navigation::rebuild_flush(50.0f);
+			const bool waiting = o != 0 && navigation::obstacle_valid(o) && !navigation::obstacle_ready(o) && navigation::obstacle_count() == 1
+				&& path_extreme_z(west, east, &status, true) > 6.0f;
+			navigation::obstacle_remove(o);
+			return waiting && navigation::obstacle_count() == 0 && !navigation::obstacle_valid(o);
+		}());
+		check("rebuild_set_source takes the bake's geometry", navigation::rebuild_set_source(_verts.data(), vcount, _tris.data(), tcount, nullptr, _boxes.data(), bcount, nullptr)
+			&& navigation::rebuild_has_source());
+		const f32 north_before = path_extreme_z(west, east, &status, true);
+		check("rebuild: from z 3 the path around the wall takes the north gap", status == navigation::path_complete && north_before > 6.0f);
+
+		// (b) a box in the north gap: the path goes south once its tiles are rebuilt — measured from the add to the swap
+		const auto t0 = std::chrono::steady_clock::now();
+		const u32 gate = navigation::obstacle_add(navigation::obstacle_box, k_gate_center, k_gate_half, nullptr, navigation::obstacle_carve | navigation::obstacle_active);
+		const bool flushed = navigation::rebuild_flush(2000.0f);
+		const d64 latency = std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		navigation::rebuild_stats st{};
+		navigation::rebuild_get_stats(&st);
+		const f32 south = path_extreme_z(west, east, &status, false);
+		std::printf("[info] obstacle in the north gap: rebuilt %d tiles in %.1f ms (worker: %.2f ms the slowest tile; game thread: %.2f ms the slowest swap), path now via z %.2f\n",
+			st.tiles_swapped, latency, st.build_ms_max, st.swap_ms_max, south);
+		check("obstacle: added, rebuilt and ready well within 100 ms", gate != 0 && flushed && navigation::obstacle_ready(gate) && latency < 100.0);
+		check("obstacle: the path now goes around the south end", status == navigation::path_complete && south < -6.0f
+			&& path_extreme_z(west, east, &status, true) < 6.0f);
+		const f32 in_gate[3] = { 0.0f, 0.0f, 10.5f };
+		f32 near[3]{};
+		check("obstacle: a point in the gap snaps out of the blocked polygons", navigation::closest_point(in_gate, nullptr, near)
+			&& (std::fabs(near[0]) > 0.5f + k_radius - 0.3f || near[2] < 6.2f - k_radius + 0.3f));
+
+		// (c) a door: switching the obstacle off and on flips its polygons at once — no tile is rebuilt
+		const s32 built_before = st.tiles_built;
+		navigation::obstacle_set(gate, nullptr, nullptr, nullptr, navigation::obstacle_carve, nullptr);   // open
+		const f32 open_z = path_extreme_z(west, east, &status, true);
+		const bool open_now = status == navigation::path_complete && open_z > 6.0f && navigation::rebuild_pending() == 0;
+		navigation::obstacle_set(gate, nullptr, nullptr, nullptr, navigation::obstacle_carve | navigation::obstacle_active, nullptr);   // shut
+		const f32 shut_z = path_extreme_z(west, east, &status, true);
+		const bool shut_now = status == navigation::path_complete && shut_z < 6.0f && navigation::rebuild_pending() == 0;
+		navigation::rebuild_get_stats(&st);
+		check("door: opened (obstacle off) the north gap is free at once", open_now);
+		check("door: shut again it is blocked at once", shut_now);
+		check("door: neither needed a tile rebuild", st.tiles_built == built_before);
+
+		// (d) an agent on its way through the north gap turns south when the gap shuts in front of it
+		navigation::obstacle_set(gate, nullptr, nullptr, nullptr, navigation::obstacle_carve, nullptr);
+		const auto p = params();
+		const u32 walker = navigation::agent_add(west, &p);
+		navigation::agent_set_target(walker, east);
+		navigation::agent_state ws{};
+		for (int i = 0; i < 40; ++i) navigation::crowd_update(k_dt);
+		navigation::agent_get_state(walker, &ws);
+		const f32 at_shut[3] = { ws.position[0], ws.position[1], ws.position[2] };
+		navigation::obstacle_set(gate, nullptr, nullptr, nullptr, navigation::obstacle_carve | navigation::obstacle_active, nullptr);
+		f32 max_z_after = -1.0e9f;
+		int arrive = -1;
+		for (int i = 0; i < 60 * 15 && arrive < 0; ++i)
+		{
+			navigation::rebuild_update(1.0f);
+			navigation::crowd_update(k_dt);
+			navigation::agent_get_state(walker, &ws);
+			max_z_after = std::max(max_z_after, ws.position[2]);
+			if (dist(ws.position, east) < 0.3f) arrive = i;
+		}
+		std::printf("[info] agent heading north when the gate shut at (%.2f, %.2f): highest z after %.2f, arrived after %.2f s\n",
+			at_shut[0], at_shut[2], max_z_after, arrive / 60.0f);
+		check("agent: walking to the north gap when it shuts, it turns around and arrives by the south end", at_shut[2] > 3.0f && arrive > 0 && max_z_after < 6.3f);
+		navigation::crowd_clear();
+
+		// (e) removing the obstacle reopens the gap (its tiles are rebuilt without it — the baked tiles again)
+		navigation::obstacle_remove(gate);
+		const bool removed = navigation::rebuild_flush(2000.0f);
+		const f32 reopened = path_extreme_z(west, east, &status, true);
+		check("obstacle removed: the north gap is open again", removed && status == navigation::path_complete && reopened > 6.0f);
+		std::vector<u8> now((size_t)navigation::data_copy(nullptr, 0));
+		check("obstacle removed: (the loaded blob is the bake's — rebuilds never touch it)", navigation::data_copy(now.data(), (s32)now.size()) == (s32)_blob.size() && now == _blob);
+
+		// (f) a moving carving obstacle: re-carved every frame for a second, the worker drops what a newer pose supersedes,
+		// the game thread only swaps — at the end the navmesh matches where it stopped
+		navigation::rebuild_get_stats(&st);
+		const s32 swaps0 = st.tiles_swapped;
+		const u32 cart = navigation::obstacle_add(navigation::obstacle_box, k_gate_center, k_gate_half, nullptr, navigation::obstacle_carve | navigation::obstacle_active);
+		d64 worst_frame = 0.0;
+		for (int i = 0; i < 60; ++i)
+		{
+			const f32 c[3] = { -10.0f + 0.15f * (f32)i, 1.0f, 10.5f };
+			const f32 cart_half[3] = { 1.0f, 1.0f, 1.0f };
+			const auto f0 = std::chrono::steady_clock::now();
+			navigation::obstacle_set(cart, c, cart_half, nullptr, navigation::obstacle_carve | navigation::obstacle_active, nullptr);
+			navigation::rebuild_update(1.0f);
+			worst_frame = std::max(worst_frame, std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - f0).count());
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+		navigation::rebuild_flush(2000.0f);
+		navigation::rebuild_get_stats(&st);
+		std::printf("[info] obstacle moved every frame for 60 frames: %d tiles swapped, %d builds superseded, worst game-thread frame %.2f ms\n",
+			st.tiles_swapped - swaps0, st.tiles_superseded, worst_frame);
+		const f32 under_cart[3] = { -1.15f, 0.0f, 10.5f }, beside_cart[3] = { -4.5f, 0.0f, 10.5f };
+		const f32 ext[3] = { 0.1f, 1.0f, 0.1f };
+		// (closest_point alone would not do: Detour finds the nearest polygon among those whose bounds overlap the box)
+		auto on_navmesh = [&](const f32* q)
+		{
+			f32 r[3]{};
+			return navigation::closest_point(q, ext, r) && std::fabs(r[0] - q[0]) < 0.05f && std::fabs(r[2] - q[2]) < 0.05f;
+		};
+		{
+			char row[40]{};
+			for (int k = 0; k <= 30; ++k)
+			{
+				const f32 q[3] = { -6.0f + 0.25f * (f32)k, 0.0f, 10.5f };
+				row[k] = on_navmesh(q) ? '.' : '#';
+			}
+			std::printf("[info] the navmesh along z 10.5, x -6 .. 1.5 (# = carved): %s\n", row);
+		}
+		check("moving obstacle: the game thread never spent more than a few ms on it", worst_frame < 8.0);
+		check("moving obstacle: where it stopped is blocked, where it passed is free", !on_navmesh(under_cart) && on_navmesh(beside_cart));
+		navigation::obstacle_remove(cart);
+		navigation::rebuild_flush(2000.0f);
+
+		// (g) an avoiding obstacle (a parked car the navmesh ignores): an agent walking the lane steers around it
+		const f32 lane0[3] = { -6, 0, -9 }, lane1[3] = { 6, 0, -9 };
+		const f32 car_center[3] = { 0.0f, 0.75f, -9.0f }, car_half[3] = { 2.2f, 0.75f, 0.9f };
+		const u32 car = navigation::obstacle_add(navigation::obstacle_box, car_center, car_half, nullptr, navigation::obstacle_avoid | navigation::obstacle_active);
+		const u32 driver = navigation::agent_add(lane0, &p);
+		navigation::agent_set_target(driver, lane1);
+		f32 closest = 1.0e9f;
+		bool inside = false;
+		for (int i = 0; i < 60 * 10; ++i)
+		{
+			navigation::crowd_update(k_dt);
+			navigation::agent_get_state(driver, &ws);
+			const f32 dx = std::max(0.0f, std::fabs(ws.position[0] - car_center[0]) - car_half[0]);
+			const f32 dz = std::max(0.0f, std::fabs(ws.position[2] - car_center[2]) - car_half[2]);
+			closest = std::min(closest, std::sqrt(dx * dx + dz * dz));
+			inside = inside || (dx == 0.0f && dz == 0.0f);
+		}
+		std::printf("[info] lane past an avoided car: closest %.2f m from its sides, final (%.2f, %.2f), %d agents counted\n",
+			closest, ws.position[0], ws.position[2], navigation::agent_count());
+		check("avoiding obstacle: the navmesh is untouched (no rebuild)", navigation::rebuild_pending() == 0 && navigation::obstacle_ready(car));
+		check("avoiding obstacle: the agent steers around the car, never into it, and arrives", !inside && dist(ws.position, lane1) < 0.5f);
+		check("avoiding obstacle: its circles are no agents", navigation::agent_count() == 1);
+		navigation::obstacle_remove(car);
+		navigation::crowd_clear();
+
+		// (h) a re-bake over destruction: the geometry without the wall, the tiles over it rebuilt — paths go straight through
+		std::vector<f32> boxes_without_wall(_boxes.begin() + navigation::box_floats, _boxes.end());   // (the wall is the first box)
+		const f32 wall_min[3] = { -0.5f, 0.0f, -6.0f }, wall_max[3] = { 0.5f, 2.0f, 6.0f };
+		const bool rebaked = navigation::rebuild_set_source(_verts.data(), vcount, _tris.data(), tcount, nullptr,
+			boxes_without_wall.data(), (s32)boxes_without_wall.size() / navigation::box_floats, nullptr)
+			&& navigation::rebuild_tiles(wall_min, wall_max) && navigation::rebuild_flush(2000.0f);
+		std::vector<f32> pts(64 * 3);
+		const f32 w0[3] = { -5, 0, 0 }, e0[3] = { 5, 0, 0 };
+		const s32 straight = navigation::find_path(w0, e0, nullptr, pts.data(), 64, &status);
+		check("rebake: with the wall gone from the geometry the path goes straight through", rebaked && status == navigation::path_complete && straight == 2);
+		navigation::load(_blob.data(), (s32)_blob.size());   // back to the bake for whatever runs next
+		check("load drops the source and the obstacles", !navigation::rebuild_has_source() && navigation::obstacle_count() == 0);
+		run_obstacle_review_tests();
+	}
+
+	// ---- #435 review: obstacles that keep moving, many of them, one dropped on an agent, slots of their own --------------
+
+	void set_source()
+	{
+		navigation::rebuild_set_source(_verts.data(), (s32)_verts.size() / 3, _tris.data(), (s32)_tris.size() / 3, nullptr,
+			_boxes.data(), (s32)_boxes.size() / navigation::box_floats, nullptr);
+	}
+
+	void run_obstacle_review_tests()
+	{
+		const auto p = params();
+		const f32 west[3] = { -5, 0, 3 }, east[3] = { 5, 0, 3 };
+		const f32 ident[4] = { 0, 0, 0, 1 };
+		const u32 carve_on = navigation::obstacle_carve | navigation::obstacle_active;
+		navigation::agent_state ws{};
+
+		// (a) a carving obstacle re-carved every frame beside the agent's way (inside the box from its start to its target)
+		// re-plans it at most every half second, keeping its corridor: it arrives about as soon as without one
+		auto walk = [&](bool with_obstacle)
+		{
+			navigation::load(_blob.data(), (s32)_blob.size());
+			set_source();
+			navigation::rebuild_flush(2000.0f);
+			const u32 a = navigation::agent_add(west, &p);
+			navigation::agent_set_target(a, east);
+			u32 cart = 0;
+			const f32 half[3] = { 0.4f, 1.0f, 0.4f };
+			if (with_obstacle)
+			{
+				const f32 c[3] = { -3.0f, 1.0f, 1.0f };
+				cart = navigation::obstacle_add(navigation::obstacle_box, c, half, ident, carve_on);
+			}
+			int arrived = -1;
+			for (int i = 0; i < 60 * 20 && arrived < 0; ++i)
+			{
+				if (cart)
+				{
+					const f32 c[3] = { -3.0f + 0.8f * std::sin((f32)i * 0.15f), 1.0f, 1.0f };
+					navigation::obstacle_set(cart, c, half, ident, carve_on, nullptr);
+				}
+				navigation::rebuild_update(1.0f);
+				navigation::crowd_update(k_dt);
+				navigation::agent_get_state(a, &ws);
+				if (dist(ws.position, east) < 0.3f) arrived = i;
+				if (cart && i % 3 == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));   // the worker builds meanwhile
+			}
+			navigation::rebuild_stats st{};
+			navigation::rebuild_get_stats(&st);
+			if (with_obstacle) std::printf("[info] obstacle re-carved every frame beside the way: %d tiles swapped, agent arrived after %.2f s\n", st.tiles_swapped, arrived / 60.0f);
+			navigation::crowd_clear();
+			return arrived;
+		};
+		const int alone = walk(false), beside = walk(true);
+		check("re-carving beside an agent's way: it still arrives, about as soon as without (no re-plan every swap)", alone > 0 && beside > 0 && beside < alone + 90);
+
+		// (b) many carving obstacles moving every frame: each gets carved — tiles wait in the order they were first asked for
+		// and a waiting one is updated where it stands (re-queued at the back each frame, the same few were rebuilt forever)
+		{
+			std::vector<f32> floor_box = { 0.0f, -0.5f, 0.0f, 48.0f, 0.5f, 48.0f, 0.0f, 0.0f, 0.0f, 1.0f };
+			navigation::bake_settings s = _settings;
+			s.tile_size = 32;
+			navigation::bake_stats bst{};
+			std::vector<u8> big;
+			const bool baked = bake_blob({}, {}, floor_box, s, bst, big) > 0 && navigation::load(big.data(), (s32)big.size());
+			navigation::rebuild_set_source(nullptr, 0, nullptr, 0, nullptr, floor_box.data(), 1, nullptr);
+			std::vector<u32> movers;
+			std::vector<std::array<f32, 3>> at;
+			const f32 half[3] = { 1.0f, 1.0f, 1.0f };
+			for (int ix = 0; ix < 6; ++ix)
+				for (int iz = 0; iz < 6; ++iz)
+				{
+					at.push_back({ -40.0f + 16.0f * (f32)ix, 1.0f, -40.0f + 16.0f * (f32)iz });
+					movers.push_back(navigation::obstacle_add(navigation::obstacle_box, at.back().data(), half, ident, carve_on));
+				}
+			const auto t0 = std::chrono::steady_clock::now();
+			int frames = 0;
+			for (; frames < 400 && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < 2500.0; ++frames)
+			{
+				for (size_t k = 0; k < movers.size(); ++k)
+				{
+					at[k][0] += 0.02f;
+					navigation::obstacle_set(movers[k], at[k].data(), half, ident, carve_on, nullptr);
+				}
+				navigation::rebuild_update(1.0f);
+				std::this_thread::sleep_for(std::chrono::milliseconds(6));
+			}
+			int carved = 0;
+			const f32 probe_ext[3] = { 0.3f, 1.0f, 0.3f };
+			for (const auto& c : at)
+			{
+				const f32 q[3] = { c[0], 0.0f, c[2] };
+				f32 r[3]{};
+				const bool open = navigation::closest_point(q, probe_ext, r) && std::fabs(r[0] - q[0]) < 0.05f && std::fabs(r[2] - q[2]) < 0.05f;
+				if (!open) ++carved;
+			}
+			navigation::rebuild_stats st{};
+			navigation::rebuild_get_stats(&st);
+			std::printf("[info] 36 carving obstacles moved every frame for %d frames: %d carved where they are now (built %d, swapped %d, pending %d)\n",
+				frames, carved, st.tiles_built, st.tiles_swapped, st.pending);
+			check("many moving obstacles: every one of them is carved while they keep moving", baked && carved == 36);
+		}
+
+		// (c) an obstacle dropped on a standing agent: wider than the crowd's placement search, so the crowd loses the agent;
+		// crowd_update places it on the nearest open navmesh and keeps its target — removed again, the agent walks on
+		{
+			navigation::load(_blob.data(), (s32)_blob.size());
+			set_source();
+			navigation::rebuild_flush(2000.0f);
+			const f32 spot[3] = { -5.0f, 0.0f, 3.0f };
+			const u32 a = navigation::agent_add(spot, &p);
+			for (int i = 0; i < 5; ++i) navigation::crowd_update(k_dt);
+			const f32 c[3] = { -5.0f, 1.0f, 3.0f }, half[3] = { 2.6f, 1.0f, 2.6f };
+			const u32 crate = navigation::obstacle_add(navigation::obstacle_box, c, half, ident, carve_on);
+			navigation::rebuild_flush(2000.0f);
+			for (int i = 0; i < 30; ++i) navigation::crowd_update(k_dt);
+			navigation::agent_get_state(a, &ws);
+			const f32 out_x = ws.position[0], out_z = ws.position[2];
+			const bool placed = ws.on_navmesh != 0 && (std::fabs(out_x + 5.0f) > 2.6f || std::fabs(out_z - 3.0f) > 2.6f);
+			navigation::obstacle_remove(crate);
+			navigation::rebuild_flush(2000.0f);
+			const f32 goal[3] = { -5.0f, 0.0f, -10.0f };
+			navigation::agent_set_target(a, goal);
+			int arrived = -1;
+			for (int i = 0; i < 60 * 10 && arrived < 0; ++i)
+			{
+				navigation::crowd_update(k_dt);
+				navigation::agent_get_state(a, &ws);
+				if (dist(ws.position, goal) < 0.4f) arrived = i;
+			}
+			std::printf("[info] a 5.2 m crate dropped on an agent: placed at (%.2f, %.2f) beside it; removed, the agent arrived after %.2f s\n", out_x, out_z, arrived / 60.0f);
+			check("dropped obstacle: the lost agent is placed beside it, on the navmesh", placed);
+			check("dropped obstacle: removed again, the agent walks to its target", arrived > 0);
+			navigation::crowd_clear();
+		}
+
+		// (d) avoidance circles have slots of their own: a full crowd still gets them, and they take no agent's place
+		{
+			navigation::load(_blob.data(), (s32)_blob.size());
+			int added = 0;
+			for (int i = 0; i < navigation::max_agents + 4; ++i)
+			{
+				const f32 at[3] = { -14.0f + 0.9f * (f32)(i % 30), 0.0f, -14.0f + 0.9f * (f32)(i / 30) };
+				if (navigation::agent_add(at, &p)) ++added;
+			}
+			const f32 c[3] = { 10.0f, 0.75f, -12.0f }, half[3] = { 2.2f, 0.75f, 0.9f };
+			const u32 car = navigation::obstacle_add(navigation::obstacle_box, c, half, ident, navigation::obstacle_avoid | navigation::obstacle_active);
+			navigation::crowd_update(k_dt);
+			check("crowd slots: max_agents agents, no more", added == navigation::max_agents && navigation::agent_count() == navigation::max_agents);
+			check("crowd slots: a full crowd still steers around an avoiding obstacle (its circles have slots of their own)", car != 0
+				&& navigation::agent_count() == navigation::max_agents);
+			navigation::obstacle_remove(car);
+			navigation::crowd_clear();
+		}
+
+		// (e) the source is binned off the calling thread: rebuild_set_source returns at once, has_source is true from then on
+		{
+			navigation::load(_blob.data(), (s32)_blob.size());
+			const auto t0 = std::chrono::steady_clock::now();
+			set_source();
+			const d64 ms = std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - t0).count();
+			const bool has = navigation::rebuild_has_source();
+			navigation::rebuild_flush(2000.0f);
+			navigation::rebuild_stats st{};
+			navigation::rebuild_get_stats(&st);
+			check("a small source is binned at once", has && st.source_boxes == 4 && st.pending == 0 && ms < 50.0);
+
+			// a large one (the floor as 80000 triangles) is binned on a thread of its own: the call returns after the copy
+			std::vector<f32> verts;
+			std::vector<s32> tris;
+			const int n = 201;
+			for (int z = 0; z < n; ++z)
+				for (int x = 0; x < n; ++x) { verts.push_back(-15.0f + 30.0f * (f32)x / (n - 1)); verts.push_back(0.0f); verts.push_back(-15.0f + 30.0f * (f32)z / (n - 1)); }
+			for (int z = 0; z + 1 < n; ++z)
+				for (int x = 0; x + 1 < n; ++x)
+				{
+					const s32 a = z * n + x, b = a + 1, c = a + n, d = c + 1;
+					tris.insert(tris.end(), { a, c, b, b, c, d });
+				}
+			const auto t1 = std::chrono::steady_clock::now();
+			const bool accepted = navigation::rebuild_set_source(verts.data(), (s32)verts.size() / 3, tris.data(), (s32)tris.size() / 3, nullptr,
+				_boxes.data(), (s32)_boxes.size() / navigation::box_floats, nullptr);
+			const d64 copy_ms = std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - t1).count();
+			const bool waiting = navigation::rebuild_has_source() && navigation::rebuild_pending() >= 1;
+			const bool landed = navigation::rebuild_flush(10000.0f);
+			navigation::rebuild_get_stats(&st);
+			std::printf("[info] a source of %d triangles: the call took %.1f ms, the binning landed with rebuild_update (%d KB kept)\n",
+				(int)tris.size() / 3, copy_ms, st.source_kbytes);
+			check("a large source is binned off the calling thread and put in place by rebuild_update", accepted && waiting && landed
+				&& st.source_triangles == (s32)tris.size() / 3);
+		}
+		navigation::load(_blob.data(), (s32)_blob.size());
+	}
+
+#else
+	void run_obstacle_tests() {}
+#endif
 
 	// ---- tall levels (#451) ---------------------------------------------------------------------------------------
 

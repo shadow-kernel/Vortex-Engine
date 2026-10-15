@@ -183,6 +183,38 @@ namespace vortex::physics {
 	// fields contain nothing.
 	s32  overlap_point(const f32* point, u32 layer_mask, u64* out_entities, u32* out_bodies, s32 max_count);
 
+	// One hit of raycast_all / shape_cast (#480). Layout-identical to the C ABI's PhysicsHit (PhysicsApi.cpp static_asserts it).
+	struct query_hit
+	{
+		f32 point[3];       // on the body that was hit
+		f32 normal[3];      // unit, faces the query: against the cast direction
+		f32 distance;       // along the cast from its origin; 0 = the query starts on / in the body
+		u32 body;           // body handle; 0 = a character capsule (entity = character_user_data | handle)
+		u64 entity;         // the body's user data (the entity id it was created with)
+	};
+
+	// Every body along the ray (#480): the first hit on each, sorted by distance, under raycast_ex's rules — a convex
+	// shape that contains the origin is not hit, meshes / height fields are hit from either side, an origin on a surface
+	// pointing into it hits it at distance 0, the normal faces the origin. Writes up to max_hits; returns the count.
+	s32  raycast_all(const f32* origin, const f32* dir /*unit*/, f32 max_dist, u32 layer_mask,
+		const u32* ignore_bodies, s32 ignore_body_count, const u32* ignore_characters, s32 ignore_character_count,
+		query_hit* out_hits, s32 max_hits);
+	// Shape casts (#480): a sphere (dims[0] radius), a capsule (dims[0] radius, dims[1] half height of its cylinder part,
+	// along its local Y) or a box (dims = half extents) at pos / quat, swept along dir (unit) for max_dist. all == false:
+	// the first hit only (at most one written); true: the first hit on each body, sorted by distance. Where the shape
+	// starts: a body it already overlaps (or touches) at its start pose is hit at distance 0 when the sweep moves deeper
+	// into it — the point is then the deepest point of the overlap and the normal the way out — and not at all when the
+	// sweep moves out of it or along it (a sweep never reports what it leaves). Meshes and height fields are surfaces:
+	// hit from either side. Normals face the cast. The ignore lists work as for raycast_ex. Returns the count written.
+	s32  shape_cast(s32 shape_type, const f32* dims, const f32* pos, const f32* quat /*xyzw*/, const f32* dir /*unit*/, f32 max_dist,
+		u32 layer_mask, const u32* ignore_bodies, s32 ignore_body_count, const u32* ignore_characters, s32 ignore_character_count,
+		bool all, query_hit* out_hits, s32 max_hits);
+	// Every body the shape (as for shape_cast, at pos / quat) overlaps or touches, one entry per body; meshes count from
+	// either side. Returns the count written.
+	s32  overlap_shape(s32 shape_type, const f32* dims, const f32* pos, const f32* quat /*xyzw*/, u32 layer_mask,
+		const u32* ignore_bodies, s32 ignore_body_count, const u32* ignore_characters, s32 ignore_character_count,
+		u64* out_entities, u32* out_bodies, s32 max_count);
+
 	// Contact events since the previous drain (sensor and solid contacts). Writes up to max_count events, removes
 	// the written ones from the queue and returns the count written.
 	s32  get_contacts(contact_event* buffer, s32 max_count);

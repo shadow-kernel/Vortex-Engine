@@ -80,7 +80,7 @@ namespace Editor.Core.Services.AI
     /// world space — box / sphere / capsule colliders and primitive meshes as SOLID oriented boxes, mesh colliders and
     /// model render meshes as triangles (the same model-triangle export the mesh colliders use) — skipping moving
     /// entities (dynamic / kinematic Rigidbody, joints), characters (Animator, NavAgent, tag "Player") and everything
-    /// tagged <see cref="IgnoreTag"/>. <see cref="Bake"/> runs Recast (tiled, multi-threaded; safe on a worker thread)
+    /// tagged <see cref="IgnoreTag"/> or carrying an enabled carving <see cref="NavMeshObstacle"/> (#435). <see cref="Bake"/> runs Recast (tiled, multi-threaded; safe on a worker thread)
     /// and the result is saved as <c>&lt;Scene&gt;.vnav</c> next to the <c>.vscene</c> (it ships inside Assets.vpak).
     ///
     /// <b>Runtime</b> (play / standalone): <see cref="Begin"/> loads the scene's .vnav and registers every enabled
@@ -92,7 +92,7 @@ namespace Editor.Core.Services.AI
     ///
     /// Without a Recast-enabled engine (<see cref="NavigationNative.Available"/> false) every call is a harmless no-op.
     /// </summary>
-    public static class NavigationService
+    public static partial class NavigationService
     {
         public const string NavMeshExtension = ".vnav";
         /// <summary>Entities with this tag (and their children) are left out of the bake (doors a script moves, clutter).</summary>
@@ -447,6 +447,8 @@ namespace Editor.Core.Services.AI
             public float Yaw;
             public bool YawKnown;
             public bool Active = true;
+            public bool? UpdatePosition, UpdateRotation;   // #434: runtime overrides of the component (null = the component's)
+            public bool HasCapsule;                       // its capsule is registered with the collision world (Resolve Collisions)
         }
 
         private static readonly Dictionary<GameEntity, AgentRec> _agents = new Dictionary<GameEntity, AgentRec>();
@@ -495,6 +497,7 @@ namespace Editor.Core.Services.AI
         /// <summary>Play stop / scene switch: remove every agent from the crowd (the navmesh stays loaded).</summary>
         public static void End()
         {
+            EndObstacles();
             if (Available) { try { VortexAPI.NavCrowdClear(); } catch { } }
             foreach (var r in _agentList) if (r.Agent != null) r.Agent.PropertyChanged -= OnAgentChanged;
             _agents.Clear();
@@ -534,7 +537,17 @@ namespace Editor.Core.Services.AI
                     AddToCrowd(r, feet);
                     continue;
                 }
-                if (r.HasLastFeet && (feet - r.LastFeet).LengthSquared() > 0.05f * 0.05f)
+                if (Follows(r))
+                {
+                    // #434: the entity moves itself (Update Position off, root motion #113): the agent follows it before the
+                    // crowd steers — along the navmesh with its path kept, or placed there with its target kept when the walk
+                    // cannot follow (a teleport, a jump) — and carries the entity's own velocity, what the other agents avoid.
+                    // (A move of more than 5 cm used to count as a teleport and re-plan the path.)
+                    var entityVel = r.HasLastFeet && dt > 1e-5f ? (feet - r.LastFeet) / dt : SysVec.Zero;
+                    Fill(_fa, feet); Fill(_fb, entityVel);
+                    Follow(r, _fa, _fb);
+                }
+                else if (r.HasLastFeet && (feet - r.LastFeet).LengthSquared() > 0.05f * 0.05f)
                 {
                     // Moved by a script / physics since our last write: teleport and keep the destination.
                     Fill(_fa, feet);
@@ -549,7 +562,9 @@ namespace Editor.Core.Services.AI
                 }
             }
 
-            // 2) the crowd: path requests, corridor following, avoidance
+            // 2) obstacles (#435): their poses and switches to the navmesh, rebuilt tiles in — then the crowd: path requests,
+            // corridor following, avoidance
+            UpdateObstacles(dt);
             VortexAPI.NavCrowdUpdate(dt);
 
             // 3) crowd -> entities
@@ -562,15 +577,15 @@ namespace Editor.Core.Services.AI
                 r.StateValid = true;
                 var nav = new SysVec(r.State.PosX, r.State.PosY, r.State.PosZ);
                 var feet = nav;
-                bool rootDriven = Animation.AnimationService.Instance.RootMotionDrives(r.Entity);
-                if (rootDriven)
+                bool follows = Follows(r);
+                if (follows)
                 {
-                    // #113: the clip's root motion moves the entity (through collision); the crowd agent follows it, so the
-                    // path corridor and the desired velocity (Navigation.Velocity — the script picks walk / run from it)
-                    // stay valid, and the agent only turns the body toward the path.
-                    var cur = EntityFeet(r);
-                    if (!r.HasLastFeet || (cur - nav).LengthSquared() > 1e-6f) { Fill(_fa, cur); VortexAPI.NavAgentMovePosition(r.Handle, _fa); }
-                    feet = cur;
+                    // #434 / #113: never moved here — root motion, a script or a ragdoll moves the entity (through collision,
+                    // by Navigation.DesiredVelocity: the script picks walk / run from it); the agent followed it before the crowd
+                    // step, so its path corridor and desired velocity stay valid, and it only turns the body (Update Rotation).
+                    // The capsule it walked with (Resolve Collisions) is not its body any more: whatever moves it now registers its own.
+                    if (r.HasCapsule) { CollisionService.RemoveCharacter(r.SelfId); r.HasCapsule = false; }
+                    feet = EntityFeet(r);
                 }
                 else if (r.Agent.ResolveCollisions && CollisionService.IsBuilt && r.HasLastFeet)
                 {
@@ -579,6 +594,7 @@ namespace Editor.Core.Services.AI
                     var from = new Vector3(r.LastFeet.X, r.LastFeet.Y, r.LastFeet.Z);
                     var res = CollisionService.MoveCharacter(from, r.Agent.Radius, r.Agent.Height, new Vector3(delta.X, delta.Y, delta.Z), out _, r.SelfId,
                         owner: r.Entity);
+                    r.HasCapsule = true;
                     var resolved = new SysVec(res.X, res.Y, res.Z);
                     if (Math.Abs(resolved.Y - nav.Y) > 1.0f) resolved = nav;   // off the navmesh vertically: trust the navmesh
                     float dx = resolved.X - nav.X, dz = resolved.Z - nav.Z;
@@ -594,16 +610,18 @@ namespace Editor.Core.Services.AI
                 // Face the walking direction.
                 float vx = r.State.VelX, vz = r.State.VelZ;
                 float speed = (float)Math.Sqrt(vx * vx + vz * vz);
-                if (r.Agent.UpdateRotation && speed > 0.1f && r.Agent.AngularSpeed > 0f)
+                if (UpdatesRotation(r) && speed > 0.1f && r.Agent.AngularSpeed > 0f)
                 {
                     float target = (float)(Math.Atan2(vx, vz) * 180.0 / Math.PI);
                     if (!r.YawKnown) { r.Yaw = EntityYaw(r.Entity); r.YawKnown = true; }
                     float d = DeltaAngle(r.Yaw, target);
                     float step = r.Agent.AngularSpeed * dt;
                     r.Yaw = Math.Abs(d) <= step ? target : r.Yaw + Math.Sign(d) * step;
-                    WritePose(r.Entity, feet + new SysVec(0f, r.Agent.BaseOffset, 0f), r.Yaw);
+                    WritePose(r.Entity, feet + new SysVec(0f, r.Agent.BaseOffset, 0f), r.Yaw, writePosition: !follows);
                 }
-                else WritePose(r.Entity, feet + new SysVec(0f, r.Agent.BaseOffset, 0f), null);
+                else if (!follows) WritePose(r.Entity, feet + new SysVec(0f, r.Agent.BaseOffset, 0f), null);
+                // (a follower's position is never written: rewritten from its own world position every tick, it crept under a
+                // turned, scaled parent far from the origin)
                 if (r.HasColliders && PhysicsService.IsBuilt && (feet - r.LastFeet).LengthSquared() > 1e-6f) SyncStaticBodies(r.Entity);
                 r.LastFeet = feet;
                 r.HasLastFeet = true;
@@ -720,8 +738,38 @@ namespace Editor.Core.Services.AI
             return r != null && r.StateValid ? new Vector3(r.State.CornerX, r.State.CornerY, r.State.CornerZ) : Vector3.Zero;
         }
 
-        /// <summary>Place an agent somewhere else (its path is cleared). False when the point is not on / near the navmesh, or
-        /// while the agent is limp (#407: a ragdoll at or under it is active — warp it after Ragdoll.Deactivate).</summary>
+        /// <summary>#434: the velocity the agent steers for (m/s) — along its path and around the other agents (local
+        /// avoidance), before its acceleration limit; zero without a path. With Update Position off, what to move the entity by.</summary>
+        public static Vector3 GetDesiredVelocity(GameEntity e)
+        {
+            var r = Rec(e, false);
+            return r != null && r.StateValid ? new Vector3(r.State.DesiredVelX, r.State.DesiredVelY, r.State.DesiredVelZ) : Vector3.Zero;
+        }
+
+        /// <summary>#434: the agent's feet after the last crowd step, on the navmesh — where Update Position puts the entity
+        /// (plus its Base Offset); with it off, where the agent would be. Zero when it is not in the crowd.</summary>
+        public static Vector3 GetNextPosition(GameEntity e)
+        {
+            var r = Rec(e, false);
+            return r != null && r.StateValid ? new Vector3(r.State.PosX, r.State.PosY, r.State.PosZ) : Vector3.Zero;
+        }
+
+        /// <summary>#434: switch Update Position at runtime (the component is not changed). Off: the agent plans, steers and
+        /// avoids, but never moves the entity — something else does, and the agent follows it.</summary>
+        public static void SetUpdatePosition(GameEntity e, bool on) { var r = Rec(e, true); if (r != null) r.UpdatePosition = on; }
+
+        /// <summary>#434: does the service move the entity (the runtime override, else the component)?</summary>
+        public static bool GetUpdatePosition(GameEntity e) { var r = Rec(e, false); return r != null && UpdatesPosition(r); }
+
+        /// <summary>#434: switch Update Rotation at runtime (the component is not changed).</summary>
+        public static void SetUpdateRotation(GameEntity e, bool on) { var r = Rec(e, true); if (r != null) r.UpdateRotation = on; }
+
+        /// <summary>#434: does the service turn the entity toward its movement (the runtime override, else the component)?</summary>
+        public static bool GetUpdateRotation(GameEntity e) { var r = Rec(e, false); return r != null && UpdatesRotation(r); }
+
+        /// <summary>Place an agent somewhere else (its path is cleared) — the entity too, also with Update Position off (#434:
+        /// the one call that moves it then). False when the point is not on / near the navmesh, or while the agent is limp
+        /// (#407: a ragdoll at or under it is active — warp it after Ragdoll.Deactivate).</summary>
         public static bool Warp(GameEntity e, Vector3 position)
         {
             var r = Rec(e, true);
@@ -798,6 +846,25 @@ namespace Editor.Core.Services.AI
         /// <summary>#407: a ragdoll at or under the agent is active — it takes no navigation orders and stays out of the crowd.</summary>
         private static bool Limp(AgentRec r) => RagdollService.ActiveAtOrUnder(r.Entity);
 
+        private static bool UpdatesPosition(AgentRec r) => r.UpdatePosition ?? r.Agent.UpdatePosition;
+        private static bool UpdatesRotation(AgentRec r) => r.UpdateRotation ?? r.Agent.UpdateRotation;
+
+        /// <summary>#434: does something else move the entity — Update Position off, or the clip's root motion (#113)? Then
+        /// the agent follows the entity and the pose is never written.</summary>
+        private static bool Follows(AgentRec r) => !UpdatesPosition(r) || Animation.AnimationService.Instance.RootMotionDrives(r.Entity);
+
+        private static bool _followUnavailable;   // an engine library from before #434
+
+        private static void Follow(AgentRec r, float[] feet, float[] velocity)
+        {
+            if (!_followUnavailable)
+            {
+                try { VortexAPI.NavAgentFollow(r.Handle, feet, velocity); return; }
+                catch (EntryPointNotFoundException) { _followUnavailable = true; }
+            }
+            VortexAPI.NavAgentMovePosition(r.Handle, feet);
+        }
+
         /// <summary>May the agent be in the crowd: its component enabled, its entity active, not limp (the callers check that a
         /// navmesh is loaded).</summary>
         private static bool MayJoinCrowd(AgentRec r) => r.Agent.IsEnabled && r.Entity.ActiveInHierarchy && !Limp(r);
@@ -857,6 +924,7 @@ namespace Editor.Core.Services.AI
                 _agents.Remove(r.Entity);
                 _agentList.RemoveAt(i);
             }
+            RescanObstacles();
         }
 
         private static void Collect(GameEntity e, HashSet<GameEntity> seen)
@@ -895,6 +963,7 @@ namespace Editor.Core.Services.AI
         private static void DropAgentHandles()
         {
             foreach (var r in _agentList) { r.Handle = 0; r.StateValid = false; }
+            DropObstacleHandles();
         }
 
         /// <summary>An agent whose collider became a STATIC physics body (no Rigidbody) would leave that body at its spawn
@@ -941,7 +1010,7 @@ namespace Editor.Core.Services.AI
         }
 
         /// <summary>World position (+ optional world yaw, pitch / roll cleared) -> the entity's local transform.</summary>
-        internal static void WritePose(GameEntity e, SysVec worldPos, float? yawDeg)
+        internal static void WritePose(GameEntity e, SysVec worldPos, float? yawDeg, bool writePosition = true)
         {
             var t = e?.Transform;
             if (t == null) return;
@@ -954,7 +1023,7 @@ namespace Editor.Core.Services.AI
             if (SysMat.Invert(parentWorld, out var inv)) local = desired * inv;
             var lp = local.Translation;
             var cp = t.LocalPosition;
-            if (Math.Abs(cp.X - lp.X) > 1e-5f || Math.Abs(cp.Y - lp.Y) > 1e-5f || Math.Abs(cp.Z - lp.Z) > 1e-5f)
+            if (writePosition && (Math.Abs(cp.X - lp.X) > 1e-5f || Math.Abs(cp.Y - lp.Y) > 1e-5f || Math.Abs(cp.Z - lp.Z) > 1e-5f))
                 t.LocalPosition = new Vector3(lp.X, lp.Y, lp.Z);
             if (yawDeg.HasValue)
             {
@@ -990,7 +1059,7 @@ namespace Editor.Core.Services.AI
         private static void SubmitNavMeshSurface()
         {
             if (!IsLoaded) return;
-            if (_debugMeshVersion != _version || _debugMesh == ID.INVALID_ID)
+            if (_debugMeshVersion != _version || _debugMesh == ID.INVALID_ID || DebugMeshStale())
             {
                 if (_debugMesh != ID.INVALID_ID) { try { VortexAPI.DeleteMesh(_debugMesh); } catch { } }
                 _debugMesh = VortexAPI.NavCreateDebugMesh(0.05f);
@@ -1073,8 +1142,40 @@ namespace Editor.Core.Services.AI
 
             public void Visit(GameEntity e)
             {
-                if (e == null || !e.IsActive) return;
-                if (Excluded(e)) return;
+                if (!VisitSelf(e)) return;
+                if (e.Children != null) foreach (var c in e.Children) Visit(c);
+            }
+
+            // #435: the same walk a few milliseconds a frame (the runtime rebuild source of a large scene took 90 ms at once):
+            // Start, then Step until it returns true, then Finish.
+            private readonly Stack<GameEntity> _pending = new Stack<GameEntity>();
+
+            public void Start(Scene scene)
+            {
+                _pending.Clear();
+                if (scene?.Entities == null) return;
+                for (int i = scene.Entities.Count - 1; i >= 0; i--) _pending.Push(scene.Entities[i]);
+            }
+
+            /// <summary>Visit entities until <paramref name="budgetMs"/> is spent (one at least); true when every one was.</summary>
+            public bool Step(double budgetMs)
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                while (_pending.Count > 0)
+                {
+                    var e = _pending.Pop();
+                    if (VisitSelf(e) && e.Children != null)
+                        for (int i = e.Children.Count - 1; i >= 0; i--) _pending.Push(e.Children[i]);   // (the order Visit takes)
+                    if (sw.Elapsed.TotalMilliseconds >= budgetMs) break;
+                }
+                return _pending.Count == 0;
+            }
+
+            /// <summary>The entity's own geometry; false when it and its children are left out (inactive, excluded).</summary>
+            private bool VisitSelf(GameEntity e)
+            {
+                if (e == null || !e.IsActive) return false;
+                if (Excluded(e)) return false;
                 var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
                 if (terrain != null && terrain.IsEnabled && terrain.Collision && terrain.Navigation)
                 {
@@ -1090,8 +1191,7 @@ namespace Editor.Core.Services.AI
                             AddTriangle(tworld, new SysVec(raw[i], raw[i + 1], raw[i + 2]), new SysVec(raw[i + 3], raw[i + 4], raw[i + 5]), new SysVec(raw[i + 6], raw[i + 7], raw[i + 8]));
                         _contributors.Add(e);
                     }
-                    if (e.Children != null) foreach (var c in e.Children) Visit(c);
-                    return;
+                    return true;
                 }
                 var waterComp = e.GetComponent<Editor.ECS.Components.Rendering.Water>();
                 if (waterComp != null && waterComp.IsEnabled)
@@ -1113,8 +1213,7 @@ namespace Editor.Core.Services.AI
                             AddBox(SysMat.Identity, new SysVec(c.Base.X, c.Base.Y + c.Height * 0.5f, c.Base.Z), new SysVec(c.Radius, c.Height * 0.5f, c.Radius), SysQuat.Identity);
                         _contributors.Add(e);
                     }
-                    if (e.Children != null) foreach (var c in e.Children) Visit(c);
-                    return;
+                    return true;
                 }
                 bool hadCollider = false;
                 if ((_src & NavGeometrySource.Colliders) != 0)
@@ -1139,7 +1238,7 @@ namespace Editor.Core.Services.AI
                         if (AddMesh(e, mr.MeshPath, SysVec.Zero, Animation.BoneSocketService.EntityWorld(e))) _contributors.Add(e);
                     }
                 }
-                if (e.Children != null) foreach (var c in e.Children) Visit(c);
+                return true;
             }
 
             /// <summary>Moving things and characters are not level geometry.</summary>
@@ -1150,6 +1249,7 @@ namespace Editor.Core.Services.AI
                 foreach (var c in e.Components)
                 {
                     if (c is NavAgent || c is Animator) return true;
+                    if (c is NavMeshObstacle o && o.IsEnabled && o.Carve) return true;   // #435: it carves the navmesh at runtime
                     if (c is Rigidbody rb && rb.IsEnabled && rb.BodyType != RigidbodyType.Static) return true;
                     if (c is PhysicsJoint j && j.IsEnabled) return true;
                 }

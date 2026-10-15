@@ -26,6 +26,7 @@ namespace Editor.ECS.Components.AI
         private float _baseOffset;
         private bool _updateRotation = true;
         private bool _resolveCollisions = true;
+        private bool _updatePosition = true;
 
         public override string DisplayName => "Nav Agent";
         public override string IconCode => "";   // MDL2 "Walk"
@@ -67,14 +68,22 @@ namespace Editor.ECS.Components.AI
         [DataMember(Name = "baseOffset", Order = 18)]
         public float BaseOffset { get => _baseOffset; set => SetProperty(ref _baseOffset, Clamp(value, -100f, 100f), nameof(BaseOffset)); }
 
-        /// <summary>Turn the entity (yaw) to face its movement. Off = scripts / animation control the rotation.</summary>
+        /// <summary>Turn the entity (yaw) to face its movement. Off = scripts / animation control the rotation. Works with
+        /// Update Position off too: then only the yaw is written.</summary>
         [DataMember(Name = "updateRotation", Order = 19)]
         public bool UpdateRotation { get => _updateRotation; set => SetProperty(ref _updateRotation, value, nameof(UpdateRotation)); }
 
         /// <summary>Resolve the agent's capsule against colliders (props, doors, the player) with the character controller;
-        /// it also blocks the player like another character. Off = glide on the navmesh only.</summary>
+        /// it also blocks the player like another character. Off = glide on the navmesh only. Only while Update Position is
+        /// on: otherwise whatever moves the entity resolves it.</summary>
         [DataMember(Name = "resolveCollisions", Order = 20)]
         public bool ResolveCollisions { get => _resolveCollisions; set => SetProperty(ref _resolveCollisions, value, nameof(ResolveCollisions)); }
+
+        /// <summary>#434: move the entity along the path (on, the default). Off = the agent still plans, follows the path and
+        /// avoids the other agents, but never moves the entity: a script, root motion or a ragdoll does, by
+        /// Navigation.DesiredVelocity / NextPosition, and the agent follows wherever it is moved (Unity's updatePosition).</summary>
+        [DataMember(Name = "updatePosition", Order = 21)]
+        public bool UpdatePosition { get => _updatePosition; set => SetProperty(ref _updatePosition, value, nameof(UpdatePosition)); }
 
         public NavAgent() : base() { }
         public NavAgent(GameEntity entity) : base(entity) { }
@@ -85,7 +94,7 @@ namespace Editor.ECS.Components.AI
             // DataContract skips constructors: fields missing from older files keep these defaults.
             _speed = 3.5f; _acceleration = 8f; _angularSpeed = 360f; _radius = 0.4f; _height = 1.8f;
             _stoppingDistance = 0.1f; _autoBraking = true; _avoidancePriority = 50; _baseOffset = 0f;
-            _updateRotation = true; _resolveCollisions = true;
+            _updateRotation = true; _resolveCollisions = true; _updatePosition = true;
         }
 
         private static float Clamp(float v, float lo, float hi) => float.IsNaN(v) ? lo : (v < lo ? lo : (v > hi ? hi : v));

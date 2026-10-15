@@ -52,6 +52,13 @@ typedef struct NavAgentState {
 	int32_t partial, onNavMesh, cornerCount;
 } NavAgentState;
 
+// #435: what the runtime tile rebuilds did (nav::rebuild_stats).
+typedef struct NavRebuildStats {
+	int32_t tilesBuilt, tilesSwapped, tilesFailed, pending;
+	float buildMsLast, buildMsMax, swapMsLast, swapMsMax;
+	int32_t obstacles, sourceTriangles, sourceBoxes, sourceKBytes, tilesSuperseded, revision;
+} NavRebuildStats;
+
 // The API structs are handed to the engine through reinterpret_cast, so the layouts must agree.
 static_assert(std::is_standard_layout_v<NavBakeSettings> && std::is_standard_layout_v<nav::bake_settings>);
 static_assert(sizeof(NavBakeSettings) == sizeof(nav::bake_settings), "NavBakeSettings / bake_settings layout drift");
@@ -66,6 +73,9 @@ static_assert(offsetof(NavAgentParams, updateFlags) == offsetof(nav::agent_param
 static_assert(sizeof(NavAgentState) == sizeof(nav::agent_state), "NavAgentState / agent_state layout drift");
 static_assert(offsetof(NavAgentState, remainingDistance) == offsetof(nav::agent_state, remaining_distance));
 static_assert(offsetof(NavAgentState, cornerCount) == offsetof(nav::agent_state, corner_count));
+static_assert(sizeof(NavRebuildStats) == sizeof(nav::rebuild_stats), "NavRebuildStats / rebuild_stats layout drift");
+static_assert(offsetof(NavRebuildStats, swapMsMax) == offsetof(nav::rebuild_stats, swap_ms_max));
+static_assert(offsetof(NavRebuildStats, revision) == offsetof(nav::rebuild_stats, revision));
 
 // ---- World ----
 
@@ -179,6 +189,9 @@ EDITOR_INTERFACE int32_t NavAgentResetTarget(uint32_t agent)                    
 EDITOR_INTERFACE int32_t NavAgentSetVelocity(uint32_t agent, const float* velocity) { return nav::agent_set_velocity(agent, velocity) ? 1 : 0; }
 EDITOR_INTERFACE int32_t NavAgentTeleport(uint32_t agent, const float* pos)       { return nav::agent_teleport(agent, pos) ? 1 : 0; }
 EDITOR_INTERFACE int32_t NavAgentMovePosition(uint32_t agent, const float* pos)   { return nav::agent_move_position(agent, pos) ? 1 : 0; }
+// #434: the agent of an entity something else moves follows it — slid along the navmesh (path kept) or placed where it is
+// (target kept); velocity (may be null) = the entity's own. 1 = slid, 2 = placed, 0 = failed.
+EDITOR_INTERFACE int32_t NavAgentFollow(uint32_t agent, const float* pos, const float* velocity) { return nav::agent_follow(agent, pos, velocity); }
 EDITOR_INTERFACE int32_t NavAgentGetState(uint32_t agent, NavAgentState* out)
 {
 	return nav::agent_get_state(agent, reinterpret_cast<nav::agent_state*>(out)) ? 1 : 0;
@@ -187,3 +200,41 @@ EDITOR_INTERFACE int32_t NavAgentGetCorners(uint32_t agent, float* outPoints, in
 EDITOR_INTERFACE int32_t NavGetAgentCount(void) { return nav::agent_count(); }
 EDITOR_INTERFACE void    NavCrowdUpdate(float dt) { nav::crowd_update(dt); }
 EDITOR_INTERFACE void    NavCrowdClear(void)      { nav::crowd_clear(); }
+
+// ---- Dynamic obstacles and runtime tile rebuilds (#435) ----
+// The loaded navmesh's tiles are re-baked at runtime from the geometry it was baked from (handed over once with
+// NavRebuildSetSource, the same arrays as NavBake), on a worker thread; NavRebuildUpdate swaps finished tiles in on the game
+// thread. A carving obstacle (flags bit 0) cuts its footprint, grown by the agent radius, out of the navmesh while active
+// (bit 2): its tiles are rebuilt when it is added or moves, switching it off / on flips its polygons at once (a door).
+// An avoiding obstacle (bit 1) is steered around by the crowd and leaves the navmesh alone. Shapes: 0 box (half extents,
+// quaternion xyzw), 1 cylinder (half[0] radius, half[1] half height). Obstacle handles uint32 (0 = failed).
+
+EDITOR_INTERFACE int32_t NavRebuildSetSource(const float* verts, int32_t vertCount, const int32_t* tris, int32_t triCount, const uint8_t* triAreas,
+	const float* boxes, int32_t boxCount, const uint8_t* boxAreas)
+{
+	return nav::rebuild_set_source(verts, vertCount, tris, triCount, triAreas, boxes, boxCount, boxAreas) ? 1 : 0;
+}
+EDITOR_INTERFACE int32_t NavRebuildHasSource(void)   { return nav::rebuild_has_source() ? 1 : 0; }
+EDITOR_INTERFACE void    NavRebuildClearSource(void) { nav::rebuild_clear_source(); }
+// Re-bake the tiles over the box [bmin, bmax] from the source (after NavRebuildSetSource with the changed geometry).
+EDITOR_INTERFACE int32_t NavRebuildTiles(const float* bmin, const float* bmax) { return nav::rebuild_tiles(bmin, bmax) ? 1 : 0; }
+// Every frame, before NavCrowdUpdate: queue builds, swap finished tiles in until budgetMs is spent (one at least). Returns the swaps.
+EDITOR_INTERFACE int32_t NavRebuildUpdate(float budgetMs) { return nav::rebuild_update(budgetMs); }
+EDITOR_INTERFACE int32_t NavRebuildFlush(float timeoutMs) { return nav::rebuild_flush(timeoutMs) ? 1 : 0; }   // tests: wait for every build
+EDITOR_INTERFACE int32_t NavRebuildPending(void)          { return nav::rebuild_pending(); }
+EDITOR_INTERFACE void    NavGetRebuildStats(NavRebuildStats* out) { nav::rebuild_get_stats(reinterpret_cast<nav::rebuild_stats*>(out)); }
+
+EDITOR_INTERFACE uint32_t NavObstacleAdd(int32_t shape, const float* center, const float* half, const float* quat, uint32_t flags)
+{
+	return nav::obstacle_add(shape, center, half, quat, flags);
+}
+// Null pose arguments keep the current ones; velocity (may be null) = how an avoiding obstacle moves (m/s).
+EDITOR_INTERFACE int32_t NavObstacleSet(uint32_t obstacle, const float* center, const float* half, const float* quat, uint32_t flags, const float* velocity)
+{
+	return nav::obstacle_set(obstacle, center, half, quat, flags, velocity) ? 1 : 0;
+}
+EDITOR_INTERFACE void    NavObstacleRemove(uint32_t obstacle) { nav::obstacle_remove(obstacle); }
+EDITOR_INTERFACE int32_t NavObstacleValid(uint32_t obstacle)  { return nav::obstacle_valid(obstacle) ? 1 : 0; }
+EDITOR_INTERFACE int32_t NavObstacleReady(uint32_t obstacle)  { return nav::obstacle_ready(obstacle) ? 1 : 0; }   // carved where it is
+EDITOR_INTERFACE int32_t NavObstacleCount(void)               { return nav::obstacle_count(); }
+EDITOR_INTERFACE void    NavObstacleClear(void)               { nav::obstacle_clear(); }

@@ -44,6 +44,7 @@ namespace Editor.DllWrapper
     {
         public float PosX, PosY, PosZ;
         public float VelX, VelY, VelZ;
+        /// <summary>#434: the velocity the agent steers for — path following and local avoidance, before its acceleration limit.</summary>
         public float DesiredVelX, DesiredVelY, DesiredVelZ;
         public float TargetX, TargetY, TargetZ;
         public float CornerX, CornerY, CornerZ;
@@ -52,6 +53,24 @@ namespace Editor.DllWrapper
         /// <summary>0 idle, 1 pending, 2 moving, 3 failed, 4 velocity control.</summary>
         public int MoveState;
         public int Partial, OnNavMesh, CornerCount;
+    }
+
+    /// <summary>#435: what the runtime tile rebuilds did (<c>NavRebuildStats</c>).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct NavRebuildStats
+    {
+        /// <summary>Tile builds finished on the worker thread / swapped into the navmesh / failed (the old tile stays).</summary>
+        public int TilesBuilt, TilesSwapped, TilesFailed;
+        /// <summary>Tiles waiting for a build, being built or waiting for the swap.</summary>
+        public int Pending;
+        /// <summary>Worker time of the last / slowest tile build, game-thread time of the last / slowest swap (ms).</summary>
+        public float BuildMsLast, BuildMsMax, SwapMsLast, SwapMsMax;
+        /// <summary>Live obstacles; the rebuild source (0 = none) and the memory it keeps (KB).</summary>
+        public int Obstacles, SourceTriangles, SourceBoxes, SourceKBytes;
+        /// <summary>Builds dropped because a newer one of the same tile was asked for first.</summary>
+        public int TilesSuperseded;
+        /// <summary>Changes with every tile swapped in and every polygon blocked / unblocked (redraw the debug mesh).</summary>
+        public int Revision;
     }
 
     /// <summary>
@@ -187,6 +206,12 @@ namespace Editor.DllWrapper
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int NavAgentMovePosition(uint agent, float[] pos);
 
+        /// <summary>#434: the agent of an entity something else moves (Update Position off, root motion) follows it — slid along
+        /// the navmesh with its path kept, or placed where it is (through a wall, a jump) with its target kept; velocity (may be
+        /// null) = how fast the entity moved. 1 = slid, 2 = placed, 0 = failed. Throws EntryPointNotFound on an older library.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavAgentFollow(uint agent, float[] pos, float[] velocity);
+
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int NavAgentGetState(uint agent, out NavAgentState state);
 
@@ -201,6 +226,68 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern void NavCrowdClear();
+
+        #endregion
+
+        #region Navigation — dynamic obstacles and runtime tile rebuilds (#435)
+
+        /// <summary>The geometry the loaded navmesh was baked from (the arrays of <see cref="NavBake"/>): runtime tile rebuilds
+        /// re-bake from it. 0 without a navmesh or when nothing of it lies in the navmesh's tile grid. Throws
+        /// EntryPointNotFound on an older library.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavRebuildSetSource(float[] verts, int vertCount, int[] tris, int triCount, byte[] triAreas,
+            float[] boxes, int boxCount, byte[] boxAreas);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavRebuildHasSource();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void NavRebuildClearSource();
+
+        /// <summary>Re-bake the tiles over the box [bmin, bmax] from the source (after a new source: a wall blown away).</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavRebuildTiles(float[] bmin, float[] bmax);
+
+        /// <summary>Every frame before <see cref="NavCrowdUpdate"/>: queue builds of changed tiles and swap finished ones in
+        /// until <paramref name="budgetMs"/> is spent (one at least). Returns the tiles swapped.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavRebuildUpdate(float budgetMs);
+
+        /// <summary>Tests: wait up to <paramref name="timeoutMs"/> for every pending build. 1 = nothing pending.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavRebuildFlush(float timeoutMs);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavRebuildPending();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void NavGetRebuildStats(out NavRebuildStats stats);
+
+        /// <summary>Shape 0 box (half extents, quaternion xyzw) or 1 cylinder (half[0] radius, half[1] half height); flags
+        /// bit 0 carve, bit 1 avoid, bit 2 active. Returns the obstacle handle, 0 = failed.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern uint NavObstacleAdd(int shape, float[] center, float[] half, float[] quat, uint flags);
+
+        /// <summary>New pose and flags (null pose arrays keep the current ones); velocity (may be null) = how an avoiding
+        /// obstacle moves, m/s.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavObstacleSet(uint obstacle, float[] center, float[] half, float[] quat, uint flags, float[] velocity);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void NavObstacleRemove(uint obstacle);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavObstacleValid(uint obstacle);
+
+        /// <summary>1 = in the navmesh as asked: carved where it is (its tiles rebuilt), blocked while active.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavObstacleReady(uint obstacle);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavObstacleCount();
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern void NavObstacleClear();
 
         #endregion
 
