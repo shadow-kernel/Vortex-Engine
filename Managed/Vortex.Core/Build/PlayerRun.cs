@@ -52,8 +52,6 @@ namespace Editor.Core.Services.Build
         /// <summary>A name scripts can ask Application.GetArg for: letters, digits, '_', '-' and '.'.</summary>
         public static bool IsArgName(string name) => !string.IsNullOrEmpty(name) && name.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.');
 
-        private static readonly string[] KeyOps = { "press", "release", "hold", "tap" };
-
         /// <summary>The script's lines exactly as the player reads them (File.ReadAllLines: a line ends at \r, \n or \r\n) — run_player
         /// writes the script it checked in this form, so the player sees no other line (#463 review).</summary>
         public static List<string> ScriptLines(string text)
@@ -66,12 +64,12 @@ namespace Editor.Core.Services.Build
         }
 
         /// <summary>
-        /// Check an input script against the player's grammar (Vortex.Player's InputScript: <c>&lt;seconds&gt; press|release|tap
-        /// &lt;key&gt;</c>, <c>hold &lt;key&gt; [seconds]</c>, <c>look &lt;dx&gt; &lt;dy&gt; [seconds]</c>, <c>capture &lt;name&gt;.bmp</c>,
-        /// <c>exit</c>; <c>#</c> starts a comment), line by line as the player splits it. Null when it is fine, else the first
-        /// problem with its line number. A capture takes a plain file name — captures land in the run's own folder; a control
-        /// character is refused (no line the player could read differently); a command after <paramref name="runSeconds"/> would
-        /// never run.
+        /// Check an input script with the player's own reader and parser (<see cref="InputScript"/>: <c>&lt;seconds&gt;
+        /// press|release|tap &lt;key&gt;</c>, <c>hold &lt;key&gt; [seconds]</c>, <c>look &lt;dx&gt; [dy] [seconds]</c>, <c>scroll</c>,
+        /// <c>cursor</c>, <c>capture &lt;name&gt;.bmp</c>, <c>exit</c>; <c>#</c> starts a comment). Null when it is fine, else the
+        /// first problem with its line number — a line the player would skip. A capture takes a plain file name (captures land in
+        /// the run's own folder); a control character is refused (no line the player could read differently); a command after
+        /// <paramref name="runSeconds"/> would never run.
         /// </summary>
         public static string CheckInputScript(string text, double runSeconds = double.MaxValue) => CheckInputScript(text, runSeconds, out _);
 
@@ -82,44 +80,25 @@ namespace Editor.Core.Services.Build
             if (text == null) return null;
             var lines = ScriptLines(text);
             for (int i = 0; i < lines.Count; i++)
-            {
-                string line = lines[i];
-                foreach (char ch in line)
+                foreach (char ch in lines[i])
                     if ((char.IsControl(ch) && ch != '\t') || ch == '\u2028' || ch == '\u2029')
                         return "line " + (i + 1) + ": a control character (U+" + ((int)ch).ToString("X4", CultureInfo.InvariantCulture) + ") — one command per line, as plain text.";
-                int hash = line.IndexOf('#');
-                if (hash >= 0) line = line.Substring(0, hash);
-                line = line.Trim();
-                if (line.Length == 0) continue;
-                string at = "line " + (i + 1) + " (\"" + line + "\"): ";
-                var p = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                if (!double.TryParse(p[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double t) || t < 0 || double.IsNaN(t))
-                    return at + "starts with the time in seconds since the start, e.g. \"1.5 press W\".";
-                if (p.Length < 2) return at + "a command follows the time: press, release, hold, tap, look, capture or exit.";
-                string op = p[1].ToLowerInvariant();
-                if (t > runSeconds) return at + "never runs: the run ends after " + runSeconds.ToString("0.###", CultureInfo.InvariantCulture) + " s (raise seconds).";
-                bool Num(int k) => p.Length > k && double.TryParse(p[k], NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && !double.IsNaN(v) && !double.IsInfinity(v);
-                if (KeyOps.Contains(op))
+            var problems = new List<string>();
+            InputScript.Parse(lines, problems);
+            if (problems.Count > 0) return problems[0] + ".";
+            for (int i = 0; i < lines.Count; i++)
+            {
+                // the player's parser, one line at a time: what each line does
+                foreach (var c in InputScript.Parse(new[] { lines[i] }, null))
                 {
-                    if (p.Length < 3 || KeyNames.VirtualKeyFromName(p[2]) == 0)
-                        return at + (p.Length < 3 ? "names a key" : "'" + p[2] + "' is no key") + " — key names as in Input.GetKey: W, A, S, D, Space, LeftShift, LeftCtrl, Escape, Return, LButton, RButton, R, F1 …";
-                    if (op == "hold" && p.Length > 3 && !Num(3)) return at + "hold takes the seconds to hold the key, e.g. \"2 hold LButton 0.5\".";
-                }
-                else if (op == "look")
-                {
-                    if (!Num(2) || !Num(3) || (p.Length > 4 && !Num(4)))
-                        return at + "look takes the mouse movement in pixels and optional seconds to spread it over, e.g. \"3 look 40 -10 0.5\".";
-                }
-                else if (op == "capture")
-                {
-                    string name = p.Length > 2 ? p[2] : "";
-                    if (!IsPlainFileName(name))
+                    string at = "line " + (i + 1) + " (\"" + lines[i].Trim() + "\"): ";
+                    if (c.T > runSeconds) return at + "never runs: the run ends after " + runSeconds.ToString("0.###", CultureInfo.InvariantCulture) + " s (raise seconds).";
+                    if (c.Op != "capture") continue;
+                    if (!IsPlainFileName(c.Text))
                         return at + "capture takes a file name without folders, e.g. \"capture door.bmp\": captures go to the run's capture folder.";
-                    if (!name.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase)) return at + "a capture is a BMP: name it like \"door.bmp\".";
+                    if (!c.Text.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase)) return at + "a capture is a BMP: name it like \"door.bmp\".";
                     captures++;
                 }
-                else if (op != "exit")
-                    return at + "'" + p[1] + "' is no command — press, release, hold, tap, look, capture or exit.";
             }
             return null;
         }

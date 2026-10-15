@@ -42,8 +42,9 @@ namespace VortexEditor.Claude.Tools
                      "left out) and frame-time percentiles in ms (p50/p90/p95/p99/max); the log tail with error lines marked '!! ' and the error lines " +
                      "(Console errors, exceptions, engine failures); the captured frames (BMP paths), the first one as an image; the player it ran. " +
                      "input_script plays the game: one command per line, '<seconds> press|release|tap <key>', '<s> hold <key> [seconds]', " +
-                     "'<s> look <dx> <dy> [seconds]', '<s> capture <name>.bmp' (a plain file name), '<s> exit' (key names as in Input.GetKey; '#' " +
-                     "starts a comment). args reach the scripts as Application.Args — Application.GetArg(\"act\", 1) — so a test picks an act or a " +
+                     "'<s> look <dx> <dy> [seconds]', '<s> scroll <notches>', '<s> cursor <x> <y>', '<s> capture <name>.bmp' (a plain file name), " +
+                     "'<s> exit' — send_input's script grammar (key names as in Input.GetKey; '#' starts a comment); a line the player could not read " +
+                     "is refused before the run. args reach the scripts as Application.Args — Application.GetArg(\"act\", 1) — so a test picks an act or a " +
                      "beat; in editor play they are empty. The player reads the project from disk: unsaved scene edits are not in the run (the note " +
                      "says so — save_scene first). Its save games and settings go to a scratch folder, never the user's. Other tools keep working " +
                      "while it runs, but the editor's viewport rests (no capture_viewport meanwhile); after timeout_seconds the player is killed, " +

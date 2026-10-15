@@ -39,14 +39,14 @@ namespace VortexTests
         [Test]
         public static void InputScriptsAreCheckedLikeThePlayerReadsThem(TestContext t)
         {
-            string good = "# walk to the door\n0.5 press W\n2 release W\n2.2 hold LButton 0.4\n2.5 tap R\n3 look 40 -10 0.5\n3.5 capture door.bmp\n4 exit\n\n";
+            string good = "# walk to the door\n0.5 press W\n2 release W\n2.2 hold LButton 0.4\n2.5 tap R\n3 look 40 -10 0.5\n3.2 scroll -1\n3.3 cursor 640 360\n3.5 capture door.bmp\n4 exit\n\n";
             t.True(PlayerRun.CheckInputScript(good, 10) == null, "a valid script: " + PlayerRun.CheckInputScript(good, 10));
             t.True(PlayerRun.CheckInputScript(null) == null && PlayerRun.CheckInputScript("") == null, "none at all is fine");
             string Err(string s) => PlayerRun.CheckInputScript(s, 10) ?? "";
             t.True(Err("1 press W\nsoon press W").StartsWith("line 2", StringComparison.Ordinal), "a line without a time, with its number: " + Err("1 press W\nsoon press W"));
-            t.True(Err("1 press Shft").Contains("'Shft' is no key"), "an unknown key");
-            t.True(Err("1 jump").Contains("'jump' is no command"), "an unknown command");
-            t.True(Err("1 look 40").Contains("look takes"), "look needs two numbers");
+            t.True(Err("1 press Shft").Contains("unknown key 'Shft'"), "an unknown key: " + Err("1 press Shft"));
+            t.True(Err("1 jump").Contains("unknown command 'jump'"), "an unknown command: " + Err("1 jump"));
+            t.True(Err("1 look").Contains("dx is missing") && Err("1 look 40") == "", "look needs dx (dy defaults to 0, as the player reads it): " + Err("1 look"));
             t.True(Err("1 capture ../../evil.bmp").Contains("without folders") && Err("1 capture /tmp/x.bmp").Contains("without folders"), "captures stay in the run's folder");
             t.True(Err("1 capture shot.png").Contains("BMP"), "a capture is a BMP");
             t.True(Err("12 exit").Contains("never runs"), "a command after the run ends");
