@@ -320,8 +320,14 @@ public class Clocks : VortexBehaviour
                 t.Equal(1f, Vortex.Time.TimeScale, "a new play session starts at time scale 1");
                 t.True(Near(Vortex.Time.FixedDeltaTime, 1f / 60f), "… with the project's fixed step (60 Hz by default)");
                 Vortex.Time.TimeScale = 0.3f;
+                Vortex.Time.FixedDeltaTime = 1f / 120f;
                 rt.Begin(scene, asm);   // a scene load / hot reload inside the session
                 t.True(Near(Vortex.Time.TimeScale, 0.3f), "a scene load keeps the session's time scale");
+                t.True(Near(Vortex.Time.FixedDeltaTime, 1f / 120f), "… and its fixed step");
+                Vortex.Time.TimeScale = 0f;
+                rt.End();   // play stops
+                t.Equal(1f, GameTime.Scale, "play stopped: time scale 1 again (a paused game does not hold the editor)");
+                t.True(Near(GameTime.FixedDeltaTime, 1f / 60f), "… and the project's fixed step");
             }
             finally { rt.End(); GameTime.ResetSession(1f / 60f); }
         }

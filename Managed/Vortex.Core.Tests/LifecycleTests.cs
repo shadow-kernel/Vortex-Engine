@@ -59,6 +59,23 @@ public class Spawner : VortexBehaviour
     }
 }
 
+public class ParentReset : VortexBehaviour
+{
+    public long Child;
+    public override void OnDisable() { Life.Log.Add(""Parent.OnDisable""); Scene.SetActive(Child, true); }
+}
+
+public class Reviver : VortexBehaviour
+{
+    public long Other;
+    public override void OnDisable()
+    {
+        Life.Log.Add(""Reviver.OnDisable"");
+        var t = Scene.GetBehaviour<Tracer>(Other);
+        if (t != null) t.Enabled = true;
+    }
+}
+
 public class SelfDisabler : VortexBehaviour
 {
     public int Updates;
@@ -291,6 +308,85 @@ public class SelfDisabler : VortexBehaviour
                 t.True(ConsoleService.Instance.Entries.Any(x => x.Level == LogLevel.Warning && x.Message.Contains("'Switcher' is being switched on or off right now")), "… with a warning");
             }
             finally { rt.End(); }
+        }
+
+        /// <summary>#422 review: an OnDisable of an entity being switched off that switches a child on (Scene.SetActive) or a
+        /// script on (Enabled = true) — the entity counts as off for the lifecycle already: no OnEnable inside its switch-off,
+        /// IsActiveAndEnabled stays false, and the OnEnable comes when the entity is switched on again.</summary>
+        [Test]
+        public static void AnOnEnableFromASwitchOffWaitsForTheSwitchOn(TestContext t)
+        {
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Pending" };
+            var p = Entity(scene, null, "P");
+            var reset = new Script(p, "Assets/Scripts/ParentReset.cs"); p.AddComponentDirect(reset);
+            var c = Entity(scene, p, "C", active: false); Trace(c, "Child");
+            var e = Entity(scene, null, "E"); Trace(e, "T"); e.AddComponentDirect(new Script(e, "Assets/Scripts/Reviver.cs"));
+            var rt = ScriptRuntime.Instance;
+            var log = Log(asm);
+            try
+            {
+                rt.Begin(scene, asm);
+                var pb = rt.BehavioursOf(p)[0];
+                pb.GetType().GetField("Child").SetValue(pb, rt.HandleForEntity(c));
+                var child = rt.BehavioursOf(c)[0];
+
+                log.Clear();
+                Vortex.Scene.SetActive(rt.HandleForEntity(p), false);
+                t.Equal("Parent.OnDisable", Joined(log), "a child switched on from its parent's OnDisable gets no OnEnable inside the switch-off");
+                t.True(c.IsActive && !p.IsActive, "its own flag is on, the parent is off");
+                t.False(child.IsActiveAndEnabled, "… so it is not active and enabled");
+                log.Clear();
+                Vortex.Scene.SetActive(rt.HandleForEntity(p), true);
+                t.Equal("Child.OnEnable", Joined(log), "switched on again: the child's OnEnable comes now");
+                t.True(child.IsActiveAndEnabled, "… and it is active and enabled");
+
+                var tracer = rt.BehavioursOf(e)[0];
+                tracer.GetType().GetProperty("Enabled").SetValue(tracer, false);
+                var rv = rt.BehavioursOf(e)[1];
+                rv.GetType().GetField("Other").SetValue(rv, rt.HandleForEntity(e));
+                log.Clear();
+                Vortex.Scene.SetActive(rt.HandleForEntity(e), false);
+                t.Equal("Reviver.OnDisable", Joined(log), "Enabled = true from the OnDisable pass: no OnEnable while the entity goes off");
+                t.True(tracer.Enabled && !tracer.IsActiveAndEnabled, "switched on, but not active");
+                log.Clear();
+                Vortex.Scene.SetActive(rt.HandleForEntity(e), true);
+                t.Equal("T.OnEnable", Joined(log), "the OnEnable comes with the entity");
+                t.True(tracer.IsActiveAndEnabled, "… active and enabled now");
+            }
+            finally { rt.End(); }
+        }
+
+        /// <summary>#422 review: play stop's OnDisable pass switching things on (a SetActive, Enabled = true) brings nothing to
+        /// life — no OnEnable or Start during the teardown, each script's OnDisable at most once.</summary>
+        [Test]
+        public static void PlayStopBringsNothingToLife(TestContext t)
+        {
+            var asm = Compile(t);
+            var scene = new Scene { Name = "Teardown" };
+            var a = Entity(scene, null, "A"); a.AddComponentDirect(new Script(a, "Assets/Scripts/Reviver.cs"));
+            var b = Entity(scene, null, "B"); Trace(b, "B");
+            var p = Entity(scene, null, "P"); p.AddComponentDirect(new Script(p, "Assets/Scripts/ParentReset.cs"));
+            var off = Entity(scene, null, "Off", active: false); Trace(off, "Off");
+            var rt = ScriptRuntime.Instance;
+            var log = Log(asm);
+            try
+            {
+                rt.Begin(scene, asm);
+                var rv = rt.BehavioursOf(a)[0];
+                rv.GetType().GetField("Other").SetValue(rv, rt.HandleForEntity(b));
+                var pb = rt.BehavioursOf(p)[0];
+                pb.GetType().GetField("Child").SetValue(pb, rt.HandleForEntity(off));
+                var tb = rt.BehavioursOf(b)[0];
+                tb.GetType().GetProperty("Enabled").SetValue(tb, false);
+                log.Clear();
+            }
+            finally { rt.End(); }
+            t.False(log.Any(l => l.EndsWith(".OnEnable") || l.EndsWith(".Start")), "nothing comes alive while play stops: " + Joined(log));
+            t.True(log.Contains("Reviver.OnDisable") && log.Contains("Parent.OnDisable"), "the OnDisables ran: " + Joined(log));
+            t.Equal(0, log.Count(l => l == "B.OnDisable"), "the script switched on during the teardown gets no OnDisable (it never came back): " + Joined(log));
+            t.True(log.GroupBy(l => l).All(g => g.Count() == 1), "every call once: " + Joined(log));
+            t.Equal(1f, GameTime.Scale, "and the clock is at normal speed again");
         }
     }
 }

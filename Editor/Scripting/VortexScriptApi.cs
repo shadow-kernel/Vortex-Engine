@@ -721,7 +721,9 @@ namespace Vortex
         /// <summary>The script stops being active (#422): its entity or an ancestor is switched off (<see cref="Scene.SetActive"/>),
         /// the script is disabled, or it is about to be destroyed (Scene.Destroy, play stops — then OnDestroy follows). Called
         /// BEFORE the colliders and bodies go: they are still there inside it. Only after an OnEnable — never twice in a row,
-        /// never for a child that was already switched off on its own.</summary>
+        /// never for a child that was already switched off on its own. While it runs, the entity being switched off already
+        /// counts as inactive: switching a child or another script on from here changes their switch, and their OnEnable
+        /// comes when the entity is switched on again; while play stops, nothing comes alive any more.</summary>
         public virtual void OnDisable() { }
 
         /// <summary>Runs right before each physics step (#481), with <paramref name="fixedDt"/> = <see cref="Time.FixedDeltaTime"/>
@@ -961,7 +963,8 @@ namespace Vortex
         /// 0..100. Everything the engine simulates follows it in the same frame: Jolt bodies and ragdolls (the fixed steps come
         /// more or less often, each one still <see cref="FixedDeltaTime"/> long — rendered poses stay smooth), animators,
         /// particles and decal fades, Nav Agents and the AI's trees, coroutines (WaitForSeconds) and Invoke timers. Update
-        /// keeps being called at 0, with dt 0; FixedUpdate is not. Resets to 1 when play starts and stays across scene loads.
+        /// keeps being called at 0, with dt 0; FixedUpdate is not. Resets to 1 when play starts and when it stops; stays across
+        /// scene loads.
         /// <c>Time.TimeScale = 0.3f;</c> — bullet time.</summary>
         public static float TimeScale
         {
@@ -971,7 +974,7 @@ namespace Vortex
 
         /// <summary>Seconds of game time per physics step — the dt FixedUpdate gets (#481). From the project's Fixed Update Rate
         /// (Project Settings ▸ General ▸ Physics; 60 per second = 1/60 s unless the project says otherwise); a script may change
-        /// it for the rest of the session (0.001..0.1). Up to 4 steps' worth of game time run per frame (more while
+        /// it for the rest of the session (0.001..0.1; back to the project's when play stops). Up to 4 steps' worth of game time run per frame (more while
         /// fast-forwarding); a slower frame drops the rest instead of falling further behind.</summary>
         public static float FixedDeltaTime
         {

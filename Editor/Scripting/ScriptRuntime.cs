@@ -422,13 +422,23 @@ namespace Editor.Scripting
             _activating.Add(e);
             try
             {
-                // #422: OnDisable for the subtree's active scripts first — their colliders and bodies are still there
+                // #422: OnDisable for the subtree's active scripts first — their colliders and bodies are still there. The
+                // entity counts as switched off for the lifecycle from here on: an OnEnable from that pass (a child switched
+                // on, a script's Enabled = true) waits until the entity is switched on again.
                 if (!active && ActiveInHierarchy(e))
                 {
+                    _deactivating.Add(e);
                     NotifySubtree(e, enable: false);
                     if (!ReferenceEquals(FindEntityByHandle(id), e) || e.IsActive == active) return true;   // an OnDisable destroyed it
                 }
                 if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
+                if (active && UnderDeactivation(e))
+                {
+                    // switched on from the OnDisable pass of an ancestor that is going off: only its own flag changes now — its
+                    // ancestor takes the subtree out of the world, and it comes back (OnEnable then) with that ancestor
+                    e.SetActiveFlagOnly(true);
+                    return true;
+                }
                 e.IsActive = active;
                 try { e.SyncEngineState(); } catch { }   // under an inactive parent it stays out of the engine
                 // #51: collision + audio follow the active state (previously a documented limitation —
@@ -455,16 +465,30 @@ namespace Editor.Scripting
                 Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
                 // #422: OnEnable once the colliders, bodies and audio are back — for the scripts whose entity is now active in
                 // the hierarchy (a child switched off on its own stays out)
-                if (active && ActiveInHierarchy(e)) NotifySubtree(e, enable: true);
+                if (active && LiveInHierarchy(e)) NotifySubtree(e, enable: true);
                 return true;
             }
-            finally { _activating.Remove(e); }
+            finally { _activating.Remove(e); _deactivating.Remove(e); }
         }
 
         // ---- the script lifecycle (#422): OnEnable / Start / OnDisable, each delivered once ----
 
         private readonly HashSet<GameEntity> _activating = new HashSet<GameEntity>();   // a SetActive in progress
+        private readonly HashSet<GameEntity> _deactivating = new HashSet<GameEntity>();   // a SetActive(false) whose OnDisable pass runs
         private readonly HashSet<GameEntity> _reentryWarned = new HashSet<GameEntity>();
+        private bool _ending;   // End() runs its OnDisable / OnDestroy passes: nothing comes alive any more
+
+        /// <summary>The entity or an ancestor is being switched off right now — its OnDisable pass runs (#422).</summary>
+        private bool UnderDeactivation(GameEntity e)
+        {
+            if (_deactivating.Count == 0) return false;
+            for (var p = e; p != null; p = p.Parent) if (_deactivating.Contains(p)) return true;
+            return false;
+        }
+
+        /// <summary>Active in the hierarchy as the script lifecycle counts it: the flags say so and nothing above is being switched
+        /// off right now.</summary>
+        private bool LiveInHierarchy(GameEntity e) => ActiveInHierarchy(e) && !UnderDeactivation(e);
 
         private void WarnReentrantSetActive(GameEntity e)
         {
@@ -489,10 +513,10 @@ namespace Editor.Scripting
         private GameEntity EntityOf(Vortex.VortexBehaviour b)
             => b != null && b.EntityId != 0 && _entitiesById.TryGetValue(b.EntityId, out var e) ? e : null;
 
-        /// <summary>Would the behaviour be active now: live, its Script switched on, its entity active in the hierarchy (a UI
-        /// action class, which has no entity, always is).</summary>
+        /// <summary>Would the behaviour be active now: live, its Script switched on, its entity active in the hierarchy with no
+        /// ancestor being switched off (a UI action class, which has no entity, always is) — and play is not ending.</summary>
         private bool ShouldBeEnabled(Vortex.VortexBehaviour b)
-            => IsLive(b) && !b.ScriptDisabled && (b.EntityId == 0 || ActiveInHierarchy(EntityOf(b)));
+            => !_ending && IsLive(b) && !b.ScriptDisabled && (b.EntityId == 0 || LiveInHierarchy(EntityOf(b)));
 
         private void CallOnEnable(Vortex.VortexBehaviour b)
         {
@@ -516,7 +540,7 @@ namespace Editor.Scripting
 
         private void CallStart(Vortex.VortexBehaviour b)
         {
-            if (!IsLive(b) || b.Started) return;
+            if (_ending || !IsLive(b) || b.Started) return;   // a script made during play's teardown does not start any more
             b.Started = true;
             var prev = _dispatching; _dispatching = b;
             try { b.Start(); }
@@ -1406,11 +1430,17 @@ namespace Editor.Scripting
             ResetNonFiniteWarnings();                       // a NaN written again in this session is reported again (#455)
             _duplicateWarned.Clear();
             // a session starts at time scale 1 with the project's fixed step (#425, #481); a scene load inside it keeps both
-            int rate = 0;
-            try { rate = Editor.Core.Data.ProjectData.Current?.Settings?.FixedUpdateRate ?? 0; } catch { }
-            Editor.Core.Services.GameTime.ResetSession(Editor.Core.Services.GameTime.FixedDeltaTimeForRate(rate));
+            Editor.Core.Services.GameTime.ResetSession(ProjectFixedDeltaTime());
             try { Editor.Core.Services.AudioPlaybackService.Instance.SetPitchFollowsTimeScale(false); } catch { }   // #425: off until a script turns it on
             Begin(scene, overrideAsm);
+        }
+
+        /// <summary>The fixed step the open project asks for (Project Settings ▸ Physics ▸ Fixed update rate, #481).</summary>
+        private static float ProjectFixedDeltaTime()
+        {
+            int rate = 0;
+            try { rate = Editor.Core.Data.ProjectData.Current?.Settings?.FixedUpdateRate ?? 0; } catch { }
+            return Editor.Core.Services.GameTime.FixedDeltaTimeForRate(rate);
         }
 
         internal static void ResetNonFiniteWarnings()
@@ -1477,7 +1507,12 @@ namespace Editor.Scripting
         /// hot-reload inject a freshly-compiled assembly instead of re-reading disk.</summary>
         public void Begin(Scene scene, System.Reflection.Assembly overrideAsm)
         {
+            // a scene load or a hot reload inside the session keeps its time scale and fixed step (#425, #481); End() alone —
+            // play stopping — puts them back
+            float keepScale = Editor.Core.Services.GameTime.Scale, keepFixed = Editor.Core.Services.GameTime.FixedDeltaTime;
             End();
+            Editor.Core.Services.GameTime.Scale = keepScale;
+            Editor.Core.Services.GameTime.FixedDeltaTime = keepFixed;
             try { Editor.Core.Services.Areas.AreaService.Reset(); Vortex.Areas.ClearHandlers(); } catch { }
             if (scene?.Entities == null) return;
             _currentScene = scene;   // remembered so hot-reload can re-begin the same scene
@@ -2109,6 +2144,9 @@ namespace Editor.Scripting
         {
             try { Editor.Core.Services.Areas.AreaService.Reset(); Vortex.Areas.ClearHandlers(); } catch { }
             // #422: OnDisable for every active script first (the world is still there), then OnDestroy for every script.
+            // Nothing comes alive in between: an OnEnable or Start from these passes (a SetActive(true), Enabled = true, a
+            // spawn) would run in a world that is going away — and earn a second OnDisable.
+            _ending = true;
             for (int i = 0; i < _behaviours.Count; i++) CallOnDisable(_behaviours[i]);
             foreach (var b in _uiActions.Values) if (b != null) CallOnDisable(b);
             // By index over the live list (an OnDestroy may spawn — appended — or destroy — only marked); each behaviour is
@@ -2126,6 +2164,7 @@ namespace Editor.Scripting
             foreach (var b in _uiActions.Values) { if (b != null) try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); } }
             UnwatchScripts();
             _activating.Clear();
+            _deactivating.Clear();
             _reentryWarned.Clear();
             // Scripting-wave teardown (#36-#40): undo runtime scene mutations, stop timers/coroutines,
             // drop event subscriptions, persist pending save data.
@@ -2148,6 +2187,10 @@ namespace Editor.Scripting
             lock (_overridesFixedUpdate) _overridesFixedUpdate.Clear();   // holds script types: a hot reload's old assembly must unload
             Editor.Core.Services.Physics.PhysicsService.BeforeStep = null;   // #481
             Editor.Core.Services.GameTime.InFixedStep = false;
+            // play stopped: the clock is back at normal speed and the project's step — a script's TimeScale 0 or its own
+            // FixedDeltaTime must not hold the editor's previews or the next run that is not a play session (#425, #481)
+            Editor.Core.Services.GameTime.Scale = 1f;
+            Editor.Core.Services.GameTime.FixedDeltaTime = ProjectFixedDeltaTime();
             _compactPending = false;
             _startPending.Clear();
             _entitiesById.Clear();
@@ -2176,6 +2219,7 @@ namespace Editor.Scripting
             try { _currentScene?.Settings?.Apply(); } catch { }
             _scriptAsm = null;
             _active = false;
+            _ending = false;
         }
 
         private Scene _currentScene;                       // last Begin's scene (for hot-reload)
@@ -2411,7 +2455,7 @@ namespace Editor.Scripting
             var b = LiveBehaviourOf(e, sc);
             if (sc.IsEnabled)
             {
-                if (b == null) { AttachAtRuntime(e, sc); return; }   // switched on for the first time: made, OnEnable, Start
+                if (b == null) { if (!_ending) AttachAtRuntime(e, sc); return; }   // switched on for the first time: made, OnEnable, Start
                 b.ScriptDisabled = false;
                 CallOnEnable(b);
                 if (!b.Started && !_startPending.Contains(b)) CallStart(b);
