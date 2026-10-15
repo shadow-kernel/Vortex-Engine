@@ -228,6 +228,7 @@ namespace Editor.Core.Services.Physics
             public long StartTicks;
             public bool CollidersRemoved;
             public bool ClipStopped;            // the animation was frozen once the simulation took over (no more clip events)
+            public GameEntity[] Chain;          // the entity and its ancestors at activation (counted in _limpAtOrAbove)
         }
 
         /// <summary>The last two evaluated poses of an entity that carries a Ragdoll component (velocity at activation).</summary>
@@ -249,6 +250,67 @@ namespace Editor.Core.Services.Physics
         public static int ActiveCount => _active.Count;
 
         public static bool IsActive(GameEntity entity) => entity != null && _active.ContainsKey(entity);
+
+        // How many active ragdolls lie at or under each entity: every ragdoll counts on the entity it is active on and on
+        // that entity's ancestors as they were at activation. MoveCharacter asks "is the owner limp?" on every call and
+        // the nav crowd once per agent per frame — a scan over the active ragdolls grew with every corpse (#407 review).
+        private static readonly Dictionary<GameEntity, int> _limpAtOrAbove = new Dictionary<GameEntity, int>();
+
+        private static void Track(Instance inst)
+        {
+            int depth = 0;
+            for (var e = inst.Entity; e != null; e = e.Parent) depth++;
+            inst.Chain = new GameEntity[depth];
+            int i = 0;
+            for (var e = inst.Entity; e != null; e = e.Parent)
+            {
+                inst.Chain[i++] = e;
+                _limpAtOrAbove[e] = _limpAtOrAbove.TryGetValue(e, out var count) ? count + 1 : 1;
+            }
+        }
+
+        private static void Untrack(Instance inst)
+        {
+            if (inst?.Chain == null) return;
+            foreach (var e in inst.Chain)
+            {
+                if (!_limpAtOrAbove.TryGetValue(e, out var count)) continue;
+                if (count <= 1) _limpAtOrAbove.Remove(e); else _limpAtOrAbove[e] = count - 1;
+            }
+            inst.Chain = null;
+        }
+
+        /// <summary>#407: is a ragdoll active on <paramref name="root"/> or an entity under it (the skinned model of a
+        /// character whose root moves the capsule)? Such a character is limp and gets no capsule. O(1): the hierarchy as it
+        /// was when the ragdoll was activated (an entity reparented while limp keeps its old ancestors limp until the
+        /// ragdoll ends).</summary>
+        internal static bool ActiveAtOrUnder(GameEntity root) => root != null && _limpAtOrAbove.ContainsKey(root);
+
+        /// <summary>Test hook: mark an entity as an active ragdoll without bodies (for the rules that ask "is it limp?").</summary>
+        internal static void TestMarkActive(GameEntity e, bool active)
+        {
+            if (e == null) return;
+            if (_active.TryGetValue(e, out var old)) { Untrack(old); _active.Remove(e); }
+            if (!active) return;
+            var inst = new Instance { Entity = e, MeshEntity = e, Parts = new Part[0] };
+            _active[e] = inst;
+            Track(inst);
+        }
+
+        /// <summary>#406: append the part bodies of every active ragdoll at or under <paramref name="root"/> to
+        /// <paramref name="ids"/> (from index <paramref name="n"/>); returns the new count — a ray that ignores a
+        /// character passes through its limbs too.</summary>
+        internal static int AppendBodies(GameEntity root, ref uint[] ids, int n)
+        {
+            if (root == null || !_limpAtOrAbove.ContainsKey(root)) return n;   // the usual case: nothing limp under it
+            foreach (var inst in _active.Values)
+            {
+                if (!CollisionService.IsUnder(inst.Entity, root)) continue;
+                foreach (var part in inst.Parts)
+                    if (part != null && part.Body != 0) PhysicsService.Append(ref ids, ref n, part.Body);
+            }
+            return n;
+        }
 
         /// <summary>Must the entity's animator evaluate this frame even without a playing clip? (an active ragdoll, or
         /// one that starts at play start)</summary>
@@ -348,15 +410,22 @@ namespace Editor.Core.Services.Physics
                 try { CollisionService.RemoveEntityShapes(entity, true); } catch { }
                 inst.CollidersRemoved = true;
             }
-            // a character controller stops being one: its capsule must not keep blocking the spot it died on
+            // a character controller stops being one: its capsule must not keep blocking the spot it died on. #407: the
+            // capsule usually belongs to the character's ROOT (its behaviour calls MoveCharacter with its EntityId) while the
+            // ragdoll is the skinned model below it — drop the nearest character at or above the entity, the managed capsule
+            // and the Jolt character alike; an id registered under the entity's own handle goes too.
             try
             {
-                long handle = Editor.Scripting.ScriptRuntime.Instance?.HandleForEntity(entity) ?? 0;
-                if (handle != 0) CollisionService.RemoveCharacter(handle);
+                if (PhysicsService.RemoveCharacterOf(entity) == 0)
+                {
+                    long handle = Editor.Scripting.ScriptRuntime.Instance?.HandleForEntity(entity) ?? 0;
+                    if (handle != 0) PhysicsService.RemoveCharacter(handle);
+                }
             }
             catch { }
 
             _active[entity] = inst;
+            Track(inst);
             if (inst.BlendTime <= 0f) StopClip(inst);
             SceneRenderService.RuntimeDirty = true;
             return true;
@@ -378,6 +447,7 @@ namespace Editor.Core.Services.Physics
         {
             if (entity == null || !_active.TryGetValue(entity, out var inst)) return;
             _active.Remove(entity);
+            Untrack(inst);
             DestroyBodies(inst);
             if (inst.CollidersRemoved && PhysicsService.IsBuilt)
             {
@@ -628,7 +698,7 @@ namespace Editor.Core.Services.Physics
         /// <summary>The world is gone (play stopped, scene switch): forget every ragdoll — their bodies went with it.</summary>
         internal static void OnWorldCleared()
         {
-            _active.Clear(); _history.Clear(); _startHandled.Clear(); _warned.Clear();
+            _active.Clear(); _limpAtOrAbove.Clear(); _history.Clear(); _startHandled.Clear(); _warned.Clear();
         }
 
         /// <summary>AnimationService, right before the skinning palette: an active ragdoll's simulated pose replaces

@@ -635,7 +635,11 @@ namespace Editor.Core.Services.AI
             for (int i = 0; i < _agentList.Count; i++)
             {
                 var r = _agentList[i];
-                bool live = r.Agent != null && r.Agent.IsEnabled && r.Entity != null && r.Entity.ActiveInHierarchy && InRunScene(r.Entity);
+                // a limp agent (#407: a ragdoll at or under it) leaves the crowd like a switched-off one — no pose writes, no
+                // capsule (Ragdoll.Activate removed it). When the ragdoll is over it rejoins at the entity's position: where
+                // it went down — the ragdoll moves the model's bones, not the agent — unless a script moved it meanwhile
+                // (a get-up places the root at Ragdoll.PelvisPosition first). Its destination is kept.
+                bool live = r.Agent != null && r.Entity != null && MayJoinCrowd(r) && InRunScene(r.Entity);
                 if (!live)
                 {
                     if (r.Handle != 0) { try { VortexAPI.NavAgentRemove(r.Handle); } catch { } r.Handle = 0; }
@@ -691,7 +695,8 @@ namespace Editor.Core.Services.AI
                     if (r.HasColliders) { try { CollisionService.RemoveEntityShapes(r.Entity); } catch { } }   // never collide with itself
                     var delta = nav - r.LastFeet;
                     var from = new Vector3(r.LastFeet.X, r.LastFeet.Y, r.LastFeet.Z);
-                    var res = CollisionService.MoveCharacter(from, r.Agent.Radius, r.Agent.Height, new Vector3(delta.X, delta.Y, delta.Z), out _, r.SelfId);
+                    var res = CollisionService.MoveCharacter(from, r.Agent.Radius, r.Agent.Height, new Vector3(delta.X, delta.Y, delta.Z), out _, r.SelfId,
+                        owner: r.Entity);
                     var resolved = new SysVec(res.X, res.Y, res.Z);
                     if (Math.Abs(resolved.Y - nav.Y) > 1.0f) resolved = nav;   // off the navmesh vertically: trust the navmesh
                     float dx = resolved.X - nav.X, dz = resolved.Z - nav.Z;
@@ -739,15 +744,17 @@ namespace Editor.Core.Services.AI
         }
 
         /// <summary>Send an agent to <paramref name="target"/> (asynchronous path request). False when the entity has no
-        /// enabled NavAgent, there is no navmesh, or the target is nowhere near it.</summary>
+        /// enabled NavAgent, there is no navmesh, the target is nowhere near it, or the agent is limp (#407: a ragdoll at
+        /// or under it is active — it is out of the crowd until the ragdoll is over; send it again after
+        /// Ragdoll.Deactivate).</summary>
         public static bool SetDestination(GameEntity e, Vector3 target)
         {
             var r = Rec(e, true);
-            if (r == null) return false;
+            if (r == null || Limp(r)) return false;
             r.Destination = ToSys(target);
             r.HasDestination = true;
             r.Arrived = false;
-            if (r.Handle == 0 && IsLoaded && r.Entity.ActiveInHierarchy) AddToCrowd(r, EntityFeet(r));
+            if (r.Handle == 0 && IsLoaded && MayJoinCrowd(r)) AddToCrowd(r, EntityFeet(r));
             if (r.Handle == 0) return false;
             Fill(_fa, target);
             bool ok = VortexAPI.NavAgentSetTarget(r.Handle, _fa) != 0;
@@ -831,11 +838,12 @@ namespace Editor.Core.Services.AI
             return r != null && r.StateValid ? new Vector3(r.State.CornerX, r.State.CornerY, r.State.CornerZ) : Vector3.Zero;
         }
 
-        /// <summary>Place an agent somewhere else (its path is cleared). False when the point is not on / near the navmesh.</summary>
+        /// <summary>Place an agent somewhere else (its path is cleared). False when the point is not on / near the navmesh, or
+        /// while the agent is limp (#407: a ragdoll at or under it is active — warp it after Ragdoll.Deactivate).</summary>
         public static bool Warp(GameEntity e, Vector3 position)
         {
             var r = Rec(e, true);
-            if (r == null) return false;
+            if (r == null || Limp(r)) return false;
             var p = ToSys(position);
             WritePose(r.Entity, p + new SysVec(0f, r.Agent.BaseOffset, 0f), null);
             r.LastFeet = p; r.HasLastFeet = true;
@@ -901,9 +909,16 @@ namespace Editor.Core.Services.AI
             a.PropertyChanged += OnAgentChanged;
             _agents[e] = r;
             _agentList.Add(r);
-            if (IsLoaded && e.ActiveInHierarchy && a.IsEnabled) AddToCrowd(r, EntityFeet(r));
+            if (IsLoaded && MayJoinCrowd(r)) AddToCrowd(r, EntityFeet(r));
             return r;
         }
+
+        /// <summary>#407: a ragdoll at or under the agent is active — it takes no navigation orders and stays out of the crowd.</summary>
+        private static bool Limp(AgentRec r) => RagdollService.ActiveAtOrUnder(r.Entity);
+
+        /// <summary>May the agent be in the crowd: its component enabled, its entity active, not limp (the callers check that a
+        /// navmesh is loaded).</summary>
+        private static bool MayJoinCrowd(AgentRec r) => r.Agent.IsEnabled && r.Entity.ActiveInHierarchy && !Limp(r);
 
         private static void OnAgentChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
         {

@@ -33,7 +33,9 @@ namespace Vortex
         private static SysVec V(Vector3 v) { return new SysVec(v.X, v.Y, v.Z); }
 
         /// <summary>Turn the character into a ragdoll at its current pose (it keeps its momentum). False when the
-        /// entity has no recognisable humanoid skeleton or physics is not running — the console says why.</summary>
+        /// entity has no recognisable humanoid skeleton or physics is not running — the console says why. The character
+        /// capsule of the entity — or of the nearest ancestor whose EntityId moved one with Physics.MoveCharacter — is
+        /// unregistered (#407), so it no longer blocks the spot where the character fell.</summary>
         public static bool Activate(long entity) { return RagdollService.Activate(E(entity)); }
 
         /// <summary>Ragdoll, and shove the body part nearest <paramref name="point"/> with <paramref name="impulse"/>

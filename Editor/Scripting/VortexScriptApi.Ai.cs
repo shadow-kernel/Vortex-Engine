@@ -55,8 +55,9 @@ namespace Vortex
         // ---- agents ----
 
         /// <summary>Send the entity's Nav Agent to <paramref name="point"/>. Returns immediately (the path is computed over
-        /// the next frames); false when the entity has no enabled Nav Agent, no navmesh is baked, or the point is nowhere
-        /// near the navmesh. Calling it again with a new point (a moving player) re-plans.</summary>
+        /// the next frames); false when the entity has no enabled Nav Agent, no navmesh is baked, the point is nowhere
+        /// near the navmesh, or the agent is a ragdoll (a ragdoll at or under it is active: it rests out of the crowd until
+        /// Ragdoll.Deactivate — send it again then). Calling it again with a new point (a moving player) re-plans.</summary>
         public static bool SetDestination(long entity, Vector3 point) { return NavigationService.SetDestination(E(entity), V(point)); }
 
         /// <summary>Stop the agent (the destination is cleared; it slows to a halt).</summary>
@@ -104,7 +105,8 @@ namespace Vortex
             return result;
         }
 
-        /// <summary>Teleport the agent (its path is cleared). False when the point is not on / near the navmesh.</summary>
+        /// <summary>Teleport the agent (its path is cleared). False when the point is not on / near the navmesh, or while the
+        /// agent is a ragdoll (warp it after Ragdoll.Deactivate).</summary>
         public static bool Warp(long entity, Vector3 position) { return NavigationService.Warp(E(entity), V(position)); }
 
         /// <summary>Override the agent's speed at runtime (m/s) — walk 1.5 on patrol, run 5 in a chase. Negative = back to the
