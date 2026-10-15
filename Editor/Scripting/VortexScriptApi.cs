@@ -2003,7 +2003,13 @@ namespace Vortex
 
     /// <summary>Lighting/atmosphere control for game scripts — flicker, lightning, mood. With submit-once a static
     /// scene keeps whatever the script last set, so per-frame changes here drive a living, flickering environment.
-    /// Per-entity control lives on GetLight() (Vortex.Light); this class is the GLOBAL ambient/sun/fog surface.</summary>
+    /// Per-entity control lives on GetLight() (Vortex.Light); this class is the GLOBAL ambient/sun/fog surface.
+    /// A script's sun lasts until the script hands it back (#466), so a lightning flash ends with ClearDirectional:
+    /// <code>
+    /// _t += dt;
+    /// if (_t > 6f) { _t = 0f; _flash = 0.08f; Lighting.SetDirectional(0.1f, -1f, 0.3f, 0.85f, 0.9f, 1f, 12f); }   // a flash every 6 s
+    /// if (_flash > 0f &amp;&amp; (_flash -= dt) &lt;= 0f) Lighting.ClearDirectional();   // then the scene's sun again
+    /// </code></summary>
     public static class Lighting
     {
         /// <summary>Global ambient strength (0 = pitch black, 1 = flat-lit). Dip it for darkness/flicker.
