@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1059,12 +1060,18 @@ private:
 		}
 	}
 
+	// Unique per process: two runs at once (a second ctest on the same machine) shared these names and deleted or
+	// rewrote each other's clips mid-test — the "registered pak blob" / "three simultaneous streams play" failures.
 	std::string temp_path(const char* name)
 	{
+		static const std::string prefix = [] {
+			std::random_device rd;
+			return "vortex-" + std::to_string(rd()) + "-";
+		}();
 		std::error_code ec;
 		auto dir = std::filesystem::temp_directory_path(ec);
-		if (ec) return name;
-		return (dir / name).string();
+		if (ec) return prefix + name;
+		return (dir / (prefix + name)).string();
 	}
 
 	// Minimal 16-bit PCM mono RIFF wav: 0.5 s, 660 Hz sine.
