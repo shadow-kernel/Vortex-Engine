@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Editor.Core.Claude;
 using Editor.Core.Input;
@@ -41,23 +42,26 @@ namespace VortexEditor.Claude.Tools
                      "seconds given, look moves the mouse by [dx, dy] pixels spread over the seconds (0 = one frame), scroll turns the wheel by notches " +
                      "(+1 up), cursor puts the UI cursor at [x, y] points (ui_size in the answer is the view in points) so a tap of LButton clicks the " +
                      "game's UI there. Key names as Input.GetKey takes them (W, Space, LeftShift, Escape, Return, Up, F5, Num1, LButton, RButton, " +
-                     "MButton …). Waits until the last action ran and returns the console errors meanwhile; Stop releases everything.")]
+                     "MButton …). Waits until the last action ran — other tools can run meanwhile — and returns the console errors meanwhile; Stop, " +
+                     "and cancelling the call, release everything.")]
         public static async Task<object> SendInput(
             [Description("Timed actions [{\"t\": 0, \"press\": \"W\"}, …] — see the description")] JsonElement? actions = null,
             [Description("The same commands as lines of the standalone player's --input file instead of actions: \"0 press W\\n2 release W\\n2.5 look 40 -10 0.5\\n4 scroll -1\"")] string script = null,
             [Description("Wait until the last action ran (false: return at once, the input keeps playing)")] bool wait = true,
-            [Description("First release every key earlier calls still hold and drop their actions not run yet")] bool cancel = false)
+            [Description("First release every key earlier calls still hold and drop their actions not run yet")] bool cancel = false,
+            CancellationToken ct = default)
         {
             NeedPlay("send_input");
             bool hasActions = actions.HasValue && actions.Value.ValueKind != JsonValueKind.Null && actions.Value.ValueKind != JsonValueKind.Undefined;
             if (hasActions && !string.IsNullOrWhiteSpace(script)) throw new ToolError("Give actions or script, not both.");
             var problems = new List<string>();
+            var warnings = new List<string>();
             var ignored = new List<string>();
             List<InputScript.Command> commands;
             if (hasActions) commands = InputScript.FromJson(actions.Value, problems);
             else if (!string.IsNullOrWhiteSpace(script))
             {
-                commands = InputScript.Parse(script.Replace("\\n", "\n").Split('\n'), problems);
+                commands = InputScript.Parse(script.Replace("\\n", "\n").Split('\n'), problems, warnings);
                 // a player --input file pasted as it is: its captures and exit belong to the player
                 ignored.AddRange(commands.Where(c => c.Op == "capture" || c.Op == "exit").Select(c => c.Op));
                 commands.RemoveAll(c => c.Op == "capture" || c.Op == "exit");
@@ -76,6 +80,7 @@ namespace VortexEditor.Claude.Tools
             double end = sim.Enqueue(commands);
             var ui = UiSize();
             string ignoredNote = ignored.Count > 0 ? "ignored " + string.Join(", ", ignored.Distinct()) + " (player only — capture_viewport takes pictures in the editor)" : null;
+            if (warnings.Count > 0) ignoredNote = (ignoredNote == null ? "" : ignoredNote + "; ") + string.Join("; ", warnings);
             if (!wait || commands.Count == 0)
             {
                 return new
@@ -90,17 +95,29 @@ namespace VortexEditor.Claude.Tools
             }
 
             // the sequence runs on the play clock: wait while the game plays it, but never longer than its length in real time plus
-            // a margin (a slow frame rate stretches game time), and not at all while paused
+            // a margin (a slow frame rate stretches game time), and not at all while paused. The wait does not hold the tools' lock —
+            // exit_play_mode or get_script_state can come in meanwhile — and a cancelled call stops the simulated input (#457 review).
             var sw = Stopwatch.StartNew();
             double limit = Math.Min(120, (end - start) * 2 + 10);
             string stopped = null;
-            while (sim.Now <= end)
+            try
             {
-                var state = PlayModeService.Instance.State;
-                if (state == PlayState.Editing) { stopped = "play stopped before the last action ran"; break; }
-                if (state == PlayState.Paused) { stopped = "the game is paused — the remaining actions run when it plays on"; break; }
-                if (sw.Elapsed.TotalSeconds > limit) { stopped = "still playing after " + (int)limit + " s real time (a slow frame rate stretches game time) — the rest runs on"; break; }
-                await Task.Delay(25);
+                await ToolHost.WaitOutsideLock(async () =>
+                {
+                    while (sim.Now <= end)
+                    {
+                        var state = PlayModeService.Instance.State;
+                        if (state == PlayState.Editing) { stopped = "play stopped before the last action ran"; break; }
+                        if (state == PlayState.Paused) { stopped = "the game is paused — the remaining actions run when it plays on"; break; }
+                        if (sw.Elapsed.TotalSeconds > limit) { stopped = "still playing after " + (int)limit + " s real time (a slow frame rate stretches game time) — the rest runs on"; break; }
+                        await Task.Delay(25, ct);
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                sim.Cancel();   // the client gave up on the call: nothing of it may stay held
+                throw;
             }
             var notes = new List<string>();
             if (stopped != null) notes.Add(stopped);
@@ -141,13 +158,15 @@ namespace VortexEditor.Claude.Tools
         [Description("Reads the running game's script state (play mode): the public fields and properties of the behaviours an entity runs — " +
                      "the game's own members, not VortexBehaviour's Position / EntityId (get_entity shows the transform) — or with target " +
                      "\"static:ClassName\" the public static fields and properties of a script class (game state, managers: \"static:MissionManager\"). " +
-                     "Values as JSON: numbers, text, bools, enums by name, Vector3 as [x, y, z], lists (64 items at most), other objects as their members " +
-                     "down to depth; a reference to another behaviour shows as \"Health on 'Npc'\" (read that entity, or a dotted path). fields picks " +
-                     "members or dotted paths into objects (\"Instance.Credits\"). Reading runs property getters (game code). get_entity shows a Script's " +
-                     "stored Inspector values instead.")]
+                     "Runs no game code by default: fields and auto-properties are read directly, a property with a getter of its own is listed under " +
+                     "computed and runs only when fields names it. Values as JSON: numbers, text, bools, enums by name, Vector3 / Quaternion / Color as " +
+                     "arrays, lists (64 items at most), the game's own objects as their members down to depth (one already shown, or a cycle, is not " +
+                     "expanded again); a reference to another behaviour shows as \"Health on 'Npc'\" (read that entity, or a dotted path). fields picks " +
+                     "members or dotted paths into the game's objects (\"Instance.Credits\") — on an entity with several scripts, from the one that has " +
+                     "it. A large state is cut (truncated: true). get_entity shows a Script's stored Inspector values instead.")]
         public static object GetScriptState(
             [Description("Entity id, path or name — or \"static:ClassName\" for a script class's static state")] string target,
-            [Description("Only these members; a dotted path reads inside objects: [\"Hp\", \"Inventory.Ammo\"]")] string[] fields = null,
+            [Description("Only these members (their getters run); a dotted path reads inside the game's objects: [\"Hp\", \"Inventory.Ammo\"]")] string[] fields = null,
             [Description("When the entity runs several scripts: only this one (class name)")] string script = null,
             [Description("How many levels of nested objects and lists are expanded (0–6)")] int depth = 2)
         {
@@ -157,23 +176,50 @@ namespace VortexEditor.Claude.Tools
                 if (IsStatic(target, out string cls))
                 {
                     var type = ScriptState.FindClass(ScriptRuntime.Instance.ScriptAssembly, cls);
-                    return new { @class = type.FullName, state = ScriptState.Read(null, type, true, fields, depth) };
+                    var snap = ScriptState.Read(null, type, true, fields, depth);
+                    return new
+                    {
+                        @class = type.FullName,
+                        state = snap.State,
+                        computed = snap.Computed.Count > 0 ? snap.Computed : null,
+                        truncated = snap.Truncated ? (bool?)true : null,
+                        note = snap.Truncated ? Cut : null,
+                    };
                 }
                 var e = SceneModel.Resolve(target);
+                var all = Behaviours(e, script);
+                var reads = new List<(Vortex.VortexBehaviour b, ScriptState.Snapshot snap)>();
+                if (fields == null || fields.Length == 0)
+                    foreach (var b in all) reads.Add((b, ScriptState.Read(b, b.GetType(), false, null, depth)));
+                else
+                    // each field from the behaviour that has it (#457 review): several scripts of one entity rarely share a name
+                    foreach (var group in fields.GroupBy(f => Owner(e, all, f, "read")))
+                        reads.Add((group.Key, ScriptState.Read(group.Key, group.Key.GetType(), false, group.ToList(), depth)));
+                bool cut = reads.Any(r => r.snap.Truncated);
                 return new
                 {
                     entity = SceneModel.ShortId(e) + " " + SceneModel.PathOf(e),
-                    behaviours = Behaviours(e, script).Select(b => new { script = b.GetType().Name, state = ScriptState.Read(b, b.GetType(), false, fields, depth) }).ToArray(),
+                    behaviours = reads.Select(r => new
+                    {
+                        script = r.b.GetType().Name,
+                        state = r.snap.State,
+                        computed = r.snap.Computed.Count > 0 ? r.snap.Computed : null,
+                    }).ToArray(),
+                    truncated = cut ? (bool?)true : null,
+                    note = cut ? Cut : null,
                 };
             }
             catch (ScriptState.Error ex) { throw new ToolError(ex.Message); }
         }
 
+        private static readonly string Cut = "the state is larger than one answer holds (" + ScriptState.MaxValues + " values) — the rest shows as …; name members in fields, or lower depth";
+
         [McpServerTool(Name = "set_script_state"), ManagesUndo]
         [Description("Sets public fields or properties of the running game's behaviours — or, with target \"static:ClassName\", a script class's " +
-                     "static ones — while playing: test setup such as {\"Credits\": 5000, \"Instance.Act\": 4} (a dotted path sets inside an object). " +
-                     "Values as JSON in the member's type: numbers, text, bools, enums by name, [x, y, z], arrays / lists; null for a reference. Every " +
-                     "value is checked before any is set; the answer reads them back. Live only: Stop discards it — the behaviours end, and the next " +
+                     "static ones — while playing: test setup such as {\"Credits\": 5000, \"Instance.Act\": 4, \"Tint.A\": 0.5} (a dotted path sets inside " +
+                     "the game's objects and structs). Values as JSON in the member's type: numbers, text, bools, enums by name ([Flags]: \"Fast, Strong\"), " +
+                     "Vector3 / Quaternion / Color as [x, y, z(, w)] or {\"r\": 1}, structs as objects of their fields, arrays / lists; null for a reference. " +
+                     "Every value is checked before any is set; the answer reads them back. Live only: Stop discards it — the behaviours end, and the next " +
                      "Play compiles the scripts afresh, statics included (attach_script / set_component_properties change the stored values).")]
         public static object SetScriptState(
             [Description("Entity id, path or name — or \"static:ClassName\"")] string target,
@@ -193,17 +239,29 @@ namespace VortexEditor.Claude.Tools
                 Vortex.VortexBehaviour b = list[0];
                 if (list.Count > 1)
                 {
-                    // the one behaviour that has the first member named — several scripts of the entity can have one of that name
-                    string first = values.ValueKind == JsonValueKind.Object ? values.EnumerateObject().Select(p => p.Name.Split('.')[0]).FirstOrDefault() : null;
-                    var owners = first == null ? list : list.Where(x => ScriptState.Find(x.GetType(), false, first) != null).ToList();
+                    // the one behaviour that has the members named — several scripts of the entity can have one of that name
+                    var owners = values.ValueKind == JsonValueKind.Object ? values.EnumerateObject().Select(p => Owner(e, list, p.Name, "set")).Distinct().ToList() : list;
                     if (owners.Count != 1)
-                        throw new ToolError(SceneModel.PathOf(e) + " runs " + string.Join(", ", list.Select(x => x.GetType().Name)) + " — " +
-                                            (owners.Count == 0 ? "none has a member '" + first + "'" : "several have '" + first + "'") + "; name the one with script.");
+                        throw new ToolError(SceneModel.PathOf(e) + " runs " + string.Join(", ", list.Select(x => x.GetType().Name)) + " — the members belong to " +
+                                            string.Join(" and ", owners.Select(x => x.GetType().Name)) + "; set each script's in its own call (script).");
                     b = owners[0];
                 }
                 return new { entity = SceneModel.ShortId(e) + " " + SceneModel.PathOf(e), script = b.GetType().Name, set = ScriptState.Write(b, b.GetType(), false, values) };
             }
             catch (ScriptState.Error ex) { throw new ToolError(ex.Message); }
+        }
+
+        /// <summary>The behaviour of the entity that has the path's first member — an error naming the scripts when none or
+        /// several have it.</summary>
+        private static Vortex.VortexBehaviour Owner(GameEntity e, List<Vortex.VortexBehaviour> list, string path, string verb)
+        {
+            if (list.Count == 1) return list[0];
+            string first = (path ?? "").Split('.')[0].Trim();
+            var owners = list.Where(x => ScriptState.Find(x.GetType(), false, first) != null).ToList();
+            if (owners.Count == 1) return owners[0];
+            throw new ToolError(SceneModel.PathOf(e) + " runs " + string.Join(", ", list.Select(x => x.GetType().Name)) + " — " +
+                                (owners.Count == 0 ? "none has a member '" + first + "'. Members: " + string.Join("; ", list.Select(x => x.GetType().Name + ": " + ScriptState.Names(x.GetType(), false)))
+                                                   : string.Join(" and ", owners.Select(x => x.GetType().Name)) + " have '" + first + "'") + "; name the one to " + verb + " with script.");
         }
 
         private static bool IsStatic(string target, out string cls)

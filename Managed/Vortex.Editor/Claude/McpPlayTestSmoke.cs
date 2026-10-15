@@ -19,7 +19,9 @@ namespace VortexEditor.Claude
     /// fires once at a UI cursor it placed, looks 40 px, turns the wheel one notch and presses + releases Space inside one
     /// frame — GetKeyDown sees each tap exactly once — with no OS event and the cursor never captured. get_script_state
     /// reads the probe's fields and a static class's property, set_script_state writes both, read_console(since_id) returns
-    /// only the line logged since, and after Stop and a new Play the state is the code's again (live only). Errors: input
+    /// only the line logged since, and after Stop and a new Play the state is the code's again (live only). A getter that calls
+    /// itself is listed, not run; with two scripts on the entity a field is read from the one that has it, and one both have is
+    /// reported. While send_input waits, get_script_state runs; a cancelled send_input releases its keys. Errors: input
     /// outside play mode, an unknown key, an entity without scripts.
     /// </summary>
     internal static class McpPlayTestSmoke
@@ -41,6 +43,8 @@ namespace VortexEditor.Claude
             "        if (Input.GetKeyDown(\"LButton\")) { FireDowns++; McpProbeState.Fired++; ClickX = UI.MouseX; ClickY = UI.MouseY; Debug.Log(\"[MCP PROBE] fired \" + McpProbeState.Fired); }\n" +
             "        LookX += Input.MouseDeltaX; LookY += Input.MouseDeltaY; Scroll += Input.ScrollDelta;\n" +
             "    }\n" +
+            "    // a typo the game never reads: reading the whole state must not run it (#457 review)\n" +
+            "    public float Typo { get { return Typo; } }\n" +
             "    // the free cursor: the real one is never captured while this check plays\n" +
             "    public override void LateUpdate(float dt) { Cursor.Locked = false; }\n}\n";
 
@@ -57,6 +61,7 @@ namespace VortexEditor.Claude
             if (!await McpHost.StartAsync(port)) return Fail("server did not start: " + McpHost.LastError);
             int undoBefore = UndoRedoManager.Instance.UndoCount;
             string scriptFile = Path.Combine(project.Path, "Assets", "Scripts", "McpInputProbe.cs");
+            string sidekickFile = Path.Combine(project.Path, "Assets", "Scripts", "McpProbeSidekick2.cs");
             using var http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + port), Timeout = TimeSpan.FromSeconds(90) };
             async Task<JsonNode> Raw(string tool, JsonObject args) => await McpTestClient.Call(http, tool, args);
             async Task<JsonNode> C(string tool, JsonObject args) => McpTestClient.Json(await Raw(tool, args));
@@ -72,6 +77,10 @@ namespace VortexEditor.Claude
                 if ((bool)ws["compiles"] != true) return Fail("the probe does not compile: " + ws.ToJsonString());
                 string probe = (string)(await C("create_entity", new JsonObject { ["name"] = "Mcp Input Probe", ["position"] = new JsonArray(400, 1, 400) }))["id"];
                 await C("attach_script", new JsonObject { ["entity"] = probe, ["script"] = "McpInputProbe" });
+                // a second script (another file) on the same entity: a Marker of its own, and a Gear only it has
+                var ws2 = await C("write_script", new JsonObject { ["script"] = "McpProbeSidekick2", ["code"] = "using Vortex;\n\npublic class McpProbeSidekick2 : VortexBehaviour\n{\n    public int Marker = 7;\n    public int Gear = 2;\n}\n" });
+                if ((bool)ws2["compiles"] != true) return Fail("the second probe does not compile: " + ws2.ToJsonString());
+                await C("attach_script", new JsonObject { ["entity"] = probe, ["script"] = "McpProbeSidekick2" });
                 var bare = (string)(await C("create_entity", new JsonObject { ["name"] = "Mcp Input Bare", ["position"] = new JsonArray(402, 1, 400) }))["id"];
 
                 var early = await Raw("send_input", new JsonObject { ["actions"] = JsonNode.Parse("[{\"press\": \"W\"}]") });
@@ -94,7 +103,9 @@ namespace VortexEditor.Claude
                     return Fail("send_input: " + sent.ToJsonString());
                 var st = await C("get_script_state", new JsonObject { ["target"] = probe });
                 var s = st["behaviours"]?[0]?["state"];
-                if ((string)st["behaviours"]?[0]?["script"] != "McpInputProbe" || s == null) return Fail("get_script_state: " + st.ToJsonString());
+                if ((string)st["behaviours"]?[0]?["script"] != "McpInputProbe" || s == null || (st["behaviours"] as JsonArray)?.Count != 2) return Fail("get_script_state: " + st.ToJsonString());
+                if (!(st["behaviours"][0]["computed"] as JsonArray).Any(n => (string)n == "Typo") || s["Typo"] != null)
+                    return Fail("a getter that calls itself must be listed, not run: " + st.ToJsonString());
                 double walked = D(s["Walked"]);
                 float z1 = SceneModel.Resolve(probe).Transform.LocalPosition.Z;
                 // ± one frame at either end: 0.3 m covers 10 fps
@@ -123,23 +134,50 @@ namespace VortexEditor.Claude
                 if ((int?)queued["queued"] != 2 || !Editor.Core.Input.HostInput.IsKeyDown('W')) return Fail("wait: false queues and returns: " + queued.ToJsonString());
                 var cancelled = await C("send_input", new JsonObject { ["cancel"] = true });
                 if (cancelled["keys_held"] != null || Editor.Core.Input.HostInput.IsKeyDown('W')) return Fail("cancel releases W: " + cancelled.ToJsonString());
+                var walking = Raw("send_input", new JsonObject { ["actions"] = JsonNode.Parse("[{\"press\": \"W\"}, {\"t\": 1.5, \"release\": \"W\"}]") });
+                await Task.Delay(300);
+                var lockWatch = System.Diagnostics.Stopwatch.StartNew();
+                var during = await C("get_script_state", new JsonObject { ["target"] = probe, ["script"] = "McpInputProbe", ["fields"] = new JsonArray("WTicks") });
+                long duringMs = lockWatch.ElapsedMilliseconds;
+                bool stillWalking = !walking.IsCompleted;
+                var walked2 = McpTestClient.Json(await walking);
+                if (!stillWalking || duringMs > 1000 || (int?)walked2["ran"] != 2) return Fail("get_script_state waited behind send_input (" + duringMs + " ms): " + walked2.ToJsonString());
+                using (var cts = new System.Threading.CancellationTokenSource(400))
+                {
+                    var args = new System.Collections.Generic.Dictionary<string, object>();
+                    using (var doc = System.Text.Json.JsonDocument.Parse("{\"actions\": [{\"press\": \"W\"}, {\"t\": 20, \"release\": \"W\"}]}"))
+                        foreach (var p in doc.RootElement.EnumerateObject()) args[p.Name] = p.Value.Clone();
+                    var cancelledCall = await ToolHost.CallAsync("send_input", args, "smoke", cts.Token);
+                    string cancelText = string.Join(" ", cancelledCall.Content.Where(c => c.Text != null).Select(c => c.Text));
+                    if (!cancelledCall.IsError || !cancelText.Contains("cancelled") || Editor.Core.Input.HostInput.IsKeyDown('W'))
+                        return Fail("a cancelled send_input must stop its input: " + cancelText + ", W down " + Editor.Core.Input.HostInput.IsKeyDown('W'));
+                }
                 var badKey = await Raw("send_input", new JsonObject { ["actions"] = JsonNode.Parse("[{\"tap\": \"Spacebar\"}]") });
                 if ((bool?)badKey["isError"] != true || !McpTestClient.Text(badKey).Contains("LeftShift")) return Fail("an unknown key lists the names: " + McpTestClient.Text(badKey));
                 var noScript = await Raw("get_script_state", new JsonObject { ["target"] = bare });
                 if ((bool?)noScript["isError"] != true || !McpTestClient.Text(noScript).Contains("runs no script")) return Fail("an entity without scripts says so: " + McpTestClient.Text(noScript));
 
                 // ---- set_script_state: live only — the next Play starts from the code again
-                var set = await C("set_script_state", new JsonObject { ["target"] = probe, ["values"] = new JsonObject { ["Marker"] = 42 } });
+                // two scripts have Marker: get / set say so; a field only one has is found there (#457 review)
+                var ambiguous = await Raw("get_script_state", new JsonObject { ["target"] = probe, ["fields"] = new JsonArray("Marker") });
+                if ((bool?)ambiguous["isError"] != true || !McpTestClient.Text(ambiguous).Contains("McpInputProbe and McpProbeSidekick2 have 'Marker'"))
+                    return Fail("a field two scripts have must be reported: " + McpTestClient.Text(ambiguous));
+                var picked = await C("get_script_state", new JsonObject { ["target"] = probe, ["fields"] = new JsonArray("Gear", "WTicks") });
+                var pickedList = picked["behaviours"] as JsonArray;
+                if (pickedList?.Count != 2 || (int?)pickedList.First(b => (string)b["script"] == "McpProbeSidekick2")["state"]?["Gear"] != 2
+                    || pickedList.First(b => (string)b["script"] == "McpInputProbe")["state"]?["WTicks"] == null)
+                    return Fail("each field from the script that has it: " + picked.ToJsonString());
+                var set = await C("set_script_state", new JsonObject { ["target"] = probe, ["script"] = "McpInputProbe", ["values"] = new JsonObject { ["Marker"] = 42 } });
                 var setStatic = await C("set_script_state", new JsonObject { ["target"] = "static:McpProbeState", ["values"] = new JsonObject { ["Beat"] = "act4", ["Fired"] = 9 } });
                 if ((int?)set["set"]?["Marker"] != 42 || (string)setStatic["set"]?["Beat"] != "act4" || set["runtime_only"] == null || (bool)set["runtime_only"] != true)
                     return Fail("set_script_state: " + set.ToJsonString() + " " + setStatic.ToJsonString());
-                var check = await C("get_script_state", new JsonObject { ["target"] = probe, ["fields"] = new JsonArray("Marker") });
+                var check = await C("get_script_state", new JsonObject { ["target"] = probe, ["script"] = "McpInputProbe", ["fields"] = new JsonArray("Marker") });
                 if ((int?)check["behaviours"]?[0]?["state"]?["Marker"] != 42) return Fail("the field did not take the value: " + check.ToJsonString());
-                var badSet = await Raw("set_script_state", new JsonObject { ["target"] = probe, ["values"] = new JsonObject { ["Marker"] = 1, ["Walkd"] = 2 } });
+                var badSet = await Raw("set_script_state", new JsonObject { ["target"] = probe, ["script"] = "McpInputProbe", ["values"] = new JsonObject { ["Marker"] = 1, ["Walkd"] = 2 } });
                 if ((bool?)badSet["isError"] != true || !McpTestClient.Text(badSet).Contains("Walked")) return Fail("an unknown member lists the real ones: " + McpTestClient.Text(badSet));
                 await C("exit_play_mode", new JsonObject());
                 await C("enter_play_mode", new JsonObject { ["run_seconds"] = 0.4 });
-                var after = await C("get_script_state", new JsonObject { ["target"] = probe, ["fields"] = new JsonArray("Marker", "FireDowns") });
+                var after = await C("get_script_state", new JsonObject { ["target"] = probe, ["script"] = "McpInputProbe", ["fields"] = new JsonArray("Marker", "FireDowns") });
                 var afterStatic = await C("get_script_state", new JsonObject { ["target"] = "static:McpProbeState" });
                 if ((int?)after["behaviours"]?[0]?["state"]?["Marker"] != 1 || (string)afterStatic["state"]?["Beat"] != "intro" || (int?)afterStatic["state"]?["Fired"] != 0)
                     return Fail("set_script_state must not outlive Stop: " + after.ToJsonString() + " " + afterStatic.ToJsonString());
@@ -148,7 +186,9 @@ namespace VortexEditor.Claude
                 if ((bool?)edit["isError"] != true) return Fail("get_script_state in edit mode must say to enter play mode");
 
                 log.Log("mcp play test: OK — send_input walked the probe " + walked.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + " m in 2 s (" + (int?)s["WTicks"] +
-                        " ticks), one fire at the UI cursor, look 40/-10, one notch, a one-frame Space; script state read and set (behaviour + static), gone after Stop; read_console(since_id) returned only the new line");
+                        " ticks), one fire at the UI cursor, look 40/-10, one notch, a one-frame Space; script state read and set (behaviour + static), gone after Stop, " +
+                        "a self-calling getter listed not run, fields picked from the script that has them; get_script_state answered in " + duringMs + " ms while send_input waited, " +
+                        "a cancelled send_input released W; read_console(since_id) returned only the new line");
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }
@@ -158,7 +198,7 @@ namespace VortexEditor.Claude
                 Editor.Core.Input.HostInput.Simulated.Clear();
                 while (UndoRedoManager.Instance.UndoCount > undoBefore && UndoRedoManager.Instance.Undo()) { }
                 EditorCommands.AfterSceneEdit();
-                foreach (var f in new[] { scriptFile, scriptFile + ".vmeta" }) { try { if (File.Exists(f)) File.Delete(f); } catch { } }
+                foreach (var f in new[] { scriptFile, scriptFile + ".vmeta", sidekickFile, sidekickFile + ".vmeta" }) { try { if (File.Exists(f)) File.Delete(f); } catch { } }
                 await McpHost.StopAsync();
             }
         }
