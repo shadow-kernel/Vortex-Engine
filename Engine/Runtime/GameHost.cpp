@@ -6,8 +6,13 @@
 #include <Windows.h>
 #include <windowsx.h> // GET_X_LPARAM / GET_Y_LPARAM
 #include <chrono>
+#include <cstdint>
 #include <deque>
 #include <string>
+
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED 0x02E0
+#endif
 
 namespace vortex::runtime
 {
@@ -47,6 +52,55 @@ namespace vortex::runtime
         bool g_fullscreen = false;
         WINDOWPLACEMENT g_prev_placement{ sizeof(WINDOWPLACEMENT) };
         LONG g_prev_style = 0;
+
+        // Per-monitor DPI awareness (#462 review): the client rect, the swapchain and WM_MOUSEMOVE are physical pixels, so the
+        // image is sharp on a 150 % display and Screen.PixelWidth matches Screen.DisplayModes(). The managed side keeps
+        // working in client units like on macOS: client_width()/mouse_x() report physical / scale, pixel_density() the
+        // window's DPI / 96. Loaded dynamically (Windows 10 1703+; older systems stay DPI-unaware: scale 1, as before).
+        using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+        GetDpiForWindowFn g_get_dpi_for_window = nullptr;
+        float g_scale = 1.0f;   // the window's DPI / 96: physical pixels per client unit
+
+        void enable_dpi_awareness()
+        {
+            HMODULE user32 = GetModuleHandleW(L"user32.dll");
+            if (!user32) return;
+            using SetContextFn = BOOL(WINAPI*)(HANDLE);
+            auto set_context = reinterpret_cast<SetContextFn>(GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
+            // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is (DPI_AWARENESS_CONTEXT)-4. Fails harmlessly when the process chose
+            // already (the editor's own window framework did): the window then reports what that choice gives it.
+            if (set_context) set_context(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4)));
+            g_get_dpi_for_window = reinterpret_cast<GetDpiForWindowFn>(GetProcAddress(user32, "GetDpiForWindow"));
+        }
+
+        void update_scale()
+        {
+            UINT dpi = (g_hwnd && g_get_dpi_for_window) ? g_get_dpi_for_window(g_hwnd) : 0;
+            g_scale = dpi >= 48 ? (float)dpi / 96.0f : 1.0f;
+        }
+
+        int to_units(int physical) { return g_scale != 1.0f ? (int)((float)physical / g_scale + 0.5f) : physical; }
+
+        // The scale of the displays' modes: the game window's, else the system's (the editor has no game window).
+        float display_scale()
+        {
+            if (g_hwnd) return g_scale;
+            HMODULE user32 = GetModuleHandleW(L"user32.dll");
+            using GetDpiForSystemFn = UINT(WINAPI*)();
+            auto for_system = user32 ? reinterpret_cast<GetDpiForSystemFn>(GetProcAddress(user32, "GetDpiForSystem")) : nullptr;
+            UINT dpi = for_system ? for_system() : 0;
+            return dpi >= 48 ? (float)dpi / 96.0f : 1.0f;
+        }
+
+        // The outer window rect whose client area is rc, with the frame metrics of the window's DPI where Windows can say.
+        void adjust_window_rect(RECT& rc, DWORD style)
+        {
+            HMODULE user32 = GetModuleHandleW(L"user32.dll");
+            using AdjustForDpiFn = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
+            auto for_dpi = user32 ? reinterpret_cast<AdjustForDpiFn>(GetProcAddress(user32, "AdjustWindowRectExForDpi")) : nullptr;
+            if (for_dpi && g_get_dpi_for_window && g_hwnd && for_dpi(&rc, style, FALSE, 0, g_get_dpi_for_window(g_hwnd))) return;
+            AdjustWindowRect(&rc, style, FALSE);
+        }
 
         void do_toggle_fullscreen()
         {
@@ -146,6 +200,16 @@ namespace vortex::runtime
                 if (g_captured) { g_captured = false; ShowCursor(TRUE); }
                 ClipCursor(nullptr);
                 return 0;
+            case WM_DPICHANGED:
+            {
+                // moved to a monitor with another scale: take the size Windows suggests (the same size in client units); the
+                // WM_SIZE that follows resizes the swapchain
+                update_scale();
+                const RECT* r = reinterpret_cast<const RECT*>(lp);
+                if (r && !g_fullscreen)
+                    SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+                return 0;
+            }
             case WM_CLOSE:   g_running = false; return 0;
             case WM_DESTROY: PostQuitMessage(0); return 0;
             }
@@ -157,13 +221,14 @@ namespace vortex::runtime
     void GameHost::request_exit() { g_running = false; }
     void GameHost::set_vsync(bool enabled) { graphics::dx12::DX12Renderer::instance().set_vsync(enabled); }
 
-    int  GameHost::mouse_x() { return g_mx; }
-    int  GameHost::mouse_y() { return g_my; }
+    // client units (#454): physical pixels / the window's DPI scale — the same space the SDL host's points are
+    int  GameHost::mouse_x() { return to_units(g_mx); }
+    int  GameHost::mouse_y() { return to_units(g_my); }
     bool GameHost::mouse_down() { return g_mdown; }
-    int  GameHost::client_width() { return g_cw; }
-    int  GameHost::client_height() { return g_ch; }
-    // The swapchain is created and resized from the client rect itself, so one client unit is one pixel of the image (#454).
-    float GameHost::pixel_density() { return 1.0f; }
+    int  GameHost::client_width() { return to_units(g_cw); }
+    int  GameHost::client_height() { return to_units(g_ch); }
+    // The swapchain is the client rect in physical pixels (per-monitor DPI aware): one client unit covers DPI / 96 of them.
+    float GameHost::pixel_density() { return g_scale; }
     bool GameHost::key_down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
     int  GameHost::mouse_wheel() { int w = g_wheel_accum; g_wheel_accum = 0; return w; }
@@ -190,9 +255,9 @@ namespace vortex::runtime
     void GameHost::set_resolution(uint32_t w, uint32_t h)
     {
         if (!g_hwnd || g_fullscreen || w == 0 || h == 0) return;  // windowed only; ignore in borderless-fullscreen
-        RECT rc{ 0, 0, (LONG)w, (LONG)h };
+        RECT rc{ 0, 0, (LONG)w, (LONG)h };                         // pixels (Settings.SetResolution)
         DWORD style = (DWORD)GetWindowLongW(g_hwnd, GWL_STYLE);
-        AdjustWindowRect(&rc, style, FALSE);                       // outer size whose CLIENT area is w x h
+        adjust_window_rect(rc, style);                             // outer size whose CLIENT area is w x h
         // Resize in place; the WM_SIZE this posts is handled by the deferred resize in the main loop (settled,
         // same thread as present) -> swapchain ResizeBuffers. Keep position/z; don't steal focus.
         SetWindowPos(g_hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
@@ -229,7 +294,7 @@ namespace vortex::runtime
             if (n < max && widths && heights && refresh_hz && densities)
             {
                 widths[n] = (int)dm.dmPelsWidth; heights[n] = (int)dm.dmPelsHeight;
-                refresh_hz[n] = (float)dm.dmDisplayFrequency; densities[n] = 1.0f;   // the Win32 host's client size is pixels
+                refresh_hz[n] = (float)dm.dmDisplayFrequency; densities[n] = display_scale();   // pixels per client unit there
             }
             ++n;
         }
@@ -243,13 +308,14 @@ namespace vortex::runtime
         dm.dmSize = sizeof(dm);
         if (!EnumDisplaySettingsW(host_display_device(mi), ENUM_CURRENT_SETTINGS, &dm)) return false;
         width = (int)dm.dmPelsWidth; height = (int)dm.dmPelsHeight;
-        refresh_hz = (float)dm.dmDisplayFrequency; density = 1.0f;
+        refresh_hz = (float)dm.dmDisplayFrequency; density = display_scale();
         return true;
     }
 
     bool GameHost::run(uint32_t width, uint32_t height, const wchar_t* title)
     {
         HINSTANCE inst = GetModuleHandleW(nullptr);
+        enable_dpi_awareness();   // before the first window: physical pixels, the DPI scale reported (#462 review)
 
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
@@ -268,6 +334,15 @@ namespace vortex::runtime
             WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
             rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
         if (!g_hwnd) return false;
+        // the requested size is in client units (like the SDL host's points): on a scaled display the window gets that many
+        // units, i.e. width x scale physical pixels — the size it had before the host was DPI aware, now drawn sharp
+        update_scale();
+        if (g_scale != 1.0f)
+        {
+            RECT sized{ 0, 0, (LONG)((float)width * g_scale + 0.5f), (LONG)((float)height * g_scale + 0.5f) };
+            adjust_window_rect(sized, WS_OVERLAPPEDWINDOW);
+            SetWindowPos(g_hwnd, nullptr, 0, 0, sized.right - sized.left, sized.bottom - sized.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
 
         // Deliberately DO NOT show the window yet. DX12 + DLSS/NGX init below takes ~seconds; if the window were
         // visible now the user would stare at a black rectangle the whole time. We keep it hidden, render the first

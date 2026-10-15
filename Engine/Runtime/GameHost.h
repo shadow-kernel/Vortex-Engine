@@ -32,8 +32,8 @@ namespace vortex::runtime
         static int  client_width();
         static int  client_height();
         // Device pixels per client unit — how many pixels of the drawn image one unit of client_width()/mouse_x() covers:
-        // 2 on a Retina window (SDL measures the window in points), 1 on Win32 (the client size is the swapchain size).
-        // The managed UI works in client units and converts with it (#454).
+        // 2 on a Retina window (SDL measures the window in points), the window's DPI / 96 on Win32 (the window is per-monitor
+        // DPI aware: 1.5 at 150 %, #462). The managed UI works in client units and converts with it (#454).
         static float pixel_density();
         static bool key_down(int vk);  // virtual-key currently held
 

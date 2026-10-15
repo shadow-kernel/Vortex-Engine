@@ -2269,9 +2269,9 @@ namespace Vortex
         /// <summary>Mouse position in UI points (top-left origin) — the unit of <see cref="Width"/> and of every UI call.</summary>
         public static float MouseX { get { return Host != null ? Host.UIMouseX() : 0f; } }
         public static float MouseY { get { return Host != null ? Host.UIMouseY() : 0f; } }
-        /// <summary>Device pixels per UI point: 2 on a Retina (200 %) display, 1 on a standard one; the standalone player on
-        /// Windows draws its window at 1 (Windows scales it). The drawable is <c>UI.Width * UI.Scale</c> ×
-        /// <c>UI.Height * UI.Scale</c> pixels — what a render-resolution preset needs (#454).</summary>
+        /// <summary>Device pixels per UI point: 2 on a Retina (200 %) display, 1 on a standard one, the display's scale on
+        /// Windows (1.5 at 150 % — the standalone player draws its window sharp at the full resolution). The drawable is
+        /// <c>UI.Width * UI.Scale</c> × <c>UI.Height * UI.Scale</c> pixels — what a render-resolution preset needs (#454).</summary>
         public static float Scale { get { return Host != null ? Host.UIScale() : 1f; } }
         public static bool MouseDown { get { return Host != null && Host.UIMouseDown(); } }
 
@@ -2435,7 +2435,8 @@ namespace Vortex
         public int Height;
         /// <summary>Refresh rate in Hz (0 when the display does not say).</summary>
         public float RefreshRate;
-        /// <summary>Pixels per point of this mode: 2 for a Retina ("HiDPI") mode, 1 otherwise and on Windows.</summary>
+        /// <summary>Pixels per point of this mode: 2 for a Retina ("HiDPI") mode, 1 for a standard one; on Windows the
+        /// display's scale (1.5 at 150 %).</summary>
         public float Scale;
         /// <summary>Make one.</summary>
         public DisplayMode(int width, int height, float refreshRate, float scale = 1f) { Width = width; Height = height; RefreshRate = refreshRate; Scale = scale; }
@@ -2469,8 +2470,8 @@ namespace Vortex
         /// <summary>Height of the drawable in device pixels.</summary>
         public static int PixelHeight => Editor.Scripting.ScriptRuntime.Instance.ScreenPixelHeight;
 
-        /// <summary>Device pixels per point (the display's content scale): 2 on a Retina display, 1 on a standard one; the
-        /// standalone player on Windows draws in pixels and reports 1. The same as <see cref="UI.Scale"/>.</summary>
+        /// <summary>Device pixels per point (the display's content scale): 2 on a Retina display, 1 on a standard one, the
+        /// display's scale on Windows (1.5 at 150 %). The same as <see cref="UI.Scale"/>.</summary>
         public static float ContentScale => UI.Scale;
 
         /// <summary>Width the 3D scene renders at: <see cref="PixelWidth"/> × <see cref="Settings.RenderScale"/>.</summary>
