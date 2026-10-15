@@ -365,6 +365,19 @@ namespace Vortex
         public string Tag;
     }
 
+    /// <summary>Whether a physics query hits trigger colliders (#480) — Unity's QueryTriggerInteraction. Pass it as the last
+    /// argument of Physics.Raycast / SphereCast / RaycastAll / OverlapSphere …</summary>
+    public enum QueryTriggerInteraction
+    {
+        /// <summary>Do what <see cref="Physics.QueriesHitTriggers"/> says (off unless a script switches it on).</summary>
+        UseGlobal = 0,
+        /// <summary>Trigger colliders are never hit.</summary>
+        Ignore = 1,
+        /// <summary>Trigger colliders are hit like solid ones (under the same rules: a ray that starts inside a trigger box
+        /// does not hit it).</summary>
+        Collide = 2
+    }
+
     /// <summary>Coroutine yield instruction: pause the coroutine for the given seconds.
     /// <c>yield return new WaitForSeconds(2f);</c> — <c>yield return null</c> waits one frame.</summary>
     public sealed class WaitForSeconds
@@ -1389,17 +1402,25 @@ namespace Vortex
         public static bool Grounded { get { return _grounded; } }
 
         /// <summary>Draw the physics world over the scene (#106): body wireframes colour-coded static / kinematic /
-        /// dynamic / sleeping, joints, character capsules and this frame's contacts. Editor play and dev builds only —
-        /// a shipped game draws nothing. <c>Physics.DebugDraw(true)</c> switches every layer on.</summary>
+        /// dynamic / sleeping, joints, character capsules, this frame's contacts and (#480) the sweeps of this frame's sphere /
+        /// capsule / box casts and RaycastAll calls — start and end shape, the path, the first hit and its normal, magenta, up
+        /// to 16 a frame. Editor play and dev builds only — a shipped game draws nothing. <c>Physics.DebugDraw(true)</c>
+        /// switches every layer on.</summary>
         public static void DebugDraw(bool on) { Editor.Core.Services.Physics.PhysicsService.SetDebugDraw(on); }
-        /// <summary>The same with the layers chosen one by one.</summary>
+        /// <summary>The same with the layers chosen one by one (the script queries' sweeps stay off).</summary>
         public static void DebugDraw(bool bodies, bool joints, bool characters, bool contacts)
+        {
+            DebugDraw(bodies, joints, characters, contacts, false);
+        }
+        /// <summary>The same with the layers chosen one by one, the script queries' sweeps (#480) included.</summary>
+        public static void DebugDraw(bool bodies, bool joints, bool characters, bool contacts, bool queries)
         {
             var l = Editor.Core.Services.Physics.PhysicsService.DebugLayer.None;
             if (bodies) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Bodies;
             if (joints) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Joints;
             if (characters) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Characters;
             if (contacts) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Contacts;
+            if (queries) l |= Editor.Core.Services.Physics.PhysicsService.DebugLayer.Queries;
             Editor.Core.Services.Physics.PhysicsService.SetDebugDraw(l != Editor.Core.Services.Physics.PhysicsService.DebugLayer.None, l);
         }
 
@@ -1581,6 +1602,15 @@ namespace Vortex
         /// ignores the player, a guard's eye ray ignores the guard.
         /// <c>Physics.Raycast(wheel, Vector3.Down, 1f, out var h, ~0, EntityId)</c></summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask, long ignoreEntity)
+            => Raycast(origin, direction, maxDist, out hit, layerMask, ignoreEntity, QueryTriggerInteraction.UseGlobal);
+
+        /// <summary>Raycast that also decides about trigger colliders (#480): <c>QueryTriggerInteraction.Collide</c> hits
+        /// them like solid colliders (a trigger box the ray starts in is not hit), <c>Ignore</c> never, <c>UseGlobal</c>
+        /// follows <see cref="QueriesHitTriggers"/>. Otherwise the same as
+        /// <see cref="Raycast(Vector3, Vector3, float, out RaycastHit, int, long)"/>.
+        /// <c>Physics.Raycast(eye, Forward, 10f, out var h, ~0, EntityId, QueryTriggerInteraction.Collide)</c></summary>
+        public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask, long ignoreEntity,
+            QueryTriggerInteraction triggers)
         {
             hit = default(RaycastHit);
             var o = new Editor.ECS.Vector3(origin.X, origin.Y, origin.Z);
@@ -1588,16 +1618,16 @@ namespace Vortex
             float dl = (float)Math.Sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z);
             if (dl < 1e-6f || maxDist <= 0f) return false;
             var unit = new Editor.ECS.Vector3(d.X / dl, d.Y / dl, d.Z / dl);
-            var ignored = ignoreEntity != 0 ? Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(ignoreEntity) : null;
+            var ignored = Ignored(ignoreEntity);
+            bool tr = HitsTriggers(triggers);
             Editor.ECS.Vector3 point, normal; Editor.ECS.GameEntity entity; float dist;
             // Jolt casts against the live world (static level, simulated props at their CURRENT pose, triggers
-            // excluded). An explicit entity-layer mask keeps the managed cast (entity layers are not physics layers).
-            // The ignored entity is filtered INSIDE either cast (#406 / #418) — stepping past its hits could not leave a
-            // capsule or crate the ray started in.
-            bool got = Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0
-                ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, unit, maxDist, out point, out normal, out entity, out dist,
-                    Editor.Core.Services.Physics.PhysicsService.SolidLayerMask, ignored)
-                : Editor.Core.Services.Physics.CollisionService.Raycast(o, unit, maxDist, layerMask, out point, out normal, out entity, out dist, ignored);
+            // excluded unless asked for). An explicit entity-layer mask keeps the managed cast (entity layers are not physics
+            // layers). The ignored entity is filtered INSIDE either cast (#406 / #418) — stepping past its hits could not
+            // leave a capsule or crate the ray started in.
+            bool got = JoltAnswers(layerMask)
+                ? Editor.Core.Services.Physics.PhysicsService.Raycast(o, unit, maxDist, out point, out normal, out entity, out dist, JoltMask(tr), ignored)
+                : Editor.Core.Services.Physics.CollisionService.Raycast(o, unit, maxDist, layerMask, out point, out normal, out entity, out dist, ignored, tr);
             if (!got) return false;
             hit.Point = new Vector3(point.X, point.Y, point.Z);
             hit.Normal = new Vector3(normal.X, normal.Y, normal.Z);
@@ -1606,6 +1636,294 @@ namespace Vortex
             hit.Tag = entity != null ? (entity.Tag ?? "") : "";
             hit.EntityId = entity != null ? Editor.Scripting.ScriptRuntime.Instance.HandleForEntity(entity) : 0;
             return true;
+        }
+
+        // ---- shape casts, all-hit queries, overlaps (#480) ----
+        // The world that answers is Raycast's: the Jolt world for the default mask (~0), the engine's collision world for an
+        // explicit entity-layer mask or without a physics-enabled build — both under the same rules.
+
+        /// <summary>Do queries hit trigger colliders when they pass <c>QueryTriggerInteraction.UseGlobal</c> (the default)?
+        /// Off by default — Raycast never hit triggers before this switch existed. Resets to off on every scene start.</summary>
+        public static bool QueriesHitTriggers
+        {
+            get { return Editor.Core.Services.Physics.PhysicsService.QueriesHitTriggers; }
+            set { Editor.Core.Services.Physics.PhysicsService.QueriesHitTriggers = value; }
+        }
+
+        /// <summary>Sweep a sphere of <paramref name="radius"/> from <paramref name="origin"/> along
+        /// <paramref name="direction"/> for <paramref name="maxDist"/> m and report the first collider it meets — what a thin
+        /// ray misses: the gap between two posts, a railing, a corner. <see cref="RaycastHit.Distance"/> is how far the sphere
+        /// travelled, <see cref="RaycastHit.Point"/> where it touched, the normal faces back against the sweep.
+        /// <para>Where a sweep starts: a collider the sphere already overlaps (or touches) is reported at distance 0 when the
+        /// sweep moves deeper into it (the point is then the deepest point of the overlap, the normal the way out), and not
+        /// at all when the sweep moves out of it or slides along it — a sweep never reports what it leaves. (A thin ray
+        /// instead ignores a box, sphere or capsule it starts inside, see <see cref="Raycast(Vector3, Vector3, float, out RaycastHit, int)"/>.)
+        /// Mesh colliders and terrain are surfaces, hit from either side. <paramref name="ignoreEntity"/> and everything under
+        /// it are never hit; layer mask, triggers and characters as for Raycast.</para>
+        /// <c>if (Physics.SphereCast(pivot, 0.2f, back, armLength, out var h, ~0, EntityId)) armLength = h.Distance;</c></summary>
+        public static bool SphereCast(Vector3 origin, float radius, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask = ~0,
+            long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Cast(Editor.Core.Services.Physics.QueryShape.Sphere(E(origin), radius), direction, maxDist, out hit, layerMask, ignoreEntity, triggers);
+        }
+
+        /// <summary>Sweep a capsule — the caps' centres at <paramref name="point1"/> and <paramref name="point2"/>, its
+        /// <paramref name="radius"/> — along <paramref name="direction"/> for <paramref name="maxDist"/> m; the first collider
+        /// it meets ("can a 0.35 m wide guard walk through here?"). The rules of
+        /// <see cref="SphereCast(Vector3, float, Vector3, float, out RaycastHit, int, long, QueryTriggerInteraction)"/>.
+        /// <c>Physics.CapsuleCast(feet + Vector3.Up * 0.35f, feet + Vector3.Up * 1.45f, 0.35f, Forward, 2f, out var h, ~0, EntityId)</c></summary>
+        public static bool CapsuleCast(Vector3 point1, Vector3 point2, float radius, Vector3 direction, float maxDist, out RaycastHit hit,
+            int layerMask = ~0, long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Cast(Editor.Core.Services.Physics.QueryShape.Capsule(E(point1), E(point2), radius), direction, maxDist, out hit, layerMask, ignoreEntity, triggers);
+        }
+
+        /// <summary>Sweep a box — <paramref name="center"/>, <paramref name="halfExtents"/>, turned by
+        /// <paramref name="rotation"/> (Euler degrees, like an entity's Rotation) — along <paramref name="direction"/> for
+        /// <paramref name="maxDist"/> m; the first collider it meets (a car's next-frame motion). The rules of
+        /// <see cref="SphereCast(Vector3, float, Vector3, float, out RaycastHit, int, long, QueryTriggerInteraction)"/>.
+        /// <c>Physics.BoxCast(Position, new Vector3(0.9f, 0.7f, 2.3f), Rotation, Forward, speed * dt, out var h, ~0, EntityId)</c></summary>
+        public static bool BoxCast(Vector3 center, Vector3 halfExtents, Vector3 rotation, Vector3 direction, float maxDist, out RaycastHit hit,
+            int layerMask = ~0, long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Cast(Editor.Core.Services.Physics.QueryShape.Box(E(center), E(halfExtents), Rot(rotation)), direction, maxDist, out hit, layerMask, ignoreEntity, triggers);
+        }
+
+        /// <summary>Every collider along the ray — the first hit on each entity — sorted by distance: bullet penetration,
+        /// "who else is on this line". The rules of <see cref="Raycast(Vector3, Vector3, float, out RaycastHit, int)"/>:
+        /// a box, sphere or capsule the ray starts inside is not hit, a mesh is hit where the ray first meets it.
+        /// Allocates the array; <see cref="RaycastNonAlloc"/> fills yours.
+        /// <c>foreach (var h in Physics.RaycastAll(muzzle, dir, 100f, ~0, EntityId)) { … }</c></summary>
+        public static RaycastHit[] RaycastAll(Vector3 origin, Vector3 direction, float maxDist, int layerMask = ~0, long ignoreEntity = 0,
+            QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return ToArray(CastAll(null, origin, direction, maxDist, layerMask, ignoreEntity, triggers));
+        }
+
+        /// <summary><see cref="RaycastAll"/> into <paramref name="results"/> (the nearest that fit); returns how many were
+        /// written. No allocation — keep the array in a field.</summary>
+        public static int RaycastNonAlloc(Vector3 origin, Vector3 direction, float maxDist, RaycastHit[] results, int layerMask = ~0,
+            long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Copy(CastAll(null, origin, direction, maxDist, layerMask, ignoreEntity, triggers), results);
+        }
+
+        /// <summary>Every collider the sphere sweep meets — the first hit on each entity — sorted by distance. The rules of
+        /// <see cref="SphereCast(Vector3, float, Vector3, float, out RaycastHit, int, long, QueryTriggerInteraction)"/>.</summary>
+        public static RaycastHit[] SphereCastAll(Vector3 origin, float radius, Vector3 direction, float maxDist, int layerMask = ~0,
+            long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return ToArray(CastAll(Editor.Core.Services.Physics.QueryShape.Sphere(E(origin), radius), origin, direction, maxDist, layerMask, ignoreEntity, triggers));
+        }
+
+        /// <summary><see cref="SphereCastAll"/> into <paramref name="results"/>; returns how many were written.</summary>
+        public static int SphereCastNonAlloc(Vector3 origin, float radius, Vector3 direction, float maxDist, RaycastHit[] results,
+            int layerMask = ~0, long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Copy(CastAll(Editor.Core.Services.Physics.QueryShape.Sphere(E(origin), radius), origin, direction, maxDist, layerMask, ignoreEntity, triggers), results);
+        }
+
+        /// <summary>Every collider the capsule sweep meets — the first hit on each entity — sorted by distance. The rules of
+        /// <see cref="CapsuleCast(Vector3, Vector3, float, Vector3, float, out RaycastHit, int, long, QueryTriggerInteraction)"/>.</summary>
+        public static RaycastHit[] CapsuleCastAll(Vector3 point1, Vector3 point2, float radius, Vector3 direction, float maxDist,
+            int layerMask = ~0, long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return ToArray(CastAll(Editor.Core.Services.Physics.QueryShape.Capsule(E(point1), E(point2), radius), point1, direction, maxDist, layerMask, ignoreEntity, triggers));
+        }
+
+        /// <summary><see cref="CapsuleCastAll"/> into <paramref name="results"/>; returns how many were written.</summary>
+        public static int CapsuleCastNonAlloc(Vector3 point1, Vector3 point2, float radius, Vector3 direction, float maxDist, RaycastHit[] results,
+            int layerMask = ~0, long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Copy(CastAll(Editor.Core.Services.Physics.QueryShape.Capsule(E(point1), E(point2), radius), point1, direction, maxDist, layerMask, ignoreEntity, triggers), results);
+        }
+
+        /// <summary>Every collider the box sweep meets — the first hit on each entity — sorted by distance. The rules of
+        /// <see cref="BoxCast"/>.</summary>
+        public static RaycastHit[] BoxCastAll(Vector3 center, Vector3 halfExtents, Vector3 rotation, Vector3 direction, float maxDist,
+            int layerMask = ~0, long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return ToArray(CastAll(Editor.Core.Services.Physics.QueryShape.Box(E(center), E(halfExtents), Rot(rotation)), center, direction, maxDist, layerMask, ignoreEntity, triggers));
+        }
+
+        /// <summary><see cref="BoxCastAll"/> into <paramref name="results"/>; returns how many were written.</summary>
+        public static int BoxCastNonAlloc(Vector3 center, Vector3 halfExtents, Vector3 rotation, Vector3 direction, float maxDist, RaycastHit[] results,
+            int layerMask = ~0, long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Copy(CastAll(Editor.Core.Services.Physics.QueryShape.Box(E(center), E(halfExtents), Rot(rotation)), center, direction, maxDist, layerMask, ignoreEntity, triggers), results);
+        }
+
+        /// <summary><see cref="OverlapSphere(Vector3, float)"/> with a layer mask (entity Layer bits, ~0 = all), an entity
+        /// to leave out (with everything under it) and the trigger option.</summary>
+        public static long[] OverlapSphere(Vector3 center, float radius, int layerMask, long ignoreEntity = 0,
+            QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Handles(Overlap(Editor.Core.Services.Physics.QueryShape.Sphere(E(center), radius), layerMask, ignoreEntity, triggers));
+        }
+
+        /// <summary>Every entity whose collider overlaps or touches the box (<paramref name="rotation"/> in Euler degrees,
+        /// like an entity's Rotation) — "is the doorway blocked?". Solid colliders (triggers on request), mesh colliders from
+        /// either side, "jolt" character capsules as their entity; <paramref name="ignoreEntity"/> and everything under it
+        /// are left out. <c>long[] inside = Physics.OverlapBox(doorway, new Vector3(0.6f, 1.1f, 0.2f), Rotation);</c></summary>
+        public static long[] OverlapBox(Vector3 center, Vector3 halfExtents, Vector3 rotation = default(Vector3), int layerMask = ~0,
+            long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Handles(Overlap(Editor.Core.Services.Physics.QueryShape.Box(E(center), E(halfExtents), Rot(rotation)), layerMask, ignoreEntity, triggers));
+        }
+
+        /// <summary>Every entity whose collider overlaps or touches the capsule (caps centred on <paramref name="point1"/>
+        /// and <paramref name="point2"/>). The rules of <see cref="OverlapBox"/>.</summary>
+        public static long[] OverlapCapsule(Vector3 point1, Vector3 point2, float radius, int layerMask = ~0, long ignoreEntity = 0,
+            QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Handles(Overlap(Editor.Core.Services.Physics.QueryShape.Capsule(E(point1), E(point2), radius), layerMask, ignoreEntity, triggers));
+        }
+
+        /// <summary>True when any collider overlaps or touches the sphere — <see cref="OverlapSphere(Vector3, float, int, long, QueryTriggerInteraction)"/>
+        /// without building a list (a free spawn point, a grenade landing spot).</summary>
+        public static bool CheckSphere(Vector3 center, float radius, int layerMask = ~0, long ignoreEntity = 0,
+            QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Check(Editor.Core.Services.Physics.QueryShape.Sphere(E(center), radius), layerMask, ignoreEntity, triggers);
+        }
+
+        /// <summary>True when any collider overlaps or touches the capsule (caps centred on <paramref name="point1"/> and
+        /// <paramref name="point2"/>).</summary>
+        public static bool CheckCapsule(Vector3 point1, Vector3 point2, float radius, int layerMask = ~0, long ignoreEntity = 0,
+            QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Check(Editor.Core.Services.Physics.QueryShape.Capsule(E(point1), E(point2), radius), layerMask, ignoreEntity, triggers);
+        }
+
+        /// <summary>True when any collider overlaps or touches the box (<paramref name="rotation"/> in Euler degrees).</summary>
+        public static bool CheckBox(Vector3 center, Vector3 halfExtents, Vector3 rotation = default(Vector3), int layerMask = ~0,
+            long ignoreEntity = 0, QueryTriggerInteraction triggers = QueryTriggerInteraction.UseGlobal)
+        {
+            return Check(Editor.Core.Services.Physics.QueryShape.Box(E(center), E(halfExtents), Rot(rotation)), layerMask, ignoreEntity, triggers);
+        }
+
+        private static Editor.ECS.Vector3 E(Vector3 v) { return new Editor.ECS.Vector3(v.X, v.Y, v.Z); }
+
+        /// <summary>Engine Euler degrees (an entity's Rotation) as a quaternion.</summary>
+        private static System.Numerics.Quaternion Rot(Vector3 euler)
+        {
+            return System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromRotationMatrix(
+                Editor.Core.Animation.BoneSocketService.EulerZXY(new System.Numerics.Vector3(euler.X, euler.Y, euler.Z))));
+        }
+
+        private static Editor.ECS.GameEntity Ignored(long ignoreEntity)
+        {
+            return ignoreEntity != 0 && Editor.Scripting.ScriptRuntime.Instance != null ? Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(ignoreEntity) : null;
+        }
+
+        private static bool JoltAnswers(int layerMask) { return Editor.Core.Services.Physics.PhysicsService.IsBuilt && layerMask == ~0; }
+
+        private static bool HitsTriggers(QueryTriggerInteraction triggers)
+        {
+            return triggers == QueryTriggerInteraction.Collide || (triggers == QueryTriggerInteraction.UseGlobal && QueriesHitTriggers);
+        }
+
+        private static uint JoltMask(bool triggers)
+        {
+            return Editor.Core.Services.Physics.PhysicsService.SolidLayerMask | (triggers ? 1u << Editor.Core.Services.Physics.PhysicsService.LayerTrigger : 0u);
+        }
+
+        private static RaycastHit ToHit(Editor.Core.Services.Physics.PhysicsQueryHit h)
+        {
+            var e = h.Entity;
+            var rt = Editor.Scripting.ScriptRuntime.Instance;
+            return new RaycastHit
+            {
+                Point = new Vector3(h.Point.X, h.Point.Y, h.Point.Z),
+                Normal = new Vector3(h.Normal.X, h.Normal.Y, h.Normal.Z),
+                Distance = h.Distance,
+                EntityId = e != null && rt != null ? rt.HandleForEntity(e) : 0,
+                Name = e != null ? (e.Name ?? "") : "",
+                Tag = e != null ? (e.Tag ?? "") : ""
+            };
+        }
+
+        private static bool Cast(Editor.Core.Services.Physics.QueryShape shape, Vector3 direction, float maxDist, out RaycastHit hit, int layerMask,
+            long ignoreEntity, QueryTriggerInteraction triggers)
+        {
+            hit = default(RaycastHit);
+            var ignored = Ignored(ignoreEntity);
+            bool tr = HitsTriggers(triggers);
+            Editor.Core.Services.Physics.PhysicsQueryHit h;
+            bool got = JoltAnswers(layerMask)
+                ? Editor.Core.Services.Physics.PhysicsService.ShapeCast(shape, E(direction), maxDist, out h, JoltMask(tr), ignored)
+                : Editor.Core.Services.Physics.CollisionService.ShapeCast(shape, E(direction), maxDist, layerMask, out h, ignored, tr);
+            if (Editor.Core.Services.Physics.PhysicsService.RecordsQueries)
+                Editor.Core.Services.Physics.PhysicsService.RecordQuery(shape, shape.Center, E(direction), maxDist, got, h);
+            if (!got) return false;
+            hit = ToHit(h);
+            return true;
+        }
+
+        private static readonly System.Collections.Generic.List<Editor.Core.Services.Physics.PhysicsQueryHit> _queryHits =
+            new System.Collections.Generic.List<Editor.Core.Services.Physics.PhysicsQueryHit>();
+
+        /// <summary>The hits of an all-hit query (a ray when <paramref name="shape"/> is null) in <see cref="_queryHits"/>.</summary>
+        private static System.Collections.Generic.List<Editor.Core.Services.Physics.PhysicsQueryHit> CastAll(Editor.Core.Services.Physics.QueryShape? shape,
+            Vector3 origin, Vector3 direction, float maxDist, int layerMask, long ignoreEntity, QueryTriggerInteraction triggers)
+        {
+            _queryHits.Clear();
+            var ignored = Ignored(ignoreEntity);
+            bool tr = HitsTriggers(triggers);
+            bool jolt = JoltAnswers(layerMask);
+            if (shape == null)
+            {
+                if (jolt) Editor.Core.Services.Physics.PhysicsService.RaycastAll(E(origin), E(direction), maxDist, _queryHits, JoltMask(tr), ignored);
+                else Editor.Core.Services.Physics.CollisionService.RaycastAll(E(origin), E(direction), maxDist, layerMask, _queryHits, ignored, tr);
+            }
+            else if (jolt) Editor.Core.Services.Physics.PhysicsService.ShapeCastAll(shape.Value, E(direction), maxDist, _queryHits, JoltMask(tr), ignored);
+            else Editor.Core.Services.Physics.CollisionService.ShapeCastAll(shape.Value, E(direction), maxDist, layerMask, _queryHits, ignored, tr);
+            if (Editor.Core.Services.Physics.PhysicsService.RecordsQueries)
+                Editor.Core.Services.Physics.PhysicsService.RecordQuery(shape, E(origin), E(direction), maxDist, _queryHits.Count > 0,
+                    _queryHits.Count > 0 ? _queryHits[0] : default(Editor.Core.Services.Physics.PhysicsQueryHit));
+            return _queryHits;
+        }
+
+        private static RaycastHit[] ToArray(System.Collections.Generic.List<Editor.Core.Services.Physics.PhysicsQueryHit> hits)
+        {
+            var result = new RaycastHit[hits.Count];
+            for (int i = 0; i < result.Length; i++) result[i] = ToHit(hits[i]);
+            return result;
+        }
+
+        private static int Copy(System.Collections.Generic.List<Editor.Core.Services.Physics.PhysicsQueryHit> hits, RaycastHit[] results)
+        {
+            if (results == null) return 0;
+            int n = Math.Min(results.Length, hits.Count);
+            for (int i = 0; i < n; i++) results[i] = ToHit(hits[i]);
+            return n;
+        }
+
+        private static System.Collections.Generic.List<Editor.ECS.GameEntity> Overlap(Editor.Core.Services.Physics.QueryShape shape, int layerMask,
+            long ignoreEntity, QueryTriggerInteraction triggers)
+        {
+            var ignored = Ignored(ignoreEntity);
+            bool tr = HitsTriggers(triggers);
+            return JoltAnswers(layerMask)
+                ? Editor.Core.Services.Physics.PhysicsService.OverlapShape(shape, JoltMask(tr), ignored)
+                : Editor.Core.Services.Physics.CollisionService.OverlapShape(shape, layerMask, ignored, tr);
+        }
+
+        private static bool Check(Editor.Core.Services.Physics.QueryShape shape, int layerMask, long ignoreEntity, QueryTriggerInteraction triggers)
+        {
+            var ignored = Ignored(ignoreEntity);
+            bool tr = HitsTriggers(triggers);
+            return JoltAnswers(layerMask)
+                ? Editor.Core.Services.Physics.PhysicsService.CheckShape(shape, JoltMask(tr), ignored)
+                : Editor.Core.Services.Physics.CollisionService.CheckShape(shape, layerMask, ignored, tr);
+        }
+
+        private static long[] Handles(System.Collections.Generic.List<Editor.ECS.GameEntity> hits)
+        {
+            var result = new long[hits.Count];
+            var rt = Editor.Scripting.ScriptRuntime.Instance;
+            for (int i = 0; i < hits.Count; i++) result[i] = rt != null ? rt.HandleForEntity(hits[i]) : 0;
+            return result;
         }
 
         /// <summary>Every entity whose solid collider CONTAINS <paramref name="point"/> (#418) — "am I inside something?",
@@ -1709,10 +2027,12 @@ namespace Vortex
         /// default on every scene start.</summary>
         public static void SetGravity(Vector3 gravity) { if (Host != null) Host.PhysicsSetGravity(gravity); }
 
-        /// <summary>Every entity whose physics body overlaps a sphere — explosions, "what's around me":
+        /// <summary>Every entity whose collider overlaps or touches a sphere — explosions, "what's around me":
         /// <c>foreach (var id in Physics.OverlapSphere(Position, 4f)) Physics.AddImpulse(id, (Scene.WorldPositionOf(id) - Position).Normalized * 20f);</c>
-        /// Triggers are not included. Empty without a physics-enabled build.</summary>
-        public static long[] OverlapSphere(Vector3 center, float radius) { return Host != null ? (Host.PhysicsOverlapSphere(center, radius) ?? new long[0]) : new long[0]; }
+        /// Triggers are not included (unless <see cref="QueriesHitTriggers"/> is on); mesh colliders count from either side;
+        /// with the "jolt" controller a character capsule reports its entity. Without a physics-enabled build the engine's
+        /// collision world answers (#480; it used to return nothing there).</summary>
+        public static long[] OverlapSphere(Vector3 center, float radius) { return OverlapSphere(center, radius, ~0); }
 
         /// <summary>True when the entity is a moving physics body (a Dynamic or Kinematic Rigidbody).</summary>
         public static bool HasRigidbody(long entity) { return Host != null && Host.PhysicsHasRigidbody(entity); }

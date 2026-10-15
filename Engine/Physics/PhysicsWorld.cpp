@@ -32,6 +32,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CompoundShape.h>
@@ -240,26 +241,26 @@ namespace vortex::physics {
 			return leaf != nullptr && (leaf->GetType() == JPH::EShapeType::Mesh || leaf->GetType() == JPH::EShapeType::HeightField);
 		}
 
-		// Closest hit of a ray cast that starts ray_surface_skin behind the caller's origin. A triangle (mesh, height
-		// field) seen from behind within the skin of the origin (on either side, the start of the cast included) is the
-		// surface the origin lies on, the ray pointing away from its front — the floor under an upward ray — so it is no
-		// hit, as for a box the ray leaves.
+		// A ray cast starts ray_surface_skin behind the caller's origin. A triangle (mesh, height field) seen from behind
+		// within the skin of the origin (on either side, the start of the cast included) is the surface the origin lies on,
+		// the ray pointing away from its front — the floor under an upward ray — so it is no hit, as for a box the ray leaves.
+		// back_fraction: the end of the origin's skin zone (two skins from the start of the cast) as a ray fraction.
+		bool surface_left_behind(const JPH::TransformedShape* shape, const JPH::RRayCast& ray, f32 back_fraction, const JPH::RayCastResult& hit)
+		{
+			return hit.mFraction < back_fraction && shape && triangle_leaf(*shape, hit.mSubShapeID2)
+				&& shape->GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, ray.GetPointOnRay(hit.mFraction)).Dot(ray.mDirection) > 0.0f;
+		}
+
+		// Closest hit of a ray cast that starts ray_surface_skin behind the caller's origin (see surface_left_behind).
 		class skin_ray_collector final : public JPH::CastRayCollector
 		{
 		public:
-			// back_fraction: the end of the origin's skin zone (two skins from the start of the cast) as a ray fraction
 			skin_ray_collector(const JPH::RRayCast& ray, f32 back_fraction) : _ray{ ray }, _back_fraction{ back_fraction } {}
 
 			void AddHit(const JPH::RayCastResult& hit) override
 			{
 				if (had_hit && hit.mFraction >= closest.mFraction) return;
-				if (hit.mFraction < _back_fraction)
-				{
-					const JPH::TransformedShape* shape = GetContext();
-					if (shape && triangle_leaf(*shape, hit.mSubShapeID2)
-						&& shape->GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, _ray.GetPointOnRay(hit.mFraction)).Dot(_ray.mDirection) > 0.0f)
-						return;
-				}
+				if (surface_left_behind(GetContext(), _ray, _back_fraction, hit)) return;
 				UpdateEarlyOutFraction(hit.mFraction);
 				closest = hit;
 				had_hit = true;
@@ -270,6 +271,69 @@ namespace vortex::physics {
 		private:
 			JPH::RRayCast _ray;
 			f32 _back_fraction;
+		};
+
+		// #480: every hit of such a ray, the first one on each body (a ray through a closed mesh meets it twice).
+		class skin_ray_all_collector final : public JPH::CastRayCollector
+		{
+		public:
+			skin_ray_all_collector(const JPH::RRayCast& ray, f32 back_fraction) : _ray{ ray }, _back_fraction{ back_fraction } {}
+
+			void AddHit(const JPH::RayCastResult& hit) override
+			{
+				if (surface_left_behind(GetContext(), _ray, _back_fraction, hit)) return;
+				for (JPH::RayCastResult& known : hits)
+					if (known.mBodyID == hit.mBodyID)
+					{
+						if (hit.mFraction < known.mFraction) known = hit;
+						return;
+					}
+				hits.push_back(hit);
+			}
+
+			std::vector<JPH::RayCastResult> hits;
+		private:
+			JPH::RRayCast _ray;
+			f32 _back_fraction;
+		};
+
+		// How far a sweep must point into what it touches to count as moving into it (#480): the cosine of 89.94°. A sweep
+		// that slides along a surface it touches is free, and the penetration axis EPA finds for an overlap carries a little
+		// noise — without a margin the sign of that noise decided. The collision world uses the same margin.
+		constexpr f32 sweep_into_margin{ 1.0e-3f };
+
+		// #480: the hits of a shape cast that count — what the sweep moves into. Jolt reports a body the shape already
+		// overlaps at its start at fraction 0 with the penetration axis (cast shape -> body) as its normal; such a body
+		// counts only when the sweep goes deeper into it (axis along the cast), never when it moves out of it or along it.
+		// Later hits always approach (axis along the cast). Keeps the first hit per body, or only the closest one.
+		class sweep_collector final : public JPH::CastShapeCollector
+		{
+		public:
+			sweep_collector(JPH::Vec3Arg direction, bool all) : _direction{ direction }, _all{ all } {}
+
+			void AddHit(const JPH::ShapeCastResult& hit) override
+			{
+				if (!(hit.mPenetrationAxis.Dot(_direction) > sweep_into_margin * hit.mPenetrationAxis.Length())) return;
+				if (!_all)
+				{
+					if (!hits.empty() && hit.GetEarlyOutFraction() >= hits[0].GetEarlyOutFraction()) return;
+					if (hits.empty()) hits.push_back(hit); else hits[0] = hit;
+					UpdateEarlyOutFraction(hit.GetEarlyOutFraction());
+					return;
+				}
+				for (JPH::ShapeCastResult& known : hits)
+					if (known.mBodyID2 == hit.mBodyID2)
+					{
+						if (hit.mFraction < known.mFraction) known = hit;
+						return;
+					}
+				hits.push_back(hit);
+			}
+
+			std::vector<JPH::ShapeCastResult> hits;
+		private:
+			JPH::Vec3 _direction;
+			bool _all;
 		};
 
 		// ---- contact events ---------------------------------------------------------------------------
@@ -1923,6 +1987,149 @@ namespace vortex::physics {
 		return written;
 	}
 
+	namespace
+	{
+		// The shape of a sweep / overlap query (#480) at pos / quat: the primitives the bodies are made of (make_primitive),
+		// except that a box keeps sharp edges (no convex radius) — exactly the box the caller asked for, as the collision
+		// world's query has it. Null for a bad shape type or a non-finite pose.
+		JPH::ShapeRefC query_shape(s32 shape_type, const f32* dims, const f32* pos, const f32* quat, JPH::RMat44& out_transform)
+		{
+			if (!pos || !finite(pos[0]) || !finite(pos[1]) || !finite(pos[2])) return nullptr;
+			if (shape_type != shape_box && shape_type != shape_sphere && shape_type != shape_capsule) return nullptr;
+			out_transform = JPH::RMat44::sRotationTranslation(to_quat(quat), JPH::RVec3(to_vec3(pos)));
+			if (shape_type == shape_box) return finish(JPH::BoxShapeSettings(JPH::Vec3(dim(dims, 0), dim(dims, 1), dim(dims, 2)), 0.0f), "query box");
+			return make_primitive(shape_type, dims);
+		}
+
+		void write_hit(const world& w, const JPH::BodyID& body, JPH::Vec3Arg point, JPH::Vec3Arg normal, f32 distance, query_hit& out)
+		{
+			store3(out.point, point);
+			store3(out.normal, normal);
+			out.distance = distance > 0.0f ? distance : 0.0f;
+			out.body = handle_of(w, body);
+			out.entity = w.system.GetBodyInterface().GetUserData(body);
+		}
+	}
+
+	s32 raycast_all(const f32* origin, const f32* dir, f32 max_dist, u32 layer_mask,
+		const u32* ignore_bodies, s32 ignore_body_count, const u32* ignore_characters, s32 ignore_character_count,
+		query_hit* out_hits, s32 max_hits)
+	{
+		const world* w = g_world;
+		if (!w || !origin || !dir || !out_hits || max_hits <= 0 || !finite(max_dist) || max_dist <= 0.0f) return 0;
+		JPH::Vec3 direction = to_vec3(dir);
+		if (direction.LengthSq() < 1.0e-12f) return 0;
+		direction = direction.Normalized();
+
+		// raycast_ex's settings and skin (#418): convex shapes are hit on entry only, triangles from either side, the cast
+		// starts ray_surface_skin behind the origin so a surface the origin lies on still counts
+		JPH::RayCastSettings settings;
+		settings.mTreatConvexAsSolid = false;
+		settings.mBackFaceModeConvex = JPH::EBackFaceMode::IgnoreBackFaces;
+		settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
+		const JPH::Vec3 from = to_vec3(origin);
+		const f32 length = max_dist + ray_surface_skin;
+		const JPH::RRayCast ray(from - direction * ray_surface_skin, direction * length);
+		skin_ray_all_collector collector(ray, 2.0f * ray_surface_skin / length);
+		const mask_bp_filter bp_filter(layer_mask);
+		const mask_object_filter object_filter(layer_mask);
+		const std::vector<JPH::BodyID> ignored = ignored_body_ids(ignore_bodies, ignore_body_count, ignore_characters, ignore_character_count);
+		const ignore_bodies_filter body_filter(ignored);
+		w->system.GetNarrowPhaseQuery().CastRay(ray, settings, collector, bp_filter, object_filter, body_filter);
+
+		std::vector<JPH::RayCastResult>& hits = collector.hits;
+		std::sort(hits.begin(), hits.end(), [](const JPH::RayCastResult& a, const JPH::RayCastResult& b) { return a.mFraction < b.mFraction; });
+		s32 written = 0;
+		for (const JPH::RayCastResult& hit : hits)
+		{
+			if (written >= max_hits) break;
+			const JPH::Vec3 point(ray.GetPointOnRay(hit.mFraction));
+			JPH::Vec3 normal = -direction;
+			{
+				JPH::BodyLockRead lock(w->system.GetBodyLockInterface(), hit.mBodyID);
+				if (lock.Succeeded()) normal = lock.GetBody().GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, point);
+			}
+			if (normal.Dot(direction) > 0.0f) normal = -normal;   // a triangle hit from behind: turned to face the origin
+			write_hit(*w, hit.mBodyID, point, normal, hit.mFraction * length - ray_surface_skin, out_hits[written++]);
+		}
+		return written;
+	}
+
+	s32 shape_cast(s32 shape_type, const f32* dims, const f32* pos, const f32* quat, const f32* dir, f32 max_dist,
+		u32 layer_mask, const u32* ignore_bodies, s32 ignore_body_count, const u32* ignore_characters, s32 ignore_character_count,
+		bool all, query_hit* out_hits, s32 max_hits)
+	{
+		const world* w = g_world;
+		if (!w || !dims || !dir || !out_hits || max_hits <= 0 || !finite(max_dist) || max_dist <= 0.0f) return 0;
+		JPH::Vec3 direction = to_vec3(dir);
+		if (direction.LengthSq() < 1.0e-12f) return 0;
+		direction = direction.Normalized();
+		JPH::RMat44 start;
+		const JPH::ShapeRefC shape = query_shape(shape_type, dims, pos, quat, start);
+		if (!shape) return 0;
+
+		// The primitives are built around their origin, which is their centre of mass: the world transform is the start.
+		const JPH::RShapeCast cast(shape, JPH::Vec3::sOne(), start, direction * max_dist);
+		JPH::ShapeCastSettings settings;
+		settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;   // meshes are surfaces (#418)
+		settings.mBackFaceModeConvex = JPH::EBackFaceMode::CollideWithBackFaces;      // sweep_collector decides in or out
+		settings.mReturnDeepestPoint = true;   // a start inside: EPA's penetration axis decides in or out, the point is the deepest
+		sweep_collector collector(direction, all);
+		const mask_bp_filter bp_filter(layer_mask);
+		const mask_object_filter object_filter(layer_mask);
+		const std::vector<JPH::BodyID> ignored = ignored_body_ids(ignore_bodies, ignore_body_count, ignore_characters, ignore_character_count);
+		const ignore_bodies_filter body_filter(ignored);
+		w->system.GetNarrowPhaseQuery().CastShape(cast, settings, JPH::RVec3::sZero(), collector, bp_filter, object_filter, body_filter);
+
+		std::vector<JPH::ShapeCastResult>& hits = collector.hits;
+		std::sort(hits.begin(), hits.end(), [](const JPH::ShapeCastResult& a, const JPH::ShapeCastResult& b) { return a.mFraction < b.mFraction; });
+		s32 written = 0;
+		for (const JPH::ShapeCastResult& hit : hits)
+		{
+			if (written >= max_hits) break;
+			JPH::Vec3 normal = -hit.mPenetrationAxis;
+			normal = normal.LengthSq() > 1.0e-12f ? normal.Normalized() : -direction;
+			write_hit(*w, hit.mBodyID2, JPH::Vec3(hit.mContactPointOn2), normal, hit.mFraction * max_dist, out_hits[written++]);
+		}
+		return written;
+	}
+
+	s32 overlap_shape(s32 shape_type, const f32* dims, const f32* pos, const f32* quat, u32 layer_mask,
+		const u32* ignore_bodies, s32 ignore_body_count, const u32* ignore_characters, s32 ignore_character_count,
+		u64* out_entities, u32* out_bodies, s32 max_count)
+	{
+		const world* w = g_world;
+		if (!w || !dims || max_count <= 0) return 0;
+		JPH::RMat44 transform;
+		const JPH::ShapeRefC shape = query_shape(shape_type, dims, pos, quat, transform);
+		if (!shape) return 0;
+
+		JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+		JPH::CollideShapeSettings settings;
+		settings.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces;   // meshes are surfaces: either side counts (#418)
+		const mask_bp_filter bp_filter(layer_mask);
+		const mask_object_filter object_filter(layer_mask);
+		const std::vector<JPH::BodyID> ignored = ignored_body_ids(ignore_bodies, ignore_body_count, ignore_characters, ignore_character_count);
+		const ignore_bodies_filter body_filter(ignored);
+		w->system.GetNarrowPhaseQuery().CollideShape(shape, JPH::Vec3::sOne(), transform, settings, JPH::RVec3::sZero(), collector,
+			bp_filter, object_filter, body_filter);
+
+		// One entry per body (compound / mesh shapes report several hits per body).
+		std::vector<u32> seen;
+		s32 written = 0;
+		for (const JPH::CollideShapeResult& hit : collector.mHits)
+		{
+			const u32 key = hit.mBodyID2.GetIndexAndSequenceNumber();
+			if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+			seen.push_back(key);
+			if (written >= max_count) break;
+			if (out_entities) out_entities[written] = w->system.GetBodyInterface().GetUserData(hit.mBodyID2);
+			if (out_bodies) out_bodies[written] = handle_of(*w, hit.mBodyID2);
+			++written;
+		}
+		return written;
+	}
+
 	s32 get_contacts(contact_event* buffer, s32 max_count)
 	{
 		world* w = g_world;
@@ -2402,6 +2609,9 @@ namespace vortex::physics {
 	bool raycast_ex(const f32*, const f32*, f32, u32, u32, const u32*, s32, const u32*, s32, f32*, f32*, f32*, u64*, u32*) { return false; }
 	s32  overlap_sphere(const f32*, f32, u32, u64*, u32*, s32) { return 0; }
 	s32  overlap_point(const f32*, u32, u64*, u32*, s32) { return 0; }
+	s32  raycast_all(const f32*, const f32*, f32, u32, const u32*, s32, const u32*, s32, query_hit*, s32) { return 0; }
+	s32  shape_cast(s32, const f32*, const f32*, const f32*, const f32*, f32, u32, const u32*, s32, const u32*, s32, bool, query_hit*, s32) { return 0; }
+	s32  overlap_shape(s32, const f32*, const f32*, const f32*, u32, const u32*, s32, const u32*, s32, u64*, u32*, s32) { return 0; }
 	s32  get_contacts(contact_event*, s32) { return 0; }
 
 	u32  character_create(f32, f32, const f32*, f32, f32, f32) { return 0; }

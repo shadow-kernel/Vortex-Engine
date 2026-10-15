@@ -27,6 +27,23 @@ namespace Editor.DllWrapper
         public int IsTrigger;
     }
 
+    /// <summary>One hit of <see cref="VortexAPI.PhysicsRaycastAll"/> / <see cref="VortexAPI.PhysicsShapeCast"/> (#480) — mirrors
+    /// the C struct <c>PhysicsHit</c>.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PhysicsHit
+    {
+        /// <summary>World-space point on the body that was hit.</summary>
+        public float PointX, PointY, PointZ;
+        /// <summary>Unit normal, facing the query (against the cast direction).</summary>
+        public float NormalX, NormalY, NormalZ;
+        /// <summary>From the query's origin along the cast; 0 = the query starts on / in the body.</summary>
+        public float Distance;
+        /// <summary>Body handle; 0 = a character capsule (see <see cref="VortexAPI.PhysicsCharacterUserData"/>).</summary>
+        public uint Body;
+        /// <summary>The body's user data: the entity id it was created with.</summary>
+        public ulong Entity;
+    }
+
     /// <summary>
     /// Physics v2 (Jolt) native entry points — P/Invoke declarations for every function of the native contract
     /// (<c>VortexAPI/Api/PhysicsApi.cpp</c>). Handles are <c>uint</c> (0 = invalid), entity ids <c>ulong</c>, all
@@ -198,6 +215,29 @@ namespace Editor.DllWrapper
         public static extern int PhysicsOverlapPoint(float[] point, uint layerMask,
             [In, Out] ulong[] outEntities, [In, Out] uint[] outBodies, int maxCount);
 
+        /// <summary>#480: every body along the ray — the first hit on each, sorted by distance — under the rules and ignore
+        /// lists of <see cref="PhysicsRaycastEx"/>. Returns the number written. Throws EntryPointNotFound on an older library.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsRaycastAll(float[] origin, float[] dir, float maxDist, uint layerMask,
+            uint[] ignoreBodies, int ignoreBodyCount, uint[] ignoreCharacters, int ignoreCharacterCount,
+            [In, Out] PhysicsHit[] outHits, int maxHits);
+
+        /// <summary>#480: sweep a sphere (shapeType 1, dims[0] radius), a capsule (2: dims[0] radius, dims[1] half height of
+        /// the cylinder part along the local Y) or a box (0: dims = half extents) from pos / quat along the unit dir for
+        /// maxDist. all 0 = the first hit only, 1 = the first hit on each body, sorted. A body the shape overlaps at its start
+        /// is hit at distance 0 when the sweep moves deeper into it, not when it moves out of it. Returns the number written.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsShapeCast(int shapeType, float[] dims, float[] pos, float[] quat, float[] dir, float maxDist,
+            uint layerMask, uint[] ignoreBodies, int ignoreBodyCount, uint[] ignoreCharacters, int ignoreCharacterCount,
+            int all, [In, Out] PhysicsHit[] outHits, int maxHits);
+
+        /// <summary>#480: every body the shape (as for <see cref="PhysicsShapeCast"/>) overlaps or touches, one entry per
+        /// body (meshes from either side); returns the number written.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int PhysicsOverlapShape(int shapeType, float[] dims, float[] pos, float[] quat, uint layerMask,
+            uint[] ignoreBodies, int ignoreBodyCount, uint[] ignoreCharacters, int ignoreCharacterCount,
+            [In, Out] ulong[] outEntities, [In, Out] uint[] outBodies, int maxCount);
+
         /// <summary>Contact events since the previous drain (sensor AND solid contacts). Returns the count written.</summary>
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int PhysicsGetContacts([In, Out] PhysicsContact[] buffer, int maxCount);
@@ -330,17 +370,17 @@ namespace Editor.DllWrapper
 
         private static long _physicsDebugMaterial = ID.INVALID_ID;   // cyan unlit net: the physics world, not the authored collider
         // #106: one unlit material per debug kind — static grey, kinematic blue, dynamic cyan, sleeping dim, joints
-        // yellow, characters green, contacts orange
-        private static readonly long[] _physicsDebugKindMaterials = new long[7];
+        // yellow, characters green, contacts orange, script queries magenta (#480)
+        private static readonly long[] _physicsDebugKindMaterials = new long[8];
         private static readonly float[][] _physicsDebugKindColors =
         {
             new[] { 0.55f, 0.55f, 0.6f }, new[] { 0.3f, 0.6f, 1.0f }, new[] { 0.25f, 0.85f, 1.0f }, new[] { 0.15f, 0.4f, 0.5f },
-            new[] { 1.0f, 0.85f, 0.2f }, new[] { 0.3f, 1.0f, 0.4f }, new[] { 1.0f, 0.5f, 0.1f },
+            new[] { 1.0f, 0.85f, 0.2f }, new[] { 0.3f, 1.0f, 0.4f }, new[] { 1.0f, 0.5f, 0.1f }, new[] { 1.0f, 0.3f, 0.85f },
         };
 
         /// <summary>Draw debug segments colour-coded by kind (#106): <paramref name="kinds"/> holds one byte per segment
-        /// (0 static, 1 kinematic, 2 dynamic, 3 sleeping, 4 joint, 5 character, 6 contact); a kind whose bit is not in
-        /// <paramref name="kindMask"/> is skipped.</summary>
+        /// (0 static, 1 kinematic, 2 dynamic, 3 sleeping, 4 joint, 5 character, 6 contact, 7 script query); a kind whose bit
+        /// is not in <paramref name="kindMask"/> is skipped.</summary>
         public static void RenderPhysicsDebugLines(float[] segments, int floatCount, byte[] kinds, int kindMask, int maxSegments = 12000)
         {
             if (segments == null || floatCount < 6) return;

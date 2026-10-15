@@ -21,7 +21,7 @@ namespace Editor.Core.Services.Physics
     /// (Primitive:Cube/Plane/…) collides as its exact analytic shape; an imported model collides against its real
     /// triangles (via <see cref="MeshTriangleProvider"/>), so collision matches what's rendered — not a bounding box.
     /// </summary>
-    public static class CollisionService
+    public static partial class CollisionService
     {
         // ---- tiny math (kept local so it doesn't depend on Vector3 having operators) ----
         private struct V3
@@ -600,9 +600,10 @@ namespace Editor.Core.Services.Physics
         /// contains the origin is not hit; a mesh collider is a surface and is hit from either side (normal flipped
         /// towards the origin). An origin ON a surface (within <see cref="RaySurfaceSkin"/> of it) pointing into it hits it
         /// at distance 0; pointing away it does not, for meshes too. <paramref name="ignore"/> and everything under it are
-        /// never hit (#406 / #418) — a ray that starts deep inside the caller's own collider passes through it.</summary>
+        /// never hit (#406 / #418) — a ray that starts deep inside the caller's own collider passes through it.
+        /// <paramref name="triggers"/> (#480): trigger colliders count as well, under the same rules.</summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask,
-            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist, GameEntity ignore = null)
+            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist, GameEntity ignore = null, bool triggers = false)
         {
             hitPoint = origin; hitNormal = new Vector3(0, 1, 0); hitEntity = null; hitDist = 0f;
             V3 d = From(direction).Norm();
@@ -614,27 +615,16 @@ namespace Editor.Core.Services.Physics
             // a surface exactly maxDist away still counts (Jolt's fraction 1 does): a hair of slack, the distance clamped
             float reach = maxDist + RaySurfaceSkin;
             float bestT = reach + reach * 1e-6f + 1e-6f; Shape best = null; V3 bestN = new V3(0, 1, 0);
-            for (int list = 0; list < 2; list++)
+            for (int list = 0; list < (triggers ? 3 : 2); list++)
             {
-                var shapes = list == 0 ? _world : _dynamic;   // static level + the simulated rigid bodies
+                var shapes = list == 0 ? _world : list == 1 ? _dynamic : _triggers;   // static level + the simulated rigid bodies (+ triggers, #480)
                 foreach (var s in shapes)
                 {
                     if (s == null) continue;
                     if (s.Owner != null && (layerMask & (1 << (s.Owner.Layer & 31))) == 0) continue;
-                    float t; V3 n;
-                    bool got;
-                    if (s.Kind == Kind.Tris && s.Tris != null)
-                    {
-                        // the ray must enter the mesh's box before any triangle is worth testing (#362)
-                        if (!RayTouchesAabb(o, d, s.Min, s.Max, bestT)) continue;
-                        got = RayTris(o, d, s, bestT, out t, out n, 2f * RaySurfaceSkin);
-                    }
-                    else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
-                    else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
-                    else got = RayCapsule(o, d, s.A, s.B, s.Radius, bestT, out t, out n);
                     // the ignored subtree is asked only about a hit that would be the closest (#406: after the shape test —
                     // a parent walk per shape cost a third of the cast)
-                    if (!got || t >= bestT || (ignore != null && IsUnder(s.Owner, ignore))) continue;
+                    if (!RayShape(o, d, s, bestT, out float t, out V3 n) || t >= bestT || (ignore != null && IsUnder(s.Owner, ignore))) continue;
                     bestT = t; best = s; bestN = n;
                 }
             }
@@ -650,6 +640,23 @@ namespace Editor.Core.Services.Physics
         /// <summary>How far behind its origin <see cref="Raycast"/> starts (1 mm, the Jolt cast's skin too): a ray that
         /// starts on a surface still hits it.</summary>
         public const float RaySurfaceSkin = 0.001f;
+
+        /// <summary>One shape against a ray that already starts <see cref="RaySurfaceSkin"/> behind its origin (Raycast,
+        /// RaycastAll): the entry hit of a box, sphere or capsule (none from inside), the first triangle of a mesh from
+        /// either side — except the surface the origin lies on, seen from behind.</summary>
+        private static bool RayShape(V3 o, V3 d, Shape s, float maxT, out float t, out V3 n)
+        {
+            t = 0f; n = new V3(0, 1, 0);
+            if (s.Kind == Kind.Tris)
+            {
+                // the ray must enter the mesh's box before any triangle is worth testing (#362)
+                if (s.Tris == null || !RayTouchesAabb(o, d, s.Min, s.Max, maxT)) return false;
+                return RayTris(o, d, s, maxT, out t, out n, 2f * RaySurfaceSkin);
+            }
+            if (s.Kind == Kind.Box) return RayObb(o, d, s, maxT, out t, out n);
+            if (s.Kind == Kind.Sphere) return RaySphere(o, d, s.Center, s.Radius, maxT, out t, out n);
+            return RayCapsule(o, d, s.A, s.B, s.Radius, maxT, out t, out n);
+        }
 
         /// <summary>#418: every entity whose solid collider contains <paramref name="point"/> — the collision world's answer
         /// to Physics.OverlapPoint when no Jolt world runs, with the Jolt query's contract: boxes, spheres and capsules
