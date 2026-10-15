@@ -317,6 +317,10 @@ namespace vortex::graphics::dx12
 			const u32 maxPaneSlot = MAX_DRAW_RUNS - MAX_GIZMO_ITEMS - 1;
 			u32 drawSlot = 0;
 
+			// Opaque items first, then the blended (alpha / additive) ones over them: the queue is sorted by material (#361
+			// sorts the frame part on its own), and a translucent submesh with the lower material id drew before the body it
+			// shows in a thumbnail.
+			for (int phase = 0; phase < 2; ++phase)
 			for (size_t i = 0; i < objectCount; ++i)
 			{
 				const auto& item = m_render_queue[i];
@@ -327,6 +331,11 @@ namespace vortex::graphics::dx12
 				if (item.layer != 0) continue;
 				auto* mesh = reg.get_mesh(item.mesh_id);
 				if (!mesh) continue;
+				{
+					auto* phaseMat = reg.get_material(item.material_id);
+					const u32 phaseBlend = phaseMat ? phaseMat->blend_mode() : 0u;
+					if ((phaseBlend == 1 || phaseBlend == 2) != (phase == 1)) continue;
+				}
 				
 				PerObjectConstants obj_cb{};
 				obj_cb.world = item.world_matrix;
@@ -413,8 +422,15 @@ namespace vortex::graphics::dx12
 				// The shared 3D PSO now REQUIRES per-instance world data on slot 1 (instancing). The editor
 				// preview draws one instance per object, so stage this world matrix + bind the instance VB.
 				// (Same compacted slot — the instance VB is larger, but one indexing scheme is one bug fewer.)
+				// The per-instance tint (#331) rides in the matrix's fourth column, packed as the scene pass packs it
+				// (pack_instance; the shaders read it as (r-1, g-1, b-1, a)): the plain materials are white since #364 D,
+				// so a second view or camera preview drew every plain primitive white — the scene's colours were missing.
 				if (m_instance_vb_mapped)
-					memcpy(static_cast<u8*>(m_instance_vb_mapped) + (size_t)slot * 64, &item.world_matrix, 64);
+				{
+					float* inst = reinterpret_cast<float*>(static_cast<u8*>(m_instance_vb_mapped) + (size_t)slot * 64);
+					memcpy(inst, &item.world_matrix, 64);
+					inst[3] = item.color.x - 1.0f; inst[7] = item.color.y - 1.0f; inst[11] = item.color.z - 1.0f; inst[15] = item.color.w;
+				}
 				D3D12_VERTEX_BUFFER_VIEW vbs2[2];
 				vbs2[0] = mesh->vertex_buffer_view();
 				vbs2[1].BufferLocation = m_instance_vb->GetGPUVirtualAddress() + (UINT64)slot * 64;

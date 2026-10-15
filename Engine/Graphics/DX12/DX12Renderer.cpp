@@ -162,6 +162,7 @@ namespace vortex::graphics::dx12
 			std::lock_guard<std::mutex> lock(m_queue_mutex);
 			m_render_queue.clear();
 			m_submit_queue.clear();
+			m_retained.clear(); m_frame_scratch.clear(); m_queue_retained = 0; m_queue_retained_valid = false;
 		}
 
 		if (m_per_frame_cb && m_per_frame_cb_mapped) { m_per_frame_cb->Unmap(0, nullptr); m_per_frame_cb_mapped = nullptr; }
@@ -285,6 +286,7 @@ namespace vortex::graphics::dx12
 
 	void DX12Renderer::swap_render_queue()
 	{
+		instancing::ScopedMs timed(m_cpu_stats.swap_ms);
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		// Nothing new submitted this frame -> KEEP last frame's render queue (reuse it). This lets the game
 		// submit a static scene ONCE and re-render it every frame with only the camera changing — a big CPU
@@ -299,23 +301,37 @@ namespace vortex::graphics::dx12
 
 		bool staticChanged = false;
 		if (m_static_pending) { m_static_render.swap(m_static_submit); m_static_submit.clear(); m_static_pending = false; staticChanged = true; }
-		if (m_submit_queue.empty() && !staticChanged) return;   // scene: nothing new -> KEEP last frame's (camera-only orbit is free)
-		// the frame = the retained static set + this frame's dynamic submits (#364 A)
-		m_render_queue.clear();
-		m_render_queue.reserve(m_static_render.size() + m_submit_queue.size());
-		m_render_queue.insert(m_render_queue.end(), m_static_render.begin(), m_static_render.end());
-		m_render_queue.insert(m_render_queue.end(), m_submit_queue.begin(), m_submit_queue.end());
-		m_submit_queue.clear();
-		m_queue_dirty = true;   // new geometry -> re-sort + rebuild runs this frame
+		const bool frameChanged = staticChanged || !m_submit_queue.empty() || m_frame_submitted;
+		m_frame_submitted = false;
+		const instancing::Sync sync = sync_retained();
+		// scene: nothing new -> KEEP last frame's (camera-only orbit is free) — unless the queue's retained part is not the
+		// store's any more (shrunk by the render pass, or hidden for a preview and shown again)
+		if (!frameChanged && sync == instancing::Sync::None && m_queue_retained_valid
+			&& m_queue_retained == (m_retained_visible ? m_retained.count() : 0)) return;
+		// the retained part first (moved instances in place); the frame part is the queue's tail, kept or replaced (#361)
+		if (instancing::assemble_retained(m_render_queue, m_retained, sync, frameChanged, m_retained_visible, m_queue_retained, m_queue_retained_valid, m_frame_scratch))
+			m_queue_dirty = true;
+		if (frameChanged)
+		{
+			// the frame's own submits: the static split's set (#364 A) + this frame's per-frame items — sorted on their own in
+			// render_3d_scene after the pre-cull, which drops the invisible ones of a huge crowd first (#361; the retained
+			// instances in front of them are sorted already)
+			m_render_queue.reserve(m_render_queue.size() + m_static_render.size() + m_submit_queue.size());
+			m_render_queue.insert(m_render_queue.end(), m_static_render.begin(), m_static_render.end());
+			m_render_queue.insert(m_render_queue.end(), m_submit_queue.begin(), m_submit_queue.end());
+			m_submit_queue.clear();
+			m_frame_sort_pending = true;
 
-		// Bone palettes travel with the scene queue: adopt the staged palettes now, but do NOT touch the
-		// GPU buffer yet — the previous frame's command list may still be reading it. The actual memcpy
-		// happens in upload_staged_bone_palettes(), which callers run only after a fence wait / flush and
-		// which writes the ALTERNATE buffer half. A reused queue (no new submissions) keeps the previous
-		// upload + active half intact, so its items' bone offsets stay valid.
-		m_bone_render.swap(m_bone_submit);
-		m_bone_submit.clear();
-		m_bone_upload_pending = true;
+			// Bone palettes travel with the scene queue: adopt the staged palettes now, but do NOT touch the
+			// GPU buffer yet — the previous frame's command list may still be reading it. The actual memcpy
+			// happens in upload_staged_bone_palettes(), which callers run only after a fence wait / flush and
+			// which writes the ALTERNATE buffer half. A reused queue (no new submissions) keeps the previous
+			// upload + active half intact, so its items' bone offsets stay valid.
+			m_bone_render.swap(m_bone_submit);
+			m_bone_submit.clear();
+			m_bone_upload_pending = true;
+			m_queue_dirty = true;   // new geometry -> the runs are rebuilt this frame (no sort of the retained part)
+		}
 	}
 
 
@@ -407,6 +423,9 @@ namespace vortex::graphics::dx12
 			m_render_queue.clear();
 			m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
 			m_submit_queue.clear();
+			// the retained instances go too (#361): the scene sees the new epoch and sends what it still shows
+			m_retained.clear(); m_frame_scratch.clear(); m_queue_retained = 0; m_queue_retained_valid = false; m_frame_submitted = false;
+			m_draw_runs.clear(); m_queue_dirty = true;
 			m_bone_submit.clear();
 			m_bone_render.clear();
 			m_bone_upload_pending = false;
@@ -691,6 +710,8 @@ namespace vortex::graphics::dx12
 
 		DX12Streamline::instance().frame_marker(2 /*eRenderSubmitStart*/); // FG/Reflex latency marker (no-op if FG off)
 
+		// the queue's CPU time of the frame that just finished (incl. any offscreen view rendered since) (#361)
+		m_cpu_stats.next_frame(m_cpu_stats_last);
 		// Swap render queues (thread-safe) and clear submit queue for next frame
 		swap_render_queue();
 		

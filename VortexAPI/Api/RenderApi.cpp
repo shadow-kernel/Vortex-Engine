@@ -492,6 +492,40 @@ EDITOR_INTERFACE void EndStaticScene()
 	graphics::Renderer::instance().end_static_scene();
 }
 
+// #361: retained instances — the scene's persistent rigid meshes, changed by a handle the scene assigns. ops = count x 112
+// bytes (Graphics/Instancing/RenderQueue.h InstanceOp: handle, kind 0 set / 1 move / 2 remove, mesh, material, layer,
+// 16 floats world, 4 floats tint). Returns the store's epoch: a new value means the renderer dropped every instance (scene
+// switch, a mesh they drew was destroyed) and the scene sends its instances again.
+EDITOR_INTERFACE unsigned int ApplyRenderInstances(const void* ops, int count)
+{
+	auto& r = graphics::Renderer::instance();
+	if (ops && count > 0) r.apply_instance_ops(static_cast<const graphics::instancing::InstanceOp*>(ops), static_cast<u32>(count));
+	return r.instance_epoch();
+}
+
+EDITOR_INTERFACE unsigned int RenderInstancesEpoch()
+{
+	return graphics::Renderer::instance().instance_epoch();
+}
+
+EDITOR_INTERFACE void ClearRenderInstances()
+{
+	graphics::Renderer::instance().clear_instances();
+}
+
+// The frame's own submits (skinned characters, terrain, foliage, water …) replace the last frame's at the next swap even
+// when this frame submitted none — called at the start of every scene submit.
+EDITOR_INTERFACE void MarkFrameSubmit()
+{
+	graphics::Renderer::instance().mark_frame_submit();
+}
+
+// Previews render their own items only: hidden, the retained instances stay out of the render queue until shown again.
+EDITOR_INTERFACE void SetRenderInstancesVisible(bool visible)
+{
+	graphics::Renderer::instance().set_instances_visible(visible);
+}
+
 // #175: the first-person layer's own field of view (degrees; world FOV never distorts the viewmodel).
 EDITOR_INTERFACE void SetViewmodelFOV(float fov_degrees)
 {
@@ -627,6 +661,19 @@ EDITOR_INTERFACE int GetInstancesTested()
 EDITOR_INTERFACE int GetInstancesDrawn()
 {
 	return graphics::Renderer::instance().get_instances_drawn();
+}
+
+// What the scene queue cost the CPU in the last frame (#361): out[0] swap ms (submitted items into the render queue),
+// out[1] sort + draw-run build ms, out[2] cull + instance pack ms (all views), out[3] shadow caster ms, out[4] items
+// sorted, out[5] items in the render queue, out[6] the frame's index (counts up). Returns how many values it wrote.
+EDITOR_INTERFACE int GetRenderCpuStats(float* out, int count)
+{
+	if (!out || count <= 0) return 0;
+	const auto& s = graphics::Renderer::instance().cpu_stats();
+	const float v[7] = { s.swap_ms, s.sort_ms, s.cull_ms, s.shadow_ms, (float)s.sorted, (float)s.queue, (float)s.frame };
+	const int n = count < 7 ? count : 7;
+	for (int i = 0; i < n; ++i) out[i] = v[i];
+	return n;
 }
 
 // The bone-palette budget of the main view's last frame (#415): bone matrices in the GPU palette buffer (one copy per

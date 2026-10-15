@@ -198,13 +198,15 @@ namespace vortex::graphics::sdlgpu
 		std::vector<Caster> casters;
 		std::unordered_map<id::id_type, XMFLOAT4> bounds;
 		const Frustum6 fr = extract_frustum6(view.view_projection);
-		for (const auto& item : m_render_queue)
+		// in the order of one sorted queue (#361): the cap keeps the casters it kept before the queue was split into its
+		// retained and per-frame parts — taking the retained part first changed the prepass's cost
+		instancing::visit_merged(m_render_queue, m_queue_retained, view.eye, [&](const RenderItem& item) -> bool
 		{
-			if (item.bone_offset != NO_BONES || item.layer != 0) continue;
+			if (item.bone_offset != NO_BONES || item.layer != 0) return true;
 			Material* cmat = reg.get_material(item.material_id);
-			if (cmat && (cmat->blend_mode() == 1 || cmat->blend_mode() == 2)) continue;
+			if (cmat && (cmat->blend_mode() == 1 || cmat->blend_mode() == 2)) return true;
 			Mesh* mp = reg.get_mesh(item.mesh_id);
-			if (!mp || !mp->is_valid()) continue;
+			if (!mp || !mp->is_valid()) return true;
 			XMFLOAT4 bd;
 			auto bit = bounds.find(item.mesh_id);
 			if (bit == bounds.end())
@@ -225,9 +227,10 @@ namespace vortex::graphics::sdlgpu
 			if (sphere_in_frustum6(fr, XMVectorGetX(wc), XMVectorGetY(wc), XMVectorGetZ(wc), bd.w * ms + 0.05f))
 			{
 				casters.push_back({ item.mesh_id, &item.world_matrix, mp });
-				if (casters.size() >= SSAO_MAX_INSTANCES) break;
+				if (casters.size() >= SSAO_MAX_INSTANCES) return false;
 			}
-		}
+			return true;
+		});
 		std::sort(casters.begin(), casters.end(), [](const Caster& a, const Caster& b) { return a.mesh < b.mesh; });
 		if (!casters.empty())
 		{

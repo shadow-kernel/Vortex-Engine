@@ -113,6 +113,8 @@ namespace Editor.ECS.Components
         /// </summary>
         internal void SyncToEngine()
         {
+            // the scene renderer updates this entity's subtree on its next submit (#361)
+            RenderChanges.TransformChanged(Entity);
             // a STATIC entity moved (#364 A): the renderer's retained static set must be re-sent. Dynamic entities
             // (Animator / Rigidbody / … on them or an ancestor) are re-sent every frame anyway and stay silent here.
             if (Entity == null || !Entity.RenderDynamic) StaticVersion++;
@@ -136,8 +138,54 @@ namespace Editor.ECS.Components
         /// </summary>
         public void SetLocalPositionFromEngine(Vector3 position)
         {
-            if (Finite(position, 1, "position")) SetProperty(ref _localPosition, position, nameof(LocalPosition));
+            if (Finite(position, 1, "position") && SetProperty(ref _localPosition, position, nameof(LocalPosition)))
+                RenderChanges.TransformChanged(Entity);   // #361
         }
+
+        #endregion
+
+        #region World matrix (#361)
+
+        // The world matrix, cached: valid while this transform's local values, its parent and the parent's world matrix are
+        // the ones it was computed from — compared up the chain on each read (the values themselves, not a counter: undo
+        // writes the fields directly), so a change anywhere above is seen without an invalidation walk that could miss one.
+        private float[] _world;
+        private int _worldVersion, _worldParentVersion;
+        private Vector3 _worldPos, _worldRot, _worldScale;
+        private Transform _worldParent;
+        [System.ThreadStatic] private static float[] t_local;   // scratch, per thread: a reader off the main thread never shares it
+
+        /// <summary>The world matrix (row-major 4x4, row 3 = translation; this transform × its parents' — the matrix the
+        /// renderer draws with), recomputed only after this transform or an ancestor changed. Owned by the transform: read
+        /// it, do not keep or change it.</summary>
+        internal float[] WorldMatrix { get { EnsureWorld(); return _world; } }
+
+        /// <summary>Counts up whenever <see cref="WorldMatrix"/> was recomputed: the scene renderer sends a moved instance when
+        /// this differs from the version it sent last.</summary>
+        internal int WorldVersion { get { EnsureWorld(); return _worldVersion; } }
+
+        private void EnsureWorld()
+        {
+            // like SceneRenderService.BuildWorldMatrixInto: a parent without a Transform ends the chain
+            var parent = Entity?.Parent?.Transform;
+            int parentVersion = 0;
+            if (parent != null) { parent.EnsureWorld(); parentVersion = parent._worldVersion; }
+            if (_world != null && ReferenceEquals(_worldParent, parent) && _worldParentVersion == parentVersion
+                && Same(_worldPos, _localPosition) && Same(_worldRot, _localRotation) && Same(_worldScale, _localScale)) return;
+            if (_world == null) _world = new float[16];
+            var local = t_local ??= new float[16];
+            Editor.Core.Services.SceneRenderService.LocalMatrixInto(this, local);
+            if (parent != null) Editor.Core.Services.SceneRenderService.MultiplyInto(local, parent._world, _world);
+            else System.Array.Copy(local, _world, 16);
+            _worldPos = _localPosition; _worldRot = _localRotation; _worldScale = _localScale;
+            _worldParent = parent;
+            _worldParentVersion = parentVersion;
+            _worldVersion++;
+        }
+
+        // float.Equals: a NaN equals itself, so it could never force a recompute every read (the setters refuse them anyway)
+        private static bool Same(Vector3 a, Vector3 b) =>
+            a.X.Equals(b.X) && a.Y.Equals(b.Y) && a.Z.Equals(b.Z);
 
         #endregion
 

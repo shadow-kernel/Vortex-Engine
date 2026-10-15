@@ -130,7 +130,7 @@ namespace Editor.ECS.Components.Rendering
         public bool IsMainCamera
         {
             get => _isMainCamera;
-            set => SetProperty(ref _isMainCamera, value, nameof(IsMainCamera));
+            set { if (SetProperty(ref _isMainCamera, value, nameof(IsMainCamera))) RenderChanges.StructureChanged(); }   // the cached main camera (#361)
         }
 
         /// <summary>
