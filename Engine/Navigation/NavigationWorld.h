@@ -26,7 +26,8 @@
 //   * agent handles are u32, 0 = invalid (generation << 16 | slot + 1); stale handles are rejected.
 //   * all calls come from the single game / UI thread, except bake(), bake_progress() and bake_cancel(), which
 //     are thread-safe (only one bake runs at a time; a second concurrent bake() fails with bake_error_busy).
-//   * the .vnav blob is little-endian and versioned (data_version); load() rejects anything else.
+//   * the .vnav blob is little-endian and versioned (data_version); load() also reads version 1 (#517: built with
+//     32-bit poly refs, re-laid out on load) and rejects anything else.
 //
 // Without Recast in the build (VORTEX_HAS_RECAST undefined / 0 — the Visual Studio projects, or
 // -DVORTEX_ENABLE_RECAST=OFF) the .cpp files compile the stub: available() is false, bake() returns
@@ -44,7 +45,7 @@ namespace vortex::navigation {
 
 	// ---- ABI constants ---------------------------------------------------------------------------------
 	inline constexpr u32 data_magic{ 0x56414E56u };      // "VNAV" (little-endian bytes 'V','N','A','V')
-	inline constexpr s32 data_version{ 1 };
+	inline constexpr s32 data_version{ 2 };              // 2: 64-bit poly refs (#517); see NavigationFormat.h
 
 	// Region partitioning (Recast): watershed = best quality (default), monotone = fastest (long thin polygons),
 	// layers = good for tiles with many overlapping floors.
@@ -82,11 +83,15 @@ namespace vortex::navigation {
 	inline constexpr s32 bake_error_failed{ -4 };        // Recast / Detour failure (see the log)
 	inline constexpr s32 bake_error_empty{ -5 };         // geometry, but nothing walkable
 	inline constexpr s32 bake_error_unavailable{ -6 };   // stub build
-	inline constexpr s32 bake_error_too_many_tiles{ -7 };// raise the tile size or the cell size
+	inline constexpr s32 bake_error_too_many_tiles{ -7 };// more than max_bake_tiles: raise the tile size or the cell size
 	inline constexpr s32 bake_error_busy{ -8 };          // another bake is running
 
 	inline constexpr s32 box_floats{ 10 };               // centre xyz, half extents xyz, rotation quaternion xyzw
 	inline constexpr s32 max_agents{ 256 };
+	// The bake keeps book of every tile of its grid, empty ones included; this bounds that bookkeeping, not the navmesh
+	// (#517: the old 16,384 came from the 32-bit poly ref and went with it). Editor/Core/Services/AI/NavigationService.cs
+	// (ErrorText) names it.
+	inline constexpr s32 max_bake_tiles{ 1 << 18 };
 
 	// Bake parameters. Layout-identical to the C ABI's NavBakeSettings (NavigationApi.cpp static_asserts it).
 	struct bake_settings
@@ -173,8 +178,9 @@ namespace vortex::navigation {
 	void bake_result_clear();
 	// What the user should know about the last bake although it produced a navmesh (#451): tiles baked with a coarser
 	// cell height because their geometry is taller than one heightfield column holds, geometry that could not be
-	// baked, tiles that failed. One sentence per line ('\n'-separated, UTF-8, NUL-terminated when it fits); empty when
-	// there is nothing to say. Returns the length in bytes; null / 0 = query it. Reset by every bake().
+	// baked, tiles that failed (#517: how many, then one line per reason with its count and the world-space rectangles
+	// of the first of those tiles). One sentence per line ('\n'-separated, UTF-8, NUL-terminated when it fits); empty
+	// when there is nothing to say. Returns the length in bytes; null / 0 = query it. Reset by every bake().
 	s32  bake_notes_copy(char* out, s32 max_bytes);
 
 	// ---- Runtime world --------------------------------------------------------------------------------------

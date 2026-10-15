@@ -67,8 +67,9 @@ namespace Editor.Core.Services.AI
         /// <summary>Where the .vnav was written (null when not saved).</summary>
         public string Path;
         /// <summary>What the bake could not do as asked although it may have produced a navmesh (#451): tiles baked with a
-        /// coarser cell height, geometry left without navmesh, tiles that failed — one sentence each, also appended to
-        /// <see cref="Message"/>.</summary>
+        /// coarser cell height, geometry left without navmesh, tiles that failed (#517: how many, then one entry per reason
+        /// with its count and where the first of those tiles are, as world-space x / z ranges) — one sentence each, also
+        /// appended to <see cref="Message"/>.</summary>
         public readonly List<string> Warnings = new List<string>();
     }
 
@@ -350,7 +351,8 @@ namespace Editor.Core.Services.AI
                 case -3: return "Bake cancelled.";
                 case -5: return "Nothing walkable: no surface is flat enough / large enough for the agent (check Max Slope, Agent Radius, Min Region Size).";
                 case -6: return "Navigation is unavailable in this engine build: " + UnavailableReason;
-                case -7: return "The level needs more than 16384 tiles: raise the Tile Size or the Cell Size.";
+                // #517: the bake's own bookkeeping (navigation::max_bake_tiles); the 16384 of the 32-bit poly ref is gone
+                case -7: return "The bake bounds need more than 262144 tiles: raise the Tile Size or the Cell Size.";
                 case -8: return "Another bake is still running.";
                 default: return "Bake failed (see the Console / log).";
             }

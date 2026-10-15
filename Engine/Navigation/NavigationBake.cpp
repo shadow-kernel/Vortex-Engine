@@ -60,6 +60,10 @@ namespace vortex::navigation {
 
 namespace vortex::navigation {
 
+	// #517: tiles are written with 64-bit poly refs (.vnav version 2, NavigationFormat.h); Engine/CMakeLists.txt builds
+	// Detour and everything that links it with DT_POLYREF64. A build without it would write another tile layout.
+	static_assert(sizeof(dtPolyRef) == 8, "Vortex navigation needs recastnavigation built with DT_POLYREF64 (#517)");
+
 	namespace {
 
 		void log(const char* fmt, ...)
@@ -75,21 +79,24 @@ namespace vortex::navigation {
 			platform::debug_output(line.c_str());
 		}
 
-		// Recast build context: collects warnings / errors of a tile build (Recast's own logging) so a failed tile
+		// Recast build context: collects the errors and warnings of a tile build (Recast's own logging) so a failed tile
 		// can say why. One per worker thread.
 		class bake_context final : public rcContext
 		{
 		public:
 			bake_context() : rcContext(true) {}
-			std::string errors;
+			std::string errors, warnings;
+			// Why a step failed: Recast's errors, else its warnings — not both, benign warnings such as "Expanding max
+			// contours" used to bury the reason (#517).
+			const std::string& detail() const { return errors.empty() ? warnings : errors; }
 		protected:
 			void doLog(const rcLogCategory category, const char* msg, const int len) override
 			{
-				if (category == RC_LOG_PROGRESS || errors.size() > 2048) return;
-				errors.append(category == RC_LOG_ERROR ? "error: " : "warning: ");
-				errors.append(msg, (size_t)std::max(0, len));
-				errors.push_back(';');
-				errors.push_back(' ');
+				if (category == RC_LOG_PROGRESS) return;
+				std::string& out = category == RC_LOG_ERROR ? errors : warnings;
+				if (out.size() > 1024) return;
+				if (!out.empty()) out += "; ";
+				out.append(msg, (size_t)std::max(0, len));
 			}
 		};
 
@@ -103,6 +110,17 @@ namespace vortex::navigation {
 		std::string g_notes;   // bake_notes_copy (guarded by g_result_mutex)
 
 		// A note for the user (bake_notes_copy) — also written to the log.
+		void note_line(const std::string& text)
+		{
+			std::string line{ "[navigation] bake: " };
+			line += text;
+			line += '\n';
+			platform::debug_output(line.c_str());
+			std::lock_guard<std::mutex> lock(g_result_mutex);
+			if (!g_notes.empty()) g_notes.push_back('\n');
+			g_notes += text;
+		}
+
 		void note(const char* fmt, ...)
 		{
 			char text[512];
@@ -110,10 +128,7 @@ namespace vortex::navigation {
 			va_start(args, fmt);
 			std::vsnprintf(text, sizeof(text), fmt, args);
 			va_end(args);
-			log("bake: %s", text);
-			std::lock_guard<std::mutex> lock(g_result_mutex);
-			if (!g_notes.empty()) g_notes.push_back('\n');
-			g_notes += text;
+			note_line(text);
 		}
 
 		constexpr f32 k_pi{ 3.14159265358979f };
@@ -288,6 +303,21 @@ namespace vortex::navigation {
 		constexpr int k_window_margin_cells{ 2 };
 		constexpr f32 k_max_cell_height{ 10.0f };   // the coarsest cell height sane() accepts
 
+		// What one tile can hold (#517). The 32-bit poly ref shared 22 bits between the tile and the polygon index, so the
+		// polygons a tile could hold used to fall with the tile count of the bake bounds; with 64-bit refs (20 polygon
+		// bits) only these per-tile limits of the data structures are left. They are fixed — the number of tiles does not
+		// change them, and a smaller Tile Size lowers what each tile has to hold. Vertices: Recast's polygon mesh refuses
+		// a tile whose contours have 0xfffe vertices or more (rcBuildPolyMesh; Detour's vertex indices are 16-bit).
+		// Polygons: a polygon's neighbour inside its tile is a 15-bit index next to a border / portal flag
+		// (rcPolyMesh::polys, dtPoly::neis + DT_EXT_LINK), so a tile addresses 0x7fff polygons; more would link to the
+		// wrong neighbours.
+		constexpr s32 k_max_tile_verts{ 0xfffe - 1 };
+		constexpr s32 k_max_tile_polys{ 0x7fff };
+		constexpr const char* k_fail_verts{ "too many vertices in one tile (at most 65533 fit; lower the Tile Size, or raise the Cell Size or the Max Edge Error)" };
+		constexpr const char* k_fail_polys{ "too many polygons in one tile (at most 32767 fit; lower the Tile Size, or raise the Cell Size, the Merge Region Size or the Verts Per Polygon)" };
+		// How many failed tiles of one reason the bake notes list with their world-space rectangle; the rest are counted.
+		constexpr int k_listed_failures{ 10 };
+
 		struct bake_job
 		{
 			bake_settings s;
@@ -295,7 +325,6 @@ namespace vortex::navigation {
 			f32 bmin[3], bmax[3];                  // whole bake bounds
 			s32 tiles_x, tiles_z;
 			f32 tile_world;                        // tile side in metres
-			s32 max_polys_per_tile;
 			f32 walkable_cos;
 			bool tile_windows{ false };            // #451: the level is taller than one heightfield column holds
 
@@ -312,7 +341,8 @@ namespace vortex::navigation {
 				std::vector<u8> data;
 				s32 polys{ 0 }, verts{ 0 }, detail_tris{ 0 };
 				bool failed{ false };
-				std::string error;
+				const char* reason{ nullptr };     // why it failed: the step, or the limit it is over (the report groups by it)
+				std::string error;                 // the detail: Recast's log of the step, or the count over the limit
 				// #451 (tile height windows): the height of the tile's geometry, the coarser cell height it needed
 				// (0 = the bake's own) and whether geometry above its window was left out (taller than any cell height fits)
 				f32 geometry_height{ 0.0f };
@@ -424,10 +454,11 @@ namespace vortex::navigation {
 				if (dmesh) rcFreePolyMeshDetail(dmesh);
 				solid = nullptr; chf = nullptr; cset = nullptr; pmesh = nullptr; dmesh = nullptr;
 			};
-			auto fail = [&](const char* what)
+			auto fail = [&](const char* what, const std::string& detail = {})
 			{
 				result.failed = true;
-				result.error = std::string(what) + (ctx.errors.empty() ? std::string() : " (" + ctx.errors + ")");
+				result.reason = what;
+				result.error = detail.empty() ? ctx.detail() : detail;
 				cleanup();
 			};
 
@@ -542,10 +573,25 @@ namespace vortex::navigation {
 				return;   // nothing walkable in this tile
 			}
 
+			// #517: the vertex limit, counted the way rcBuildPolyMesh counts it (contours of 3+ vertices), so the report
+			// names the limit and the count instead of Recast's bare log line
+			s32 contour_verts = 0;
+			for (int i = 0; i < cset->nconts; ++i)
+				if (cset->conts[i].nverts >= 3) contour_verts += cset->conts[i].nverts;
+			if (contour_verts > k_max_tile_verts)
+			{
+				fail(k_fail_verts, std::to_string(contour_verts) + " vertices");
+				return;
+			}
 			pmesh = rcAllocPolyMesh();
 			if (!pmesh || !rcBuildPolyMesh(&ctx, *cset, cfg.maxVertsPerPoly, *pmesh))
 			{
 				fail("polygon mesh");
+				return;
+			}
+			if (pmesh->npolys > k_max_tile_polys)
+			{
+				fail(k_fail_polys, std::to_string(pmesh->npolys) + " polygons");
 				return;
 			}
 			dmesh = rcAllocPolyMeshDetail();
@@ -557,16 +603,6 @@ namespace vortex::navigation {
 			if (pmesh->npolys == 0)
 			{
 				cleanup();
-				return;
-			}
-			if (pmesh->nverts >= 0xffff)
-			{
-				fail("too many vertices in one tile (lower the tile size)");
-				return;
-			}
-			if (pmesh->npolys > job.max_polys_per_tile)
-			{
-				fail("too many polygons in one tile (lower the tile size)");
 				return;
 			}
 
@@ -617,6 +653,40 @@ namespace vortex::navigation {
 			result.verts = pmesh->nverts;
 			result.detail_tris = dmesh->ntris;
 			cleanup();
+		}
+
+		// #517: every failed tile is reported, so the holes can be found — how many, then one note per reason with its
+		// count and the world-space x / z range of its first k_listed_failures tiles (the rest are counted). A bake used to
+		// name the first failed tile only.
+		void report_failed_tiles(const bake_job& job, const std::vector<s32>& failed)
+		{
+			std::vector<const char*> reasons;   // in the order of their first tile
+			for (s32 i : failed)
+			{
+				const char* r = job.out[(size_t)i].reason;
+				if (std::none_of(reasons.begin(), reasons.end(), [&](const char* q) { return std::strcmp(q, r) == 0; })) reasons.push_back(r);
+			}
+			note("%d tile(s) failed to build and have no navmesh.", (int)failed.size());
+			for (const char* reason : reasons)
+			{
+				std::string line;
+				int count = 0;
+				for (s32 i : failed)
+				{
+					const auto& o = job.out[(size_t)i];
+					if (std::strcmp(o.reason, reason) != 0) continue;
+					if (count++ >= k_listed_failures) continue;
+					const s32 tx = i % job.tiles_x, tz = i / job.tiles_x;
+					char where[192];
+					std::snprintf(where, sizeof(where), "%stile (%d, %d) at x %.1f..%.1f, z %.1f..%.1f", count > 1 ? "; " : "", tx, tz,
+						job.bmin[0] + (f32)tx * job.tile_world, job.bmin[0] + (f32)(tx + 1) * job.tile_world,
+						job.bmin[2] + (f32)tz * job.tile_world, job.bmin[2] + (f32)(tz + 1) * job.tile_world);
+					line += where;
+					if (!o.error.empty()) line += " (" + o.error.substr(0, 200) + ")";
+				}
+				if (count > k_listed_failures) line += "; ... and " + std::to_string(count - k_listed_failures) + " more";
+				note_line(std::to_string(count) + " tile(s) - " + reason + ": " + line + ".");
+			}
 		}
 
 		bool sane(const bake_settings& s)
@@ -719,19 +789,28 @@ namespace vortex::navigation {
 		// A flat world still needs a y range for the spans; keep the tile grid aligned to the cell size.
 		if (job.bmax[1] - job.bmin[1] < s.cell_height * 4.0f) job.bmax[1] = job.bmin[1] + s.cell_height * 4.0f;
 
-		int gw = 0, gh = 0;
-		rcCalcGridSize(job.bmin, job.bmax, s.cell_size, &gw, &gh);
-		job.tiles_x = std::max(1, (gw + s.tile_size - 1) / s.tile_size);
-		job.tiles_z = std::max(1, (gh + s.tile_size - 1) / s.tile_size);
-		const s32 tile_total = job.tiles_x * job.tiles_z;
-		const int tile_bits = rcMin((int)dtIlog2(dtNextPow2((unsigned int)tile_total)), 14);
-		if (tile_total > (1 << 14))
+		// The tile grid. #517: the 32-bit poly ref split 22 bits between the tile index and the polygon index by the tile
+		// count of this grid, so the polygons a tile could hold shrank as the bounds grew (and a smaller Tile Size, with
+		// more tiles, shrank them as fast). With 64-bit refs a tile's polygons only meet the fixed per-tile limits in
+		// build_tile, and the grid only bounds the bake's own bookkeeping (max_bake_tiles), counted in 64 bits — cell counts
+		// beyond an int are refused before rcCalcGridSize converts them.
+		const d64 cells_x = (d64)(job.bmax[0] - job.bmin[0]) / s.cell_size, cells_z = (d64)(job.bmax[2] - job.bmin[2]) / s.cell_size;
+		s64 grid_tiles = (s64)max_bake_tiles + 1;
+		if (cells_x < 1.0e9 && cells_z < 1.0e9)
 		{
-			log("bake: %d x %d tiles is more than the 16384 a navmesh supports - raise the tile size or the cell size", job.tiles_x, job.tiles_z);
+			int gw = 0, gh = 0;
+			rcCalcGridSize(job.bmin, job.bmax, s.cell_size, &gw, &gh);
+			job.tiles_x = std::max(1, (gw + s.tile_size - 1) / s.tile_size);
+			job.tiles_z = std::max(1, (gh + s.tile_size - 1) / s.tile_size);
+			grid_tiles = (s64)job.tiles_x * job.tiles_z;
+		}
+		if (grid_tiles > max_bake_tiles)
+		{
+			log("bake: the bounds need %.0f x %.0f tiles, more than the %d a bake handles - raise the tile size or the cell size",
+				std::ceil(cells_x / s.tile_size), std::ceil(cells_z / s.tile_size), max_bake_tiles);
 			return bake_error_too_many_tiles;
 		}
-		const int poly_bits = 22 - tile_bits;
-		job.max_polys_per_tile = 1 << poly_bits;
+		const s32 tile_total = (s32)grid_tiles;
 		job.tile_world = s.tile_size * s.cell_size;
 
 		rcConfig& cfg = job.base;
@@ -838,8 +917,8 @@ namespace vortex::navigation {
 		st.tiles_z = job.tiles_z;
 		st.input_triangles = (s32)tri_index.size();
 		st.input_boxes = (s32)job.boxes.size();
-		s32 failed = 0, first_failed = -1;
-		s32 coarse = 0, tallest = -1, cut = 0, first_cut = -1;
+		std::vector<s32> failed;
+		s32 coarse = 0, tallest = -1, cut = 0, first_cut = -1, densest = 0;
 		f32 coarsest = 0.0f;
 		size_t total = sizeof(format::file_header);
 		for (s32 i = 0; i < tile_total; ++i)
@@ -854,8 +933,7 @@ namespace vortex::navigation {
 			if (o.cut && cut++ == 0) first_cut = i;
 			if (o.failed)
 			{
-				if (failed++ < 8) log("bake: tile (%d, %d) failed: %s", i % job.tiles_x, i / job.tiles_x, o.error.c_str());
-				if (first_failed < 0) first_failed = i;
+				failed.push_back(i);
 				continue;
 			}
 			if (o.data.empty()) continue;
@@ -863,6 +941,7 @@ namespace vortex::navigation {
 			st.poly_count += o.polys;
 			st.vert_count += o.verts;
 			st.detail_tri_count += o.detail_tris;
+			densest = std::max(densest, o.polys);
 			total += sizeof(format::tile_header) + (size_t)format::padded((s32)o.data.size());
 		}
 		// What the user has to hear about even when the bake succeeds (bake_notes_copy -> the result message).
@@ -885,16 +964,11 @@ namespace vortex::navigation {
 				"above y = %.1f.", cut, column_cells, k_max_cell_height, first_cut % job.tiles_x, first_cut / job.tiles_x,
 				t.geometry_height, t.cut_above);
 		}
-		if (failed > 0)
-		{
-			const auto& t = job.out[(size_t)first_failed];
-			note("%d tile(s) failed to build and have no navmesh; tile (%d, %d): %s", failed,
-				first_failed % job.tiles_x, first_failed / job.tiles_x, t.error.c_str());
-		}
+		if (!failed.empty()) report_failed_tiles(job, failed);
 		if (st.tile_count == 0)
 		{
-			log("bake: nothing walkable (%d triangles, %d boxes, %d failed tiles)", st.input_triangles, st.input_boxes, failed);
-			return failed > 0 ? bake_error_failed : bake_error_empty;
+			log("bake: nothing walkable (%d triangles, %d boxes, %d failed tiles)", st.input_triangles, st.input_boxes, (int)failed.size());
+			return !failed.empty() ? bake_error_failed : bake_error_empty;
 		}
 		if (total > (size_t)0x7fffffff) return bake_error_failed;
 		for (int k = 0; k < 3; ++k) { st.bounds_min[k] = job.bmin[k]; st.bounds_max[k] = job.bmax[k]; }
@@ -908,8 +982,8 @@ namespace vortex::navigation {
 		hdr.orig[0] = job.bmin[0]; hdr.orig[1] = job.bmin[1]; hdr.orig[2] = job.bmin[2];
 		hdr.tile_width = job.tile_world;
 		hdr.tile_height = job.tile_world;
-		hdr.max_tiles = 1 << tile_bits;
-		hdr.max_polys = 1 << poly_bits;
+		hdr.max_tiles = st.tile_count;   // #517: the tile pool of dtNavMesh; with 64-bit refs no ref bits come from it
+		hdr.max_polys = densest;         // the most polygons in one tile (informational, NavigationFormat.h)
 		hdr.tile_count = st.tile_count;
 		size_t off = sizeof(hdr);
 		for (s32 i = 0; i < tile_total; ++i)
@@ -932,9 +1006,9 @@ namespace vortex::navigation {
 			g_result.swap(blob);
 		}
 		if (out_stats) *out_stats = st;
-		log("baked %d/%d tiles, %d polygons, %d vertices from %d triangles + %d boxes in %.1f ms (%d bytes%s)",
-			st.tile_count, tile_total, st.poly_count, st.vert_count, st.input_triangles, st.input_boxes, st.bake_ms, st.data_size,
-			failed > 0 ? ", some tiles failed" : "");
+		log("baked %d/%d tiles, %d polygons (at most %d in one tile), %d vertices from %d triangles + %d boxes in %.1f ms (%d bytes%s)",
+			st.tile_count, tile_total, st.poly_count, densest, st.vert_count, st.input_triangles, st.input_boxes, st.bake_ms, st.data_size,
+			!failed.empty() ? ", some tiles failed" : "");
 		return st.data_size;
 	}
 
