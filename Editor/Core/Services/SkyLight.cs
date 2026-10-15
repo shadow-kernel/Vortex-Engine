@@ -300,8 +300,31 @@ namespace Editor.Core.Services
 
         // ---------------------------------------------------------------- pictures
 
-        /// <summary>A linear RGB equirect from a Radiance .hdr (RGBE, RLE) or, for other formats, from the 8-bit decode (sRGB → linear).</summary>
+        // the last picture decoded, held weakly: a new sky's light, haze and reflection ask for it one after the other and share
+        // one decode (a 4k .hdr takes a good part of a second), but it is not kept alive (~100 MB as floats)
+        private static readonly object _lastLock = new object();
+        private static string _lastKey;
+        private static WeakReference<float[]> _lastRgb;
+        private static int _lastW, _lastH;
+        /// <summary>Pictures decoded so far (diagnostics, tests).</summary>
+        internal static int Decodes;
+
+        /// <summary>A linear RGB equirect from a Radiance .hdr (RGBE, RLE) or, for other formats, from the 8-bit decode (sRGB → linear).
+        /// The array is shared with the other callers that ask for the same picture: read it, do not change it.</summary>
         public static bool LoadEquirect(string path, out float[] rgb, out int w, out int h)
+        {
+            string key = path + "|" + (File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks : 0);
+            lock (_lastLock)
+            {
+                if (key == _lastKey && _lastRgb != null && _lastRgb.TryGetTarget(out var shared)) { rgb = shared; w = _lastW; h = _lastH; return true; }
+            }
+            if (!Decode(path, out rgb, out w, out h)) return false;
+            System.Threading.Interlocked.Increment(ref Decodes);
+            lock (_lastLock) { _lastKey = key; _lastRgb = new WeakReference<float[]>(rgb); _lastW = w; _lastH = h; }
+            return true;
+        }
+
+        private static bool Decode(string path, out float[] rgb, out int w, out int h)
         {
             rgb = null; w = h = 0;
             try

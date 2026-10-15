@@ -889,6 +889,7 @@ namespace Editor.Core.Services
         public void SubmitScene(Data.Scene scene)
         {
             if (scene == null || scene.Entities == null) return;
+            ReapEnvironmentTextures();   // a cross-fade's swapped-out reflection maps, once no frame reads them (#464)
 
             // Clear and submit all lights first
             SubmitSceneLights(scene);
@@ -2777,6 +2778,7 @@ namespace Editor.Core.Services
             string key = m != null ? m.Key : "";
             if (key == _envKey) return;
             _envKey = key;
+            ReleaseBlendedEnvironmentMap();   // a plain map — or none — replaces a cross-fade's blended one
             if (m == null) { VortexAPI.ApplyEnvironmentMap(-1, 0); return; }
             long id;
             if (!_envTextures.TryGetValue(key, out id) || id < 0)
@@ -2786,7 +2788,6 @@ namespace Editor.Core.Services
             }
             int mips = 1 + (int)Math.Floor(Math.Log(Math.Max(m.Width, m.Height), 2.0));
             VortexAPI.ApplyEnvironmentMap(id, id >= 0 ? mips : 0);
-            ReleaseBlendedEnvironmentMap();
         }
 
         // ---- the sky's cross-fade (#464): a weighted blend of skies drawn, lit and mirrored together ----
@@ -2815,6 +2816,7 @@ namespace Editor.Core.Services
         /// runtime every tick.</summary>
         public static void TickSkyFade(float dt)
         {
+            Instance.ReapEnvironmentTextures();   // a shipped game may not re-submit during a fade
             if (!SkyFade.Active) return;
             if (SkyFade.Tick(dt)) { RuntimeDirty = true; return; }
             if (!SkyFade.Manual) Instance.ApplySkyFade(Instance._lastSkybox);
@@ -2840,7 +2842,9 @@ namespace Editor.Core.Services
         /// so ambient light and reflections follow the sky without a pop.</summary>
         private void ApplySkyFade(Skybox skybox)
         {
-            var layers = SkyFade.Current(ScriptSky ?? ComponentSky(skybox));
+            // a picture that cannot be loaded leaves the blend (its weight to the skies that can be shown, one warning per
+            // file): it would draw nothing and darken the sky light, the haze and the reflection towards black
+            var layers = SkyFade.Without(SkyFade.Current(ScriptSky ?? ComponentSky(skybox)), CanShowSky);
             if (layers.Count == 0) return;
             var plan = SkyFade.Plan(layers);
             var b = plan.Base.Sky;
@@ -2867,32 +2871,50 @@ namespace Editor.Core.Services
             }
             _skyBlendOn = true;
 
-            // the sky light: SH projection is linear, so the blend's coefficients are the weighted sum of the skies' own
+            // the sky light: SH projection is linear, so the blend's coefficients are the weighted sum of the skies' own — over
+            // the skies whose light is known (renormalised), as the haze's horizon
             var c = new SkyLight.Coefficients();
             var key = new System.Text.StringBuilder("fade");
-            float hr = 0f, hg = 0f, hb = 0f; bool horizon = false;
+            float hr = 0f, hg = 0f, hb = 0f, cw = 0f, hw = 0f;
             foreach (var l in layers)
             {
                 var lc = SkyCoefficients(l.Sky);
                 if (lc != null)
                 {
                     for (int k = 0; k < 27; k++) c.Sh[k] += lc.Sh[k] * l.Weight;
+                    cw += l.Weight;
                     key.Append('|').Append(lc.Key).Append('@').Append(l.Weight.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture));
                 }
                 float r, g, bl;
-                if (SkyHorizon(l.Sky, out r, out g, out bl)) { hr += r * l.Weight; hg += g * l.Weight; hb += bl * l.Weight; horizon = true; }
+                if (SkyHorizon(l.Sky, out r, out g, out bl)) { hr += r * l.Weight; hg += g * l.Weight; hb += bl * l.Weight; hw += l.Weight; }
             }
-            c.Key = key.ToString();
-            SkyHaze.SetHorizon(horizon, hr, hg, hb);
+            if (cw > 1e-6f) { if (cw < 0.9999f) for (int k = 0; k < 27; k++) c.Sh[k] /= cw; c.Key = key.ToString(); }
+            else c = null;   // no sky light known: off, as for a plain sky without one
+            if (hw > 1e-6f && hw < 0.9999f) { hr /= hw; hg /= hw; hb /= hw; }
+            SkyHaze.SetHorizon(hw > 1e-6f, hr, hg, hb);
             try
             {
                 var st = Data.ProjectData.Current?.ActiveScene?.Settings;
-                if (st != null && st.BounceStrength > 0f)
+                if (c != null && st != null && st.BounceStrength > 0f)
                     c = SkyLight.WithGroundBounce(c, st.BounceStrength, st.BounceR, st.BounceG, st.BounceB, _sunR, _sunG, _sunB, _sunIntensity, _sunDirY);
             }
             catch { }
             PushSkyLight(c);
             PushBlendedEnvironmentMap(layers, baseRot);
+        }
+
+        private readonly HashSet<string> _skyFadeWarned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Whether the sky pass can show a sky of a cross-fade: a gradient always, a picture when it loads (warned
+        /// about once per file when it does not).</summary>
+        private bool CanShowSky(SkyOverride s)
+        {
+            if (s == null || string.IsNullOrEmpty(s.TexturePath)) return s != null;
+            string full = SkyFullPath(s.TexturePath);
+            if (SkyTextureId(full) >= 0) return true;
+            if (_skyFadeWarned.Add(full))
+                try { ConsoleService.Instance.LogWarning("Sky: '" + s.TexturePath + "' cannot be loaded; the cross-fade leaves it out (the sky, its light and reflections blend between the others)"); } catch { }
+            return false;
         }
 
         /// <summary>One sky's SH9 light (its picture's, turned by its yaw, or its gradient's), cached by SkyLight.</summary>
@@ -2945,8 +2967,9 @@ namespace Editor.Core.Services
 
         /// <summary>The reflection map of a blend of skies. The lit shaders have one sampler slot for it (Metal allows 16 per
         /// stage and the standard shader uses all of them), so the blend is baked on the CPU instead: each sky's own map turned to
-        /// the base sky's yaw (the shaders add that one via env_ground.w), weighted, summed — in steps of 1/32 of the weights (a
-        /// step changes a reflection by ~3 %; an 8 s fade re-bakes ~30 times, each a few ms on a worker thread).</summary>
+        /// the base sky's yaw (the shaders add that one via env_ground.w), weighted, summed — in steps of 1/64 of the weights (a
+        /// step changes a reflection by ~1.5 %; an 8 s fade re-bakes ~60 times, each a few ms on a worker thread). Skies without
+        /// a map leave the sum, renormalised over the rest; with none at all there is no reflection map, as for such a plain sky.</summary>
         private void PushBlendedEnvironmentMap(List<SkyFade.Layer> layers, float baseRot)
         {
             var key = new System.Text.StringBuilder("rblend|").Append(baseRot.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
@@ -2954,7 +2977,7 @@ namespace Editor.Core.Services
                 key.Append('|').Append(l.Sky.TexturePath ?? "grad:" + string.Join(",", l.Sky.Gradient ?? new float[0]))
                    .Append('/').Append(l.Sky.Exposure.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture))
                    .Append('/').Append(l.Sky.RotationDeg.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture))
-                   .Append('@').Append(Math.Round(l.Weight * 32f));
+                   .Append('@').Append(Math.Round(l.Weight * 64f));
             string k = key.ToString();
             if (k == _envKey) return;
             if (_envBlendJob != null)
@@ -2967,12 +2990,15 @@ namespace Editor.Core.Services
             }
             // the skies' own maps on this thread (cached; the first look at a picture decodes it, as a plain sky switch does)
             var parts = new List<(SkyLight.ReflectionMap map, float weight, float shiftDeg)>();
+            float sum = 0f;
             foreach (var l in layers)
             {
                 var m = SkyReflection(l.Sky, ReflectionBlendWidth);
-                if (m != null) parts.Add((m, l.Weight, string.IsNullOrEmpty(l.Sky.TexturePath) ? 0f : l.Sky.RotationDeg - baseRot));
+                if (m != null) { parts.Add((m, l.Weight, string.IsNullOrEmpty(l.Sky.TexturePath) ? 0f : l.Sky.RotationDeg - baseRot)); sum += l.Weight; }
             }
-            if (parts.Count == 0) return;
+            if (parts.Count == 0 || !(sum > 1e-6f)) { PushEnvironmentMap(null); return; }
+            if (sum < 0.9999f)
+                for (int i = 0; i < parts.Count; i++) parts[i] = (parts[i].map, parts[i].weight / sum, parts[i].shiftDeg);
             _envBlendJobKey = k;
             _envBlendJob = System.Threading.Tasks.Task.Run(() => SkyLight.BlendReflections(parts, ReflectionBlendWidth));
         }
@@ -2984,18 +3010,43 @@ namespace Editor.Core.Services
             if (id < 0) return;
             int mips = 1 + (int)Math.Floor(Math.Log(Math.Max(m.Width, m.Height), 2.0));
             VortexAPI.ApplyEnvironmentMap(id, mips);
-            if (_envBlendTexture >= 0) { try { VortexAPI.DeleteTexture(_envBlendTexture); } catch { } }   // after the new one is bound
+            RetireEnvironmentTexture(_envBlendTexture);   // a frame in flight may still read it
             _envBlendTexture = id;
             _envKey = key;
         }
 
-        /// <summary>A plain reflection map is bound again: the last blended one goes, and a bake still running is dropped.</summary>
+        /// <summary>A plain reflection map (or none) is bound again: the last blended one goes, and a bake still running is dropped.</summary>
         private void ReleaseBlendedEnvironmentMap()
         {
             _envBlendJob = null;
-            if (_envBlendTexture < 0) return;
-            try { VortexAPI.DeleteTexture(_envBlendTexture); } catch { }
+            RetireEnvironmentTexture(_envBlendTexture);
             _envBlendTexture = -1;
+        }
+
+        // Blended reflection maps swapped out while frames in flight may still read them. DX12 frees a texture at once (SDL GPU
+        // only once the GPU is done with it), so they wait here — as Gi.RadianceCache's volumes do — until eight submits or
+        // fade ticks (at least four frames: the play loop runs both every frame) and a quarter of a second have passed.
+        private readonly List<(long id, int tick, long time)> _envGraveyard = new List<(long, int, long)>();
+        private int _envTick;
+
+        private void RetireEnvironmentTexture(long id)
+        {
+            if (id >= 0) _envGraveyard.Add((id, _envTick, System.Diagnostics.Stopwatch.GetTimestamp()));
+        }
+
+        /// <summary>Once per scene submit and per fade tick: frees the retired reflection maps no frame can read any more.</summary>
+        private void ReapEnvironmentTextures()
+        {
+            _envTick++;
+            if (_envGraveyard.Count == 0) return;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp(), quarter = System.Diagnostics.Stopwatch.Frequency / 4;
+            for (int i = _envGraveyard.Count - 1; i >= 0; i--)
+            {
+                var e = _envGraveyard[i];
+                if (_envTick - e.tick <= 8 || now - e.time < quarter) continue;
+                try { VortexAPI.DeleteTexture(e.id); } catch { }
+                _envGraveyard.RemoveAt(i);
+            }
         }
 
         private void SubmitEntityLightsRecursive(GameEntity entity)

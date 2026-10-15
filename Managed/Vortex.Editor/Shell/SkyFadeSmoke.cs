@@ -18,14 +18,16 @@ namespace VortexEditor.Shell
     /// sun, high above the scene, three things are sampled: the sky straight up, a mirror floor (the reflection map) and a
     /// white cube lit only by the sky light (SH9). Sky.SetTexture(blue, fade 4 s) from a red picture: the first frame is
     /// still red (no pop), half way all three are a mix of red and blue, at the end blue. A gradient fades into a picture the
-    /// same way, and Sky.SetBlend(red, blue, 0.5) holds the half-way mix. The fade runs on game time; the check advances it
-    /// with the runtime's own tick.</summary>
+    /// same way, and Sky.SetBlend(red, blue, 0.5) holds the half-way mix. A fade to a picture that cannot be loaded leaves it
+    /// out: three quarters through, the sky, its light and its reflection are still red, not fading towards black. The fade
+    /// runs on game time; the check advances it with the runtime's own tick.</summary>
     internal static class SkyFadeSmoke
     {
         [ModuleInitializer]
         internal static void Register() => SmokeRegistry.Add("sky crossfade", Run);
 
         private static bool Reddish((int r, int g, int b) c) => c.r > c.b + 30;
+        private static int Lum((int r, int g, int b) c) => (c.r * 2126 + c.g * 7152 + c.b * 722) / 10000;
         private static bool Bluish((int r, int g, int b) c) => c.b > c.r + 30;
         private static bool Mixed((int r, int g, int b) c, (int r, int g, int b) a, (int r, int g, int b) b)
             => c.r < a.r - 15 && c.r > b.r + 15 && c.b > a.b + 15 && c.b < b.b - 15;   // strictly between the two ends in red and blue
@@ -110,9 +112,19 @@ namespace VortexEditor.Shell
                 var held = await Probe(cam, "blend");
                 float p3 = Vortex.Sky.FadeProgress;
 
+                // a fade to a picture that cannot be loaded: it leaves the blend (with a warning), so three quarters through the
+                // sky, its light and its reflection are still the red one's instead of fading towards black
+                Vortex.Sky.SetTexture(redRel);
+                EditorViewportSession.RequestResubmit();
+                await SmokeRegistry.Settle(300);
+                Vortex.Sky.SetTexture("Assets/Textures/SmokeFadeMissing.png", 1f, 0f, 4f);
+                SceneRenderService.TickSkyFade(3f);
+                var missing = await Probe(cam, "missing");
+
                 log.Log("sky crossfade: red " + Rgb3(red) + " | fade start (progress " + p0.ToString("0.00") + ") " + Rgb3(start)
                     + " | half (" + p1.ToString("0.00") + ") " + Rgb3(half) + " | end (" + p2.ToString("0.00") + ") " + Rgb3(blue)
-                    + " | gradient -> picture half way: sky " + CameraSkySmoke.Rgb(gradHalf) + " | SetBlend 0.5 (" + p3.ToString("0.00") + ") " + Rgb3(held));
+                    + " | gradient -> picture half way: sky " + CameraSkySmoke.Rgb(gradHalf) + " | SetBlend 0.5 (" + p3.ToString("0.00") + ") " + Rgb3(held)
+                    + " | 3/4 into a fade to a missing picture " + Rgb3(missing));
                 bool ok = true;
                 void Check(bool c, string what) { if (!c) { ok = false; log.LogError("sky crossfade: " + what); } }
                 Check(Reddish(red.sky) && Reddish(red.mirror) && Reddish(red.cube), "the red picture does not show (sky / mirror / sky-lit cube)");
@@ -124,6 +136,8 @@ namespace VortexEditor.Shell
                 Check(p2 == 1f && Bluish(blue.sky) && Bluish(blue.mirror) && Bluish(blue.cube), "after the fade the blue picture does not show everywhere (or FadeProgress is not 1)");
                 Check(gradHalf.g > 50 && gradHalf.b > 50 && gradHalf.g < 200 && gradHalf.b < 200, "a gradient does not cross-fade into a picture");
                 Check(Math.Abs(p3 - 0.5f) < 1e-3f && Mixed(held.sky, red.sky, blue.sky) && Mixed(held.mirror, red.mirror, blue.mirror), "Sky.SetBlend(red, blue, 0.5) does not hold the mix");
+                Check(Reddish(missing.sky) && Reddish(missing.mirror) && Reddish(missing.cube) && Lum(missing.cube) > Lum(red.cube) * 0.8 && Lum(missing.mirror) > Lum(red.mirror) * 0.8,
+                    "a fade to a picture that cannot be loaded darkens the sky light or the reflection (it should leave the blend)");
                 return ok;
             }
             finally

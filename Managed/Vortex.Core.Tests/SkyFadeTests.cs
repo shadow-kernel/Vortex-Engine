@@ -105,6 +105,77 @@ namespace VortexTests
         }
 
         [Test]
+        public static void AFourthSkyComesInWithoutAPop(TestContext t)
+        {
+            try
+            {
+                // a blend of three skies (a fade during a fade during a fade), then a fade to a fourth: the pass draws three at
+                // most, so the lightest fades out first and the fourth comes in after it — every weight moves smoothly
+                SkyFade.Start(new List<SkyFade.Layer> { new SkyFade.Layer(Pic("a"), 0.5f), new SkyFade.Layer(Pic("b"), 0.3f), new SkyFade.Layer(Pic("c"), 0.2f) }, 1f);
+                var prev = SkyFade.Current(Pic("d"));
+                t.True(Near(WeightOf(prev, "a"), 0.5f) && Near(WeightOf(prev, "c"), 0.2f) && WeightOf(prev, "d") == 0f, "it starts exactly from the blend");
+                float worst = 0f; bool cGoneFirst = true, three = true;
+                for (int i = 0; i < 120 && SkyFade.Active; i++)
+                {
+                    SkyFade.Tick(0.01f);
+                    var now = SkyFade.Current(Pic("d"));
+                    three &= now.Count <= SkyFade.MaxLayers;
+                    if (WeightOf(now, "d") > 0f && WeightOf(now, "c") > 0f) cGoneFirst = false;
+                    foreach (var s in new[] { "a", "b", "c", "d" }) worst = Math.Max(worst, Math.Abs(WeightOf(now, s) - WeightOf(prev, s)));
+                    prev = now;
+                }
+                t.True(three, "never more than three skies at once");
+                t.True(cGoneFirst, "the lightest sky has left before the fourth comes in");
+                t.True(worst < 0.03f, "no weight jumps between two 1 % steps (the largest step: " + worst.ToString("0.000") + "; it was 0.167)");
+                t.True(!SkyFade.Active && Near(WeightOf(SkyFade.Current(Pic("d")), "d"), 1f), "the fourth sky alone at the end");
+            }
+            finally { SkyFade.Cancel(); }
+        }
+
+        [Test]
+        public static void APictureThatCannotLoadLeavesTheBlend(TestContext t)
+        {
+            var layers = new List<SkyFade.Layer> { new SkyFade.Layer(Pic("day.hdr"), 0.6f), new SkyFade.Layer(Pic("missing.hdr"), 0.4f) };
+            Func<SkyOverride, bool> loads = s => s.TexturePath != "missing.hdr";
+            var kept = SkyFade.Without(layers, loads);
+            t.True(kept.Count == 1 && Near(WeightOf(kept, "day.hdr"), 1f), "its weight goes to the sky that can be shown: no fade to black");
+            var all = new List<SkyFade.Layer> { new SkyFade.Layer(Pic("day.hdr"), 1f) };
+            t.True(ReferenceEquals(SkyFade.Without(all, loads), all), "nothing to leave out: the list as it is");
+            t.Equal(0, SkyFade.Without(new List<SkyFade.Layer> { new SkyFade.Layer(Pic("missing.hdr"), 1f) }, loads).Count, "nothing can be shown: an empty list");
+            var grad = SkyFade.Without(new List<SkyFade.Layer> { new SkyFade.Layer(Grad(0, 0, 1), 0.5f), new SkyFade.Layer(Pic("missing.hdr"), 0.5f) }, loads);
+            t.True(grad.Count == 1 && grad[0].Sky.Gradient != null && Near(grad[0].Weight, 1f), "a gradient always shows");
+        }
+
+        [Test]
+        public static void ANewPictureIsDecodedOnce(TestContext t)
+        {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex-skylight-test-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(dir);
+            try
+            {
+                string hdr = System.IO.Path.Combine(dir, "sky.hdr");
+                WriteHdr(hdr, 64, 32);
+                int before = SkyLight.Decodes;
+                t.True(SkyLight.LoadEquirect(hdr, out var first, out int w, out int h) && w == 64 && h == 32, "the picture reads");
+                t.True(SkyLight.LoadEquirect(hdr, out var again, out _, out _), "and again");
+                t.True(ReferenceEquals(first, again) && SkyLight.Decodes == before + 1, "the sky light, haze and reflection of a new picture share one decode");
+                System.IO.File.SetLastWriteTimeUtc(hdr, DateTime.UtcNow.AddMinutes(1));
+                t.True(SkyLight.LoadEquirect(hdr, out var changed, out _, out _) && !ReferenceEquals(first, changed) && SkyLight.Decodes == before + 2, "a changed file is read anew");
+                GC.KeepAlive(first);
+            }
+            finally { try { System.IO.Directory.Delete(dir, true); } catch { } }
+        }
+
+        // a flat Radiance picture (uncompressed RGBE scanlines)
+        private static void WriteHdr(string path, int w, int h)
+        {
+            using var fs = System.IO.File.Create(path);
+            var head = System.Text.Encoding.ASCII.GetBytes("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y " + h + " +X " + w + "\n");
+            fs.Write(head, 0, head.Length);
+            for (int i = 0; i < w * h; i++) fs.Write(new byte[] { 77, 154, 255, 128 }, 0, 4);
+        }
+
+        [Test]
         public static void SetBlendIsDrivenByTheScript(TestContext t)
         {
             var sky = SceneRenderService.ScriptSky;
