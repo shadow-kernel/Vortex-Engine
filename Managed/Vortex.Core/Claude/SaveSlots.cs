@@ -130,7 +130,10 @@ namespace Editor.Core.Claude
             string file = FileOf(slot, gameSaves);
             var values = IsLive(slot, gameSaves) ? Vortex.Save.LiveValues() : Vortex.Save.ReadFile(file);
             if (!File.Exists(file) && values.Count == 0) return null;
-            string name = AutoPrefix + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + "-" + tool;
+            // a name of its own: two calls in one millisecond (a restore of an automatic snapshot backs the slot up first) must
+            // never write into the snapshot the other one made — or is about to read
+            string stem = AutoPrefix + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + "-" + tool, name = stem;
+            for (int n = 2; Directory.Exists(Path.Combine(SnapshotsFolder, name)); n++) name = stem + "-" + n;
             Snapshot(slot, gameSaves, name, out _);
             var autos = Snapshots().Where(n => n.StartsWith(AutoPrefix, StringComparison.Ordinal) && n != keep).OrderBy(n => n, StringComparer.Ordinal).ToList();
             for (int i = 0; i < autos.Count - AutoKeep; i++)

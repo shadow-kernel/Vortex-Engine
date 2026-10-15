@@ -257,14 +257,23 @@ namespace VortexTests
 
             // only the newest automatic snapshots are kept — a named one never goes
             SaveSlots.Snapshot(0, true, "mine", out _);
-            for (int i = 0; i < SaveSlots.AutoKeep + 5; i++)
+            var names = new List<string>();
+            for (int i = 0; i < SaveSlots.AutoKeep + 5; i++)   // as fast as it goes: many land in one millisecond
             {
-                SaveSlots.Write(0, true, new Dictionary<string, string> { ["n"] = "i:" + i }, replace: false, out _, out _);
-                System.Threading.Thread.Sleep(2);   // distinct millisecond stamps
+                SaveSlots.Write(0, true, new Dictionary<string, string> { ["n"] = "i:" + i }, replace: false, out _, out string b);
+                names.Add(b);
             }
+            t.Equal(names.Count, names.Distinct().Count(), "every automatic snapshot has a name of its own, also within one millisecond");
             var snaps = SaveSlots.Snapshots();
             t.Equal(SaveSlots.AutoKeep, snaps.Count(s => s.StartsWith(SaveSlots.AutoPrefix, StringComparison.Ordinal)), "the newest " + SaveSlots.AutoKeep + " automatic snapshots: " + string.Join(", ", snaps));
+            t.True(snaps.Contains(names[names.Count - 1]) && !snaps.Contains(names[0]), "the oldest went, the newest stayed");
             t.True(snaps.Contains("mine"), "a named snapshot is not pruned");
+
+            // restoring an automatic snapshot backs the slot up first — into a snapshot of its own, never the one being read
+            SaveSlots.Write(0, true, new Dictionary<string, string> { ["n"] = "i:100" }, replace: false, out _, out _);
+            SaveSlots.Restore(0, true, names[names.Count - 1], out _, out string first);
+            SaveSlots.Restore(0, true, first, out _, out string second);
+            t.True(first != second && SaveSlots.Read(0, true, out _)["n"] == "i:100", "the restore's own backup brings n = 100 back: " + first + " / " + second);
         }
     }
 }
