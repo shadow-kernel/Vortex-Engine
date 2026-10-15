@@ -109,9 +109,10 @@ namespace VortexEditor.Claude.Tools
         [McpServerTool(Name = "navmesh_info", ReadOnly = true, Idempotent = true)]
         [Description("The scene's navmesh: whether <Scene>.vnav exists and is the loaded one, what it holds (polygons, tiles, vertices, detail " +
                      "triangles, bounds, the triangles and solid boxes it was baked from, its size), the settings it was baked with, when it was baked " +
-                     "and the scene file was saved — and stale: whether the scene's static geometry changed since the bake (walls moved, floors or props " +
-                     "added or removed), with the reason; absent when it cannot be told (a navmesh baked by an older editor, or play mode). Collects the scene's " +
-                     "geometry to compare, like a bake; nothing is baked or loaded.")]
+                     "and the scene file was saved — and stale: whether the scene's static geometry changed since the bake, entity by entity in any order " +
+                     "(moved or resized by more than a millimetre, turned, sculpted, another model file; added or removed), with the entities named in the " +
+                     "reason; absent when it cannot be told (a navmesh baked by an older editor, or play mode). Collects the scene's geometry to compare, " +
+                     "like a bake; nothing is baked or loaded.")]
         public static object NavmeshInfo([Description("Scene name (default: the active scene)")] string scene = null)
         {
             var s = SceneOf(scene);

@@ -18,7 +18,8 @@ namespace VortexEditor.Claude
     /// <summary>
     /// Editor smoke check "mcp navmesh" (#449): a floor and a wall (box colliders) far from the template's own level; bake_navmesh
     /// writes and loads &lt;Scene&gt;.vnav and a path runs around the wall; navmesh_info reports the bake (polygons, tiles, bounds,
-    /// settings) as current; the wall moves out of the way and navmesh_info says stale; a rebake with overrides (agent radius,
+    /// settings) as current; a nudge under a millimetre keeps it current, the wall moved out of the way makes it stale (naming the
+    /// wall, not the floor); a rebake with overrides (agent radius,
     /// colliders only) stores them, is current again and the path goes straight. A bad value names its range, a bake while
     /// playing is refused, clear_navmesh deletes and unloads it. The scene's own .vnav is put back afterwards.
     /// </summary>
@@ -78,10 +79,15 @@ namespace VortexEditor.Claude
                 var max = info["bounds"]?["max"] as JsonArray;
                 if (max == null || (double)max[0] < 305 || (double)max[2] < 305) return Fail("the bounds miss the test level: " + info["bounds"]?.ToJsonString());
 
-                // ================= the wall moves out of the way: stale until baked again
+                // ================= a nudge under a millimetre is no change; the wall moved out of the way is — named, alone
+                await C("set_transform", new JsonObject { ["entity"] = wall, ["position"] = new JsonArray(300.0004, 1, 300) });
+                var nudged = await C("navmesh_info", new JsonObject());
+                if ((bool?)nudged["stale"] != false) return Fail("a 0.4 mm nudge must not make the navmesh stale: " + nudged.ToJsonString());
                 await C("set_transform", new JsonObject { ["entity"] = wall, ["position"] = new JsonArray(300, 1, 330) });
                 var moved = await C("navmesh_info", new JsonObject());
-                if ((bool?)moved["stale"] != true || !((string)moved["stale_reason"] ?? "").Contains("changed")) return Fail("a moved wall must make the navmesh stale: " + moved.ToJsonString());
+                string reason = (string)moved["stale_reason"] ?? "";
+                if ((bool?)moved["stale"] != true || !reason.Contains("changed since the bake: 'Mcp Nav Wall'") || reason.Contains("Floor"))
+                    return Fail("a moved wall must make the navmesh stale, naming the wall only: " + moved.ToJsonString());
 
                 var rebake = await C("bake_navmesh", new JsonObject { ["agent_radius"] = 0.3, ["sources"] = new JsonArray("colliders") });
                 var after = await C("navmesh_info", new JsonObject());

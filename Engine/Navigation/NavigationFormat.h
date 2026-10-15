@@ -25,8 +25,9 @@ namespace vortex::navigation::format {
 		s32 max_tiles;
 		s32 max_polys;
 		s32 tile_count;
-		s32 reserved[4];           // 0-1: the editor's fingerprint of the bake input, 2: "VFP1" when set (NavigationService,
-		                           // #449: a stale navmesh is told from the scene) - ignored here; a bake writes them zeroed
+		s32 reserved[4];           // 0: length of the editor's record behind the tiles, 1: its entity count, 2: "VNE1" when
+		                           // set (NavigationService, #449: what a bake read, to tell a stale navmesh) - ignored here,
+		                           // like the bytes after the last tile; a bake writes them zeroed
 	};
 
 	struct tile_header
