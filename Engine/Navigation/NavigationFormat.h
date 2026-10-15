@@ -25,7 +25,8 @@ namespace vortex::navigation::format {
 		s32 max_tiles;
 		s32 max_polys;
 		s32 tile_count;
-		s32 reserved[4];
+		s32 reserved[4];           // 0-1: the editor's fingerprint of the bake input, 2: "VFP1" when set (NavigationService,
+		                           // #449: a stale navmesh is told from the scene) - ignored here; a bake writes them zeroed
 	};
 
 	struct tile_header

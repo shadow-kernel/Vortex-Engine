@@ -55,6 +55,22 @@ namespace Editor.Core.Services.AI
         public readonly List<string> Notes = new List<string>();
     }
 
+    /// <summary>A scene's .vnav as its header describes it (#449) — see <see cref="NavigationService.ReadFileInfo"/>.</summary>
+    public sealed class NavMeshFileInfo
+    {
+        public string Path;
+        public long Size;
+        /// <summary>When the file was written (the bake), UTC.</summary>
+        public DateTime BakedUtc;
+        /// <summary>The format version; -1 when the file is no navmesh this engine knows.</summary>
+        public int Version;
+        public NavBakeSettings Settings;
+        public NavBakeStats Stats;
+        /// <summary><see cref="NavigationService.GeometryFingerprint"/> of the geometry it was baked from; null for a navmesh
+        /// baked before bakes recorded it.</summary>
+        public ulong? InputFingerprint;
+    }
+
     /// <summary>Outcome of a bake.</summary>
     public sealed class NavBakeResult
     {
@@ -296,6 +312,7 @@ namespace Editor.Core.Services.AI
             int got = VortexAPI.NavGetBakeResult(data, size);
             try { VortexAPI.NavClearBakeResult(); } catch { }
             if (got != size) { r.Error = -4; r.Message = "Bake result could not be read back."; return r; }
+            StampFingerprint(data, GeometryFingerprint(geometry));   // what it was baked from: navmesh_info tells a stale one (#449)
             r.Data = data;
             r.Success = true;
             r.Message = string.Format(System.Globalization.CultureInfo.InvariantCulture,
@@ -354,6 +371,109 @@ namespace Editor.Core.Services.AI
                 case -8: return "Another bake is still running.";
                 default: return "Bake failed (see the Console / log).";
             }
+        }
+
+        // ================================================================================================ the baked file (#449)
+
+        // The .vnav header (Engine/Navigation/NavigationFormat.h): magic, version, settings (23 × 4 bytes), stats (16 × 4),
+        // twelve more words, the last four reserved. Reserved words 0–1 carry the fingerprint of the geometry the bake read,
+        // word 2 says they do — the engine ignores them, so a stamped navmesh loads everywhere.
+        internal const int HeaderSize = 212;
+        private const int SettingsOffset = 8, StatsOffset = 100, ReservedOffset = 196;
+        private const uint NavMagic = 0x56414E56u, FingerprintTag = 0x31504656u;   // "VNAV", "VFP1"
+
+        /// <summary>A fingerprint of a bake's input (#449): every vertex, triangle, box and area, positions to the millimetre — so
+        /// the floating-point noise of another machine reads as the same level, and a wall moved by a centimetre does not.</summary>
+        public static ulong GeometryFingerprint(NavBakeGeometry g)
+        {
+            ulong h = 14695981039346656037UL;   // FNV-1a
+            void Mix(long v) { for (int i = 0; i < 8; i++) { h ^= (byte)(v >> (8 * i)); h *= 1099511628211UL; } }
+            static long Q(float v) => float.IsFinite(v) ? (long)Math.Round(v * 1000.0) : long.MinValue;
+            if (g == null) return h;
+            Mix(g.TriangleCount); Mix(g.BoxCount);
+            foreach (var v in g.Verts) Mix(Q(v));
+            foreach (var t in g.Tris) Mix(t);
+            if (g.TriAreas != null) foreach (var a in g.TriAreas) Mix(a); else Mix(-1);
+            foreach (var v in g.Boxes) Mix(Q(v));
+            if (g.BoxAreas != null) foreach (var a in g.BoxAreas) Mix(a); else Mix(-1);
+            return h;
+        }
+
+        internal static void StampFingerprint(byte[] data, ulong fingerprint)
+        {
+            if (data == null || data.Length < HeaderSize) return;
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(ReservedOffset), fingerprint);
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(ReservedOffset + 8), FingerprintTag);
+        }
+
+        /// <summary>What a .vnav header says (null when it is none): version, settings, stats and the input fingerprint.</summary>
+        internal static NavMeshFileInfo ParseHeader(byte[] header)
+        {
+            if (header == null || header.Length < HeaderSize || BitConverter.ToUInt32(header, 0) != NavMagic) return null;
+            var info = new NavMeshFileInfo { Version = BitConverter.ToInt32(header, 4) };
+            info.Settings = Read<NavBakeSettings>(header, SettingsOffset);
+            info.Stats = Read<NavBakeStats>(header, StatsOffset);
+            if (info.Settings.SourceFlags == 0) info.Settings.SourceFlags = (int)NavGeometrySource.Default;
+            if (BitConverter.ToUInt32(header, ReservedOffset + 8) == FingerprintTag) info.InputFingerprint = BitConverter.ToUInt64(header, ReservedOffset);
+            return info;
+        }
+
+        private static T Read<T>(byte[] data, int offset) where T : struct
+        {
+            var h = System.Runtime.InteropServices.GCHandle.Alloc(data, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try { return System.Runtime.InteropServices.Marshal.PtrToStructure<T>(new IntPtr(h.AddrOfPinnedObject().ToInt64() + offset)); }
+            finally { h.Free(); }
+        }
+
+        /// <summary>The scene's navmesh file as its header describes it, or null when the scene has none (#449). Reads the header
+        /// only, no navmesh is loaded.</summary>
+        public static NavMeshFileInfo ReadFileInfo(Scene scene)
+        {
+            string path = NavMeshPathFor(scene);
+            if (path == null || !File.Exists(path)) return null;
+            var header = new byte[HeaderSize];
+            int got = 0;
+            try
+            {
+                using var fs = File.OpenRead(path);
+                for (int n; got < header.Length && (n = fs.Read(header, got, header.Length - got)) > 0;) got += n;
+            }
+            catch (Exception ex) { Log("[Navigation] could not read " + path + ": " + ex.Message, true); return null; }
+            var info = got == HeaderSize ? ParseHeader(header) : null;
+            if (info == null) info = new NavMeshFileInfo { Version = -1 };   // there, but no navmesh this engine knows
+            var fi = new FileInfo(path);
+            info.Path = path;
+            info.Size = fi.Length;
+            info.BakedUtc = fi.LastWriteTimeUtc;
+            return info;
+        }
+
+        /// <summary>
+        /// Whether a scene's navmesh no longer matches the scene (#449): the static geometry a bake would read now — with the
+        /// sources the navmesh was baked with — against the fingerprint stamped into it. Null when that cannot be told: a
+        /// navmesh baked before bakes recorded their input. Collects the geometry like a bake (UI / game thread).
+        /// </summary>
+        public static bool? IsStale(Scene scene, NavMeshFileInfo file, out string reason)
+        {
+            reason = null;
+            if (scene == null || file == null) return null;
+            if (!file.InputFingerprint.HasValue)
+            {
+                reason = "unknown: this navmesh was baked before bakes recorded what they read — bake it again and the next check can tell";
+                return null;
+            }
+            return IsStale(file, CollectGeometry(scene, file.Settings.SourceFlags), out reason);
+        }
+
+        internal static bool? IsStale(NavMeshFileInfo file, NavBakeGeometry now, out string reason)
+        {
+            reason = null;
+            if (file?.InputFingerprint == null) return null;
+            if (file.InputFingerprint.Value == GeometryFingerprint(now)) return false;
+            reason = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "the static geometry changed since the bake (it read {0} triangles + {1} solid boxes; the scene has {2} + {3} from {4} entities now) — bake again",
+                file.Stats.InputTriangles, file.Stats.InputBoxes, now.TriangleCount, now.BoxCount, now.EntityCount);
+            return true;
         }
 
         // ================================================================================================ queries
