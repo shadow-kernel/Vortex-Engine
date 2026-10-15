@@ -14,6 +14,7 @@ namespace Vortex.Player
                 Console.WriteLine("Vortex.Player [--project=<dir>] [--scene=<name>] [--width=<px>] [--height=<px>] [--renderscale=<f>] [--exit-after=<sec>] [--capture=<file.bmp>]");
                 Console.WriteLine("              [--input=<script.txt>] [--capture-dir=<dir>] [--dump-scene]   (automation: timed keys/mouse/captures)");
                 Console.WriteLine("              [--frame-times=<file>]   (automation: each frame's duration in ms, one per line)");
+                Console.WriteLine("              [--parent-pid=<pid>]   (automation: close when that process is gone)");
                 Console.WriteLine("              [--arg:<name>=<value> ...]   (the game's own arguments: Application.GetArg(\"name\") in scripts)");
                 Console.WriteLine("Without --project the player runs the exported game next to the executable (player.vortex + Assets.vpak).");
                 return 0;

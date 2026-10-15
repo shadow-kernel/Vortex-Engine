@@ -24,20 +24,30 @@ namespace VortexEditor.Claude.Tools
     {
         /// <summary>Runs kept per project in the temp folder (captures are full-size BMPs).</summary>
         private const int KeepRuns = 5;
-        private const int MaxAutoCaptures = 120;
+        /// <summary>Frames one run may capture (the script's, capture_every's and the last one), and their size at most — a BMP of a
+        /// 2× display is width × height × 16 bytes (#463 review).</summary>
+        private const int MaxCaptures = 100;
+        private const long MaxCaptureBytes = 1536L * 1024 * 1024;
 
-        // ManagesUndo: the call waits for the game — an open undo group would swallow the user's own edits meanwhile
+        private static Process _running;           // the player of the run in progress (one at a time)
+        private static bool _exitHooked;
+
+        /// <summary>A run is in progress — the editor's viewport rests meanwhile (capture_viewport says so).</summary>
+        internal static bool IsRunning => _running != null;
+
+        // ManagesUndo: the call waits for the game — an undo group open meanwhile would take the user's own edits along
         [McpServerTool(Name = "run_player"), ManagesUndo]
         [Description("Runs the project in the standalone player — the game as it ships, in its own process and window (usually faster than editor " +
                      "play) — for `seconds`, then returns: the exit code; FPS min/avg/max over the player's 2-second windows (the first one, loading, " +
-                     "left out) and frame-time percentiles in ms (p50/p90/p95/p99/max); the log tail with error lines marked '!! ' and listed under " +
-                     "errors; the captured frames (BMP paths), the first one as an image. input_script plays the game: one command per line, " +
-                     "'<seconds> press|release|tap <key>', '<s> hold <key> [seconds]', '<s> look <dx> <dy> [seconds]', '<s> capture <name>.bmp', " +
-                     "'<s> exit' (key names as in Input.GetKey; '#' starts a comment). args reach the scripts as Application.Args — " +
-                     "Application.GetArg(\"act\", 1) — so a test picks an act or a beat; in editor play they are empty. The player reads the project " +
-                     "from disk: unsaved scene edits are not in the run (the note says so — save_scene first). Its save games and settings go to a " +
-                     "scratch folder, never the user's. The editor's viewport pauses meanwhile; after timeout_seconds the player is killed. " +
-                     "Not while the editor plays.")]
+                     "left out) and frame-time percentiles in ms (p50/p90/p95/p99/max); the log tail with error lines marked '!! ' and the error lines " +
+                     "(Console errors, exceptions, engine failures); the captured frames (BMP paths), the first one as an image; the player it ran. " +
+                     "input_script plays the game: one command per line, '<seconds> press|release|tap <key>', '<s> hold <key> [seconds]', " +
+                     "'<s> look <dx> <dy> [seconds]', '<s> capture <name>.bmp' (a plain file name), '<s> exit' (key names as in Input.GetKey; '#' " +
+                     "starts a comment). args reach the scripts as Application.Args — Application.GetArg(\"act\", 1) — so a test picks an act or a " +
+                     "beat; in editor play they are empty. The player reads the project from disk: unsaved scene edits are not in the run (the note " +
+                     "says so — save_scene first). Its save games and settings go to a scratch folder, never the user's. Other tools keep working " +
+                     "while it runs, but the editor's viewport rests (no capture_viewport meanwhile); after timeout_seconds the player is killed, " +
+                     "and it closes itself when the editor goes. Not while the editor plays; one run at a time.")]
         public static async Task<ToolResult> RunPlayer(
             [Description("Seconds the game runs before the player closes itself (1–600; counted from the first frame, loading not included)")] double seconds = 10,
             [Description("Scene to start in (default: the active scene) — as saved on disk")] string scene = null,
@@ -53,6 +63,7 @@ namespace VortexEditor.Claude.Tools
         {
             var project = SceneModel.Project;
             if (SceneModel.Playing) throw new ToolError("Stop editor play first (exit_play_mode): the editor's game and the player would share the GPU, and the numbers would be neither's.");
+            if (_running != null) throw new ToolError("Another run_player is still running — wait for its answer first.");
             if (!(seconds >= 1 && seconds <= 600)) throw new ToolError("seconds must be between 1 and 600.");
             if (width < 320 || width > 7680 || height < 240 || height > 4320) throw new ToolError("width must be 320–7680 and height 240–4320 pixels.");
             if (!(render_scale >= 0.25f && render_scale <= 1f)) throw new ToolError("render_scale must be between 0.25 and 1.");
@@ -66,25 +77,37 @@ namespace VortexEditor.Claude.Tools
                   ?? throw new ToolError("No scene named '" + scene + "'. Scenes: " + string.Join(", ", project.Scenes.Where(s => s != null).Select(s => s.Name)));
             if (string.IsNullOrEmpty(target.FilePath) || !File.Exists(target.FilePath))
                 throw new ToolError("'" + target.Name + "' was never saved: the player reads scenes from disk — save_scene first.");
+
+            // the script exactly as the player will read it — one checked line per line it reads (#463 review)
             string script = input_script ?? "";
-            string problem = PlayerRun.CheckInputScript(script, seconds);
+            string problem = PlayerRun.CheckInputScript(script, seconds, out int scriptCaptures);
             if (problem != null) throw new ToolError("input_script " + problem);
+            var lines = PlayerRun.ScriptLines(script);
+            int autoCaptures = 0;
             if (capture_every > 0)
             {
                 string auto = PlayerRun.AutoCaptures(seconds, capture_every);
-                int n = auto.Count(c => c == '\n');
-                if (n > MaxAutoCaptures) throw new ToolError("capture_every " + capture_every + " makes " + n + " captures — at most " + MaxAutoCaptures + ": raise it.");
-                script = script + "\n" + auto;
+                autoCaptures = auto.Count(c => c == '\n');
+                lines.AddRange(PlayerRun.ScriptLines(auto));
             }
+            int captureCount = scriptCaptures + autoCaptures + 1;   // and the last frame
+            long captureBytes = captureCount * (long)width * height * 16;
+            if (captureCount > MaxCaptures || captureBytes > MaxCaptureBytes)
+                throw new ToolError("The run would capture " + captureCount + " frames (about " + captureBytes / (1024 * 1024) + " MB) — at most " + MaxCaptures +
+                                    " frames and " + MaxCaptureBytes / (1024 * 1024) + " MB: capture less often or smaller.");
             var gameArgs = GameArgs(args);
-            // only the engine's own player, for the open project — the tool takes no program and no project of its own
+
+            // only the engine's own player, for the open project — the tool takes no program and no project of its own — and only
+            // one built from this editor's engine code: an older build cannot compile scripts that use newer API (#463 review)
             string exe = MainWindow.FindPlayerExecutable()
                          ?? throw new ToolError("Vortex.Player was not found next to the editor (build Managed/Vortex.Player, or use an editor build that bundles it).");
+            if (!SameEngine(exe, out string why))
+                throw new ToolError("The player at " + exe + " was built from other engine code than this editor (" + why + "): rebuild it — dotnet build Managed/Vortex.Player -c " + Configuration + ".");
 
             string runDir = NewRunDir(project);
             string captures = Path.Combine(runDir, "captures"), appData = Path.Combine(runDir, "appdata"), frameFile = Path.Combine(runDir, "frame_times.txt");
             string inputFile = null;
-            if (script.Trim().Length > 0) { inputFile = Path.Combine(runDir, "input.txt"); File.WriteAllText(inputFile, script); }
+            if (lines.Any(l => l.Trim().Length > 0)) { inputFile = Path.Combine(runDir, "input.txt"); File.WriteAllText(inputFile, string.Join("\n", lines) + "\n"); }
             var psi = new ProcessStartInfo(exe)
             {
                 UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = runDir,
@@ -94,6 +117,7 @@ namespace VortexEditor.Claude.Tools
             {
                 Project = project.Path, Scene = target.Name, Seconds = seconds, Width = width, Height = height, RenderScale = render_scale,
                 InputScript = inputFile, CaptureDir = captures, FinalCapture = Path.Combine(captures, "last.bmp"), FrameTimes = frameFile, Args = gameArgs,
+                ParentPid = Environment.ProcessId,
             }))
                 psi.ArgumentList.Add(a);
             psi.Environment["VORTEX_APPDATA_DIR"] = appData;   // save games and settings of a test run stay in the run's folder
@@ -106,65 +130,84 @@ namespace VortexEditor.Claude.Tools
             }
             catch { }
 
-            var output = new List<(bool Err, string Text)>();
+            var output = new List<string>();
             var fps = new List<int>();
             var gate = new object();
-            void OnLine(string text, bool err)
+            var outClosed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var errClosed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var exited = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnLine(string text, TaskCompletionSource<bool> closed)
             {
-                if (text == null) return;
+                if (text == null) { closed.TrySetResult(true); return; }
                 lock (gate)
                 {
-                    if (output.Count < 50000) output.Add((err, text));
-                    if (!err && PlayerRun.TryParseFps(text, out int f)) fps.Add(f);
+                    if (output.Count < 50000) output.Add(text);
+                    if (PlayerRun.TryParseFps(text, out int f)) fps.Add(f);
                 }
             }
-            bool timedOut = false, killed = false;
+            bool timedOut = false, killed = false, stuck = false;
             int exitCode = -1;
             var clock = Stopwatch.StartNew();
-            using var proc = new Process { StartInfo = psi };
-            proc.OutputDataReceived += (s, e) => OnLine(e.Data, false);
-            proc.ErrorDataReceived += (s, e) => OnLine(e.Data, true);
+            var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            proc.OutputDataReceived += (s, e) => OnLine(e.Data, outClosed);
+            proc.ErrorDataReceived += (s, e) => OnLine(e.Data, errClosed);
+            proc.Exited += (s, e) => exited.TrySetResult(true);
+            HookEditorExit();
             EditorViewportSession.ActivePreviewDialogs++;   // the editor's viewport rests: the GPU is the player's
             try
             {
                 try { if (!proc.Start()) throw new ToolError("The player did not start."); }
                 catch (System.ComponentModel.Win32Exception ex) { throw new ToolError("The player did not start: " + ex.Message); }
+                _running = proc;
                 proc.BeginOutputReadLine();
                 proc.BeginErrorReadLine();
-                using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                limit.CancelAfter(TimeSpan.FromSeconds(timeout));
-                try { await proc.WaitForExitAsync(limit.Token); }
-                catch (OperationCanceledException)
+                if (proc.HasExited) exited.TrySetResult(true);
+                // other tools run while the game does; every wait is bounded — a helper the game started may hold the output pipes
+                // open long after the player is gone, so the exit is the process's own, not the end of its output (#463 review)
+                await ToolHost.Unlocked(async () =>
                 {
-                    timedOut = !ct.IsCancellationRequested;
-                    killed = true;
-                    try { proc.Kill(entireProcessTree: true); } catch { }
-                    try { await proc.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
-                }
-                if (proc.WaitForExit(5000)) proc.WaitForExit();   // the last output lines are handled too
-                if (proc.HasExited) exitCode = proc.ExitCode;
+                    var limit = Task.Delay(TimeSpan.FromSeconds(timeout), ct);
+                    if (await Task.WhenAny(exited.Task, limit) != exited.Task)
+                    {
+                        timedOut = !ct.IsCancellationRequested;
+                        killed = true;
+                        try { proc.Kill(entireProcessTree: true); } catch { }
+                        if (await Task.WhenAny(exited.Task, Task.Delay(10_000)) != exited.Task) stuck = true;
+                    }
+                    await Task.WhenAny(Task.WhenAll(outClosed.Task, errClosed.Task), Task.Delay(2000));   // the last lines, not a helper's
+                    return true;
+                });
+                try { if (proc.HasExited) exitCode = proc.ExitCode; } catch { }
             }
-            finally { EditorViewportSession.ActivePreviewDialogs = Math.Max(0, EditorViewportSession.ActivePreviewDialogs - 1); }
+            finally
+            {
+                EditorViewportSession.ActivePreviewDialogs = Math.Max(0, EditorViewportSession.ActivePreviewDialogs - 1);
+                if (ReferenceEquals(_running, proc)) _running = null;
+                try { proc.CancelOutputRead(); proc.CancelErrorRead(); } catch { }
+                try { proc.Dispose(); } catch { }   // closes our ends of the pipes
+            }
             if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
 
-            List<(bool Err, string Text)> lines;
+            List<string> logLines;
             List<int> windows;
-            lock (gate) { lines = output.ToList(); windows = fps.ToList(); }
-            try { File.WriteAllLines(Path.Combine(runDir, "player.log"), lines.Select(l => (l.Err ? "[stderr] " : "") + l.Text)); } catch { }
-            var errorLines = lines.Where(l => PlayerRun.IsErrorLine(l.Text, l.Err)).Select(l => l.Text).ToList();
+            lock (gate) { logLines = output.ToList(); windows = fps.ToList(); }
+            try { File.WriteAllLines(Path.Combine(runDir, "player.log"), logLines); } catch { }
+            var errorLines = logLines.Where(PlayerRun.IsErrorLine).ToList();
             var shots = Directory.Exists(captures)
                 ? new DirectoryInfo(captures).GetFiles("*.bmp").OrderBy(f => f.LastWriteTimeUtc).Select(f => f.FullName).ToList()
                 : new List<string>();
             var fpsStats = PlayerRun.Fps(windows);
             var frames = PlayerRun.Frames(PlayerRun.ReadFrameTimes(frameFile));
-            if (timedOut) notes.Add("The player was still running after " + timeout.ToString("0.#", CultureInfo.InvariantCulture) + " s and was killed"
-                                    + (timeout < seconds + 5 ? " (timeout_seconds left it no time to load and run " + seconds.ToString("0.#", CultureInfo.InvariantCulture) + " s)." : "."));
+            if (stuck) notes.Add("The player did not stop when it was killed — it may still be running.");
+            else if (timedOut) notes.Add("The player was still running after " + timeout.ToString("0.#", CultureInfo.InvariantCulture) + " s and was killed"
+                                         + (timeout < seconds + 5 ? " (timeout_seconds left it no time to load and run " + seconds.ToString("0.#", CultureInfo.InvariantCulture) + " s)." : "."));
             else if (exitCode != 0) notes.Add("The player exited with code " + exitCode + " — see errors and log_tail.");
             if (windows.Count == 0) notes.Add("No FPS line: the run ended before its first 2-second window" + (timedOut ? " (it never got past loading)." : "."));
             // the player starts in its default scene when it cannot find the one asked for — say so instead of reporting its numbers as the scene's
-            string started = lines.Select(l => l.Text).FirstOrDefault(l => l.StartsWith("scene: ", StringComparison.Ordinal));
+            string started = logLines.FirstOrDefault(l => l.StartsWith("scene: ", StringComparison.Ordinal));
             if (started != null && !started.StartsWith("scene: " + target.Name + " entities=", StringComparison.OrdinalIgnoreCase))
                 notes.Add("The player started in another scene (" + started + "): it finds the scenes the project lists and those in Assets/Scenes — keep '" + target.Name + "' there, or Save All so the project lists it.");
+            if (PlayModeService.Instance.IsPlaying) notes.Add("The editor started playing during the run: its game shared the GPU, the numbers are low.");
 
             var result = ToolResult.Json(new
             {
@@ -178,9 +221,10 @@ namespace VortexEditor.Claude.Tools
                 frame_ms = frames == null ? null : new { frames = frames.Frames, avg = frames.Avg, p50 = frames.P50, p90 = frames.P90, p95 = frames.P95, p99 = frames.P99, max = frames.Max, warmup_left_out_ms = frames.WarmupExcludedMs > 0 ? (double?)frames.WarmupExcludedMs : null },
                 error_count = errorLines.Count,
                 errors = errorLines.Count > 0 ? errorLines.Distinct().Take(30).Select(e => ToolHost.Shorten(e, 600)).ToArray() : null,
-                warning_count = lines.Count(l => l.Text.StartsWith("[WARN]", StringComparison.Ordinal)),
-                log_tail = log_lines > 0 ? lines.Skip(Math.Max(0, lines.Count - log_lines)).Select(l => (PlayerRun.IsErrorLine(l.Text, l.Err) ? "!! " : "") + ToolHost.Shorten(l.Text, 600)).ToArray() : null,
+                warning_count = logLines.Count(l => l.StartsWith("[WARN]", StringComparison.Ordinal)),
+                log_tail = log_lines > 0 ? logLines.Skip(Math.Max(0, logLines.Count - log_lines)).Select(l => (PlayerRun.IsErrorLine(l) ? "!! " : "") + ToolHost.Shorten(l, 600)).ToArray() : null,
                 captures = shots.Count > 0 ? shots.ToArray() : null,
+                player = exe,
                 run_dir = runDir,
                 note = notes.Count > 0 ? string.Join(" ", notes) : null,
             });
@@ -190,6 +234,45 @@ namespace VortexEditor.Claude.Tools
                 catch (Exception ex) { ConsoleService.Instance.LogWarning("run_player: the capture " + Path.GetFileName(shots[0]) + " could not be read: " + ex.Message); }
             }
             return result;
+        }
+
+#if DEBUG
+        private const string Configuration = "Debug";
+#else
+        private const string Configuration = "Release";
+#endif
+
+        /// <summary>Whether the player at <paramref name="exe"/> runs this editor's engine code: its Vortex.Core is the same build
+        /// (module id) as the editor's (#463 review).</summary>
+        internal static bool SameEngine(string exe, out string why)
+        {
+            why = null;
+            string dll = Path.Combine(Path.GetDirectoryName(exe) ?? "", "Vortex.Core.dll");
+            if (!File.Exists(dll)) { why = "no Vortex.Core.dll next to it"; return false; }
+            try
+            {
+                using var fs = File.OpenRead(dll);
+                using var pe = new System.Reflection.PortableExecutable.PEReader(fs);
+                var md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+                Guid theirs = md.GetGuid(md.GetModuleDefinition().Mvid);
+                Guid mine = typeof(Scene).Assembly.ManifestModule.ModuleVersionId;
+                if (theirs == mine) return true;
+                why = "its Vortex.Core is another build than the editor's";
+                return false;
+            }
+            catch (Exception ex) { why = "its Vortex.Core could not be read: " + ex.Message; return false; }
+        }
+
+        /// <summary>A run still going when the editor quits is ended with it (a killed editor: the player's --parent-pid watch).</summary>
+        private static void HookEditorExit()
+        {
+            if (_exitHooked) return;
+            _exitHooked = true;
+            AppDomain.CurrentDomain.ProcessExit += (s, e) =>
+            {
+                var p = _running;
+                try { if (p != null && !p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+            };
         }
 
         /// <summary>The game's arguments as name=value pairs: names scripts can ask for, values as text.</summary>
@@ -210,7 +293,7 @@ namespace VortexEditor.Claude.Tools
                     JsonValueKind.Null => "true",
                     _ => throw new ToolError("The value of '" + p.Name + "' must be a string, a number or true/false: scripts read text."),
                 };
-                if (v.IndexOfAny(new[] { '\n', '\r' }) >= 0) throw new ToolError("The value of '" + p.Name + "' must be one line.");
+                if (v.Any(c => char.IsControl(c))) throw new ToolError("The value of '" + p.Name + "' must be one line of text.");
                 list.Add(new KeyValuePair<string, string>(p.Name, v));
             }
             return list;

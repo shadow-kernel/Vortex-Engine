@@ -16,7 +16,8 @@ namespace VortexTests
             t.Equal(0, Vortex.Application.Args.Count, "no arguments outside the player (editor play)");
             t.True(Vortex.Application.TryParseArg("--arg:act=3", out var n, out var v) && n == "act" && v == "3", "name=value");
             t.True(Vortex.Application.TryParseArg("--arg:skipIntro", out n, out v) && n == "skipIntro" && v == "true", "a bare name is true");
-            t.True(Vortex.Application.TryParseArg("--ARG:path=\"a=b c\"", out n, out v) && n == "path" && v == "a=b c", "the first '=' splits, quotes go");
+            t.True(Vortex.Application.TryParseArg("--ARG:path=\"a=b c\"", out n, out v) && n == "path" && v == "\"a=b c\"", "the first '=' splits; the value is verbatim, quotes too");
+            t.True(Vortex.Application.TryParseArg("--arg:msg=  two words  ", out n, out v) && v == "  two words  ", "and its spaces: " + v);
             t.False(Vortex.Application.TryParseArg("--arg:=5", out _, out _), "no name, no argument");
             t.False(Vortex.Application.TryParseArg("--scene=Main", out _, out _), "an engine option is no game argument");
             try
@@ -49,6 +50,16 @@ namespace VortexTests
             t.True(Err("1 capture ../../evil.bmp").Contains("without folders") && Err("1 capture /tmp/x.bmp").Contains("without folders"), "captures stay in the run's folder");
             t.True(Err("1 capture shot.png").Contains("BMP"), "a capture is a BMP");
             t.True(Err("12 exit").Contains("never runs"), "a command after the run ends");
+
+            // the review's payload: a bare \r ends a line for the player (File.ReadAllLines) — the check reads lines the same way
+            string payload = "2 press W \r1 capture /Users/someone/.zshrc\n2.5 release W";
+            t.True(Err(payload).StartsWith("line 2", StringComparison.Ordinal) && Err(payload).Contains("without folders"), "the hidden second line is checked: " + Err(payload));
+            string file = t.Write("input.txt", payload);
+            t.True(PlayerRun.ScriptLines(payload).SequenceEqual(System.IO.File.ReadAllLines(file)), "ScriptLines splits like the player's reader");
+            t.True(Err("1 press W\u000b").Contains("control character"), "a control character is refused");
+            t.True(PlayerRun.CheckInputScript("1 capture a.bmp\n2 capture b.bmp\n3 exit", 10, out int n) == null && n == 2, "the captures are counted: " + n);
+            t.True(PlayerRun.IsPlainFileName("door.bmp") && !PlayerRun.IsPlainFileName("../door.bmp") && !PlayerRun.IsPlainFileName("/tmp/door.bmp")
+                   && !PlayerRun.IsPlainFileName("a/b.bmp") && !PlayerRun.IsPlainFileName("C:door.bmp") && !PlayerRun.IsPlainFileName(""), "plain file names only");
         }
 
         [Test]
@@ -58,11 +69,11 @@ namespace VortexTests
             {
                 Project = "/p", Scene = "Main Scene", Seconds = 20, Width = 1600, Height = 900, RenderScale = 0.75f,
                 InputScript = "/r/input.txt", CaptureDir = "/r/captures", FinalCapture = "/r/captures/last.bmp", FrameTimes = "/r/frames.txt",
-                Args = new[] { new KeyValuePair<string, string>("act", "3"), new KeyValuePair<string, string>("skipIntro", "true") },
+                Args = new[] { new KeyValuePair<string, string>("act", "3"), new KeyValuePair<string, string>("skipIntro", "true") }, ParentPid = 4242,
             });
             foreach (var want in new[] { "--project=/p", "--scene=Main Scene", "--width=1600", "--height=900", "--renderscale=0.75", "--exit-after=20",
                                          "--input=/r/input.txt", "--capture-dir=/r/captures", "--capture=/r/captures/last.bmp", "--frame-times=/r/frames.txt",
-                                         "--arg:act=3", "--arg:skipIntro=true" })
+                                         "--parent-pid=4242", "--arg:act=3", "--arg:skipIntro=true" })
                 t.True(a.Contains(want), "has " + want + ": " + string.Join(" ", a));
             var full = PlayerRun.Arguments(new PlayerRun.Options { Project = "/p", Seconds = 5 });
             t.False(full.Any(x => x.StartsWith("--renderscale", StringComparison.Ordinal) || x.StartsWith("--input", StringComparison.Ordinal)), "full scale and no script: not passed");
@@ -95,9 +106,13 @@ namespace VortexTests
         [Test]
         public static void ErrorLinesAreTheOnesToRead(TestContext t)
         {
-            t.True(PlayerRun.IsErrorLine("anything", fromStderr: true), "stderr is errors");
-            t.True(PlayerRun.IsErrorLine("[ERROR] Door.cs: NullReferenceException", false) && PlayerRun.IsErrorLine("[Tick] System.InvalidOperationException: x", false), "error entries and exceptions");
-            t.False(PlayerRun.IsErrorLine("[INFO] act 3 started", false) || PlayerRun.IsErrorLine("FPS=60 scene=x", false) || PlayerRun.IsErrorLine("", true), "the rest is not");
+            t.True(PlayerRun.IsErrorLine("[ERROR] Door.cs: NullReferenceException") && PlayerRun.IsErrorLine("[Tick] System.InvalidOperationException: x"), "error entries and exceptions");
+            t.True(PlayerRun.IsErrorLine("Unhandled exception. System.Exception: boom") && PlayerRun.IsErrorLine("hot-reload FAILED: CS1002"), "a crash, a failed reload");
+            t.True(PlayerRun.IsErrorLine("[sdlgpu] shader compile failed: lit.metal") && PlayerRun.IsErrorLine("[gamehost] fatal: no window"), "an engine line that says it failed");
+            // the engine writes every line to stderr: its ready messages are no errors (the review counted 14 on a clean run)
+            t.False(PlayerRun.IsErrorLine("[physics] Jolt Physics world ready (10 worker threads, 32768 max bodies)") || PlayerRun.IsErrorLine("[VortexAudio] shut down")
+                    || PlayerRun.IsErrorLine("[navigation] baked with 0 errors"), "engine status lines are not");
+            t.False(PlayerRun.IsErrorLine("[INFO] the door failed to open (a script's own log)") || PlayerRun.IsErrorLine("FPS=60 scene=x") || PlayerRun.IsErrorLine(""), "a Console line's level decides; the rest is not");
             var path = t.Write("frames.txt", "16.7\n17.1\nnot a number\n33.4\n");
             t.Equal(3, PlayerRun.ReadFrameTimes(path).Count, "the frame-time file, one number per line");
             t.Equal(0, PlayerRun.ReadFrameTimes(t.Path("missing.txt")).Count, "a missing file: none");

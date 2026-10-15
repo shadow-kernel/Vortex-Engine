@@ -51,6 +51,7 @@ namespace Vortex.Player
             _logPath = Path.Combine(Path.GetTempPath(), "vortex_player.log");
             try { File.Delete(_logPath); } catch { }
             Console.WriteLine("log: " + _logPath);
+            if (options.ParentPid > 0) WatchParent(options.ParentPid);
             // the game's own arguments reach the scripts (#463) — before anything can read them
             Vortex.Application.SetArgs(options.Args);
             if (options.Args.Count > 0)
@@ -67,7 +68,7 @@ namespace Vortex.Player
                 if (!File.Exists(options.InputScriptPath)) { Console.Error.WriteLine("input script not found: " + options.InputScriptPath); return 2; }
                 string capDir = options.CaptureDir ?? (!string.IsNullOrEmpty(options.CapturePath) ? Path.GetDirectoryName(Path.GetFullPath(options.CapturePath)) : Path.GetTempPath());
                 Directory.CreateDirectory(capDir);
-                _script = InputScript.Load(options.InputScriptPath, capDir);
+                _script = InputScript.Load(options.InputScriptPath, capDir, plainNamesOnly: options.CaptureDir != null);
                 Log("input script: " + _script.Count + " commands, captures -> " + capDir);
             }
             // Scripted keys are OR-ed with the physical keyboard; a scripted run counts as focused so gameplay input is live.
@@ -221,10 +222,43 @@ namespace Vortex.Player
             return ok ? 0 : 3;
         }
 
+        private static volatile bool _parentGone;
+        private static bool _parentExit;
+
+        /// <summary>--parent-pid (#463 review): the run closes itself when the process that started it is gone — run_player's
+        /// editor, killed or crashed — so no player outlives it. A game loop that does not close within 5 s is ended.</summary>
+        private static void WatchParent(int pid)
+        {
+            DateTime? started = null;
+            try { using var p = System.Diagnostics.Process.GetProcessById(pid); started = p.StartTime; } catch { }
+            var watch = new System.Threading.Thread(() =>
+            {
+                while (true)
+                {
+                    System.Threading.Thread.Sleep(500);
+                    bool alive;
+                    // there and the same process (a reused id has another start time)
+                    try { using var p = System.Diagnostics.Process.GetProcessById(pid); alive = started == null || p.StartTime == started; }
+                    catch { alive = false; }
+                    if (alive) continue;
+                    _parentGone = true;
+                    System.Threading.Thread.Sleep(5000);
+                    Environment.Exit(4);
+                }
+            }) { IsBackground = true, Name = "Vortex parent watch" };
+            watch.Start();
+        }
+
         private static void Tick(float dt)
         {
             try
             {
+                if (_parentGone && !_parentExit)
+                {
+                    _parentExit = true;
+                    Log("the editor that started this run is gone — closing");
+                    VortexAPI.RequestGameHostExit();
+                }
                 if (_frameTimes != null)
                 {
                     // the time between two ticks, unclamped (the host clamps dt at 100 ms, which would hide a hitch)

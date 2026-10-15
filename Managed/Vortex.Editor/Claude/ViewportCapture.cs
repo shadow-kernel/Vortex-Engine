@@ -47,7 +47,8 @@ namespace VortexEditor.Claude
                 {
                     if ((DateTime.UtcNow - start).TotalMilliseconds > timeoutMs)
                     {
-                        string why = EditorViewportSession.ActivePreviewDialogs > 0 ? " — a preview dialog is open and pauses the main viewport; close it"
+                        string why = Tools.PlayerTools.IsRunning ? " — run_player is running the game and the viewport rests meanwhile; capture after it answered"
+                                   : EditorViewportSession.ActivePreviewDialogs > 0 ? " — a preview dialog is open and pauses the main viewport; close it"
                                    : " — is the editor window minimised or hidden?";
                         throw new ToolError("The viewport did not render a frame within " + timeoutMs / 1000 + " s" + why);
                     }

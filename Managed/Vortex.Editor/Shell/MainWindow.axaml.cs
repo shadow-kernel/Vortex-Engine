@@ -1046,7 +1046,15 @@ namespace VortexEditor.Shell
         {
             string baseDir = AppContext.BaseDirectory;
             string[] names = OperatingSystem.IsWindows() ? new[] { "Vortex.Player.exe" } : new[] { "Vortex.Player" };
-            foreach (var dir in new[] { baseDir, Path.Combine(baseDir, "..", "Resources", "Player"), Path.Combine(baseDir, "player"), Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", "Debug", "net10.0"), Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", "Release", "net10.0") })
+            // a development tree: the player built in the editor's own configuration first — the other one may be days old (#463 review)
+#if DEBUG
+            string mine = "Debug", other = "Release";
+#else
+            string mine = "Release", other = "Debug";
+#endif
+            foreach (var dir in new[] { baseDir, Path.Combine(baseDir, "..", "Resources", "Player"), Path.Combine(baseDir, "player"),
+                                         Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", mine, "net10.0"),
+                                         Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", other, "net10.0") })
                 foreach (var n in names) { var f = Path.GetFullPath(Path.Combine(dir, n)); if (File.Exists(f)) return f; }
             return null;
         }

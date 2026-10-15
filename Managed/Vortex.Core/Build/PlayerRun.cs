@@ -26,6 +26,8 @@ namespace Editor.Core.Services.Build
             public float RenderScale = 1f;
             public string InputScript, CaptureDir, FinalCapture, FrameTimes;
             public IEnumerable<KeyValuePair<string, string>> Args;
+            /// <summary>The process the player watches: when it is gone the player closes (0 = none).</summary>
+            public int ParentPid;
         }
 
         /// <summary>The player's command line, one element per argument (for ProcessStartInfo.ArgumentList: nothing is quoted).</summary>
@@ -42,6 +44,7 @@ namespace Editor.Core.Services.Build
             if (!string.IsNullOrEmpty(o.FinalCapture)) list.Add("--capture=" + o.FinalCapture);
             if (!string.IsNullOrEmpty(o.InputScript)) list.Add("--input=" + o.InputScript);
             if (!string.IsNullOrEmpty(o.FrameTimes)) list.Add("--frame-times=" + o.FrameTimes);
+            if (o.ParentPid > 0) list.Add("--parent-pid=" + o.ParentPid.ToString(ci));
             if (o.Args != null) foreach (var kv in o.Args) list.Add("--arg:" + kv.Key + "=" + kv.Value);
             return list;
         }
@@ -51,20 +54,39 @@ namespace Editor.Core.Services.Build
 
         private static readonly string[] KeyOps = { "press", "release", "hold", "tap" };
 
+        /// <summary>The script's lines exactly as the player reads them (File.ReadAllLines: a line ends at \r, \n or \r\n) — run_player
+        /// writes the script it checked in this form, so the player sees no other line (#463 review).</summary>
+        public static List<string> ScriptLines(string text)
+        {
+            var lines = new List<string>();
+            if (text == null) return lines;
+            using var r = new StringReader(text);
+            for (string l; (l = r.ReadLine()) != null;) lines.Add(l);
+            return lines;
+        }
+
         /// <summary>
         /// Check an input script against the player's grammar (Vortex.Player's InputScript: <c>&lt;seconds&gt; press|release|tap
         /// &lt;key&gt;</c>, <c>hold &lt;key&gt; [seconds]</c>, <c>look &lt;dx&gt; &lt;dy&gt; [seconds]</c>, <c>capture &lt;name&gt;.bmp</c>,
-        /// <c>exit</c>; <c>#</c> starts a comment). Null when it is fine, else the first problem with its line number. A capture
-        /// takes a plain file name — captures land in the run's own folder; a command after <paramref name="runSeconds"/> would
+        /// <c>exit</c>; <c>#</c> starts a comment), line by line as the player splits it. Null when it is fine, else the first
+        /// problem with its line number. A capture takes a plain file name — captures land in the run's own folder; a control
+        /// character is refused (no line the player could read differently); a command after <paramref name="runSeconds"/> would
         /// never run.
         /// </summary>
-        public static string CheckInputScript(string text, double runSeconds = double.MaxValue)
+        public static string CheckInputScript(string text, double runSeconds = double.MaxValue) => CheckInputScript(text, runSeconds, out _);
+
+        /// <param name="captures">How many frames the script captures.</param>
+        public static string CheckInputScript(string text, double runSeconds, out int captures)
         {
+            captures = 0;
             if (text == null) return null;
-            var lines = text.Replace("\r\n", "\n").Split('\n');
-            for (int i = 0; i < lines.Length; i++)
+            var lines = ScriptLines(text);
+            for (int i = 0; i < lines.Count; i++)
             {
                 string line = lines[i];
+                foreach (char ch in line)
+                    if ((char.IsControl(ch) && ch != '\t') || ch == '\u2028' || ch == '\u2029')
+                        return "line " + (i + 1) + ": a control character (U+" + ((int)ch).ToString("X4", CultureInfo.InvariantCulture) + ") — one command per line, as plain text.";
                 int hash = line.IndexOf('#');
                 if (hash >= 0) line = line.Substring(0, hash);
                 line = line.Trim();
@@ -91,9 +113,10 @@ namespace Editor.Core.Services.Build
                 else if (op == "capture")
                 {
                     string name = p.Length > 2 ? p[2] : "";
-                    if (name.Length == 0 || Path.IsPathRooted(name) || name.Contains("..") || name.IndexOfAny(new[] { '/', '\\' }) >= 0 || Path.GetFileName(name) != name)
+                    if (!IsPlainFileName(name))
                         return at + "capture takes a file name without folders, e.g. \"capture door.bmp\": captures go to the run's capture folder.";
                     if (!name.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase)) return at + "a capture is a BMP: name it like \"door.bmp\".";
+                    captures++;
                 }
                 else if (op != "exit")
                     return at + "'" + p[1] + "' is no command — press, release, hold, tap, look, capture or exit.";
@@ -123,14 +146,26 @@ namespace Editor.Core.Services.Build
             return m.Success && int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out fps);
         }
 
-        /// <summary>A line of the player's output that reports an error: everything on stderr (Console errors, exceptions), an
-        /// error entry, an exception in a frame.</summary>
-        public static bool IsErrorLine(string line, bool fromStderr)
+        /// <summary>A capture name the player writes into its capture folder and nowhere else: no folder, no root, no "..", no
+        /// character a file name cannot hold.</summary>
+        public static bool IsPlainFileName(string name)
+            => !string.IsNullOrWhiteSpace(name) && !Path.IsPathRooted(name) && !name.Contains("..") && name.IndexOfAny(new[] { '/', '\\', ':' }) < 0
+               && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && Path.GetFileName(name) == name;
+
+        private static readonly Regex EngineError = new Regex(@"\b(failed|fatal|crash(ed)?|abort(ed)?)\b|\berror\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        /// <summary>A line of the player's output that reports an error (#463 review): a Console error entry (<c>[ERROR]</c>), an
+        /// exception (one in a frame, an unhandled one), a failure the player reports itself, or an engine line (<c>[subsystem]
+        /// …</c>) that says failed, error, fatal or crash. The engine writes all its lines to stderr, so where a line came from says
+        /// nothing; a Console line's own level decides for it.</summary>
+        public static bool IsErrorLine(string line)
         {
             if (string.IsNullOrWhiteSpace(line)) return false;
-            if (fromStderr) return true;
-            return line.StartsWith("[ERROR]", StringComparison.Ordinal) || line.StartsWith("[Tick] ", StringComparison.Ordinal)
-                || line.IndexOf("Exception", StringComparison.Ordinal) >= 0 || line.IndexOf("FAILED", StringComparison.Ordinal) >= 0;
+            if (line.StartsWith("[ERROR]", StringComparison.Ordinal) || line.StartsWith("[Tick] ", StringComparison.Ordinal)) return true;
+            if (line.StartsWith("[INFO]", StringComparison.Ordinal) || line.StartsWith("[WARN]", StringComparison.Ordinal) || line.StartsWith("[SYS]", StringComparison.Ordinal)) return false;
+            if (line.IndexOf("Exception", StringComparison.Ordinal) >= 0 || line.IndexOf("Unhandled", StringComparison.OrdinalIgnoreCase) >= 0
+                || line.IndexOf("FAILED", StringComparison.Ordinal) >= 0 || line.StartsWith("Vortex.Player failed", StringComparison.Ordinal)) return true;
+            return line.StartsWith("[", StringComparison.Ordinal) && EngineError.IsMatch(line);
         }
 
         /// <summary>FPS over the run's 2-second windows.</summary>

@@ -1225,7 +1225,8 @@ namespace Vortex
 
         /// <summary>The game's own command-line arguments (#463): every <c>--arg:name=value</c> the standalone player was started with
         /// (<c>--arg:name</c> alone means "true"), by name, case-insensitive — a test run picks an act, a level or a beat without
-        /// editing the game. Empty in editor play.
+        /// editing the game. The value is everything after the first '=', exactly as the program received it: spaces and quotes
+        /// stay (the shell already took its own quoting away); a later argument of the same name wins. Empty in editor play.
         /// <code>
         ///   Vortex.Player --project=MyGame --arg:act=3 --arg:skipIntro
         ///   int act = Application.GetArg("act", 1);               // 3
@@ -1279,19 +1280,18 @@ namespace Vortex
             _args = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(d);
         }
 
-        /// <summary>One command-line token: <c>--arg:name=value</c>, or <c>--arg:name</c> for "true". False for anything else.</summary>
+        /// <summary>One command-line token as the program received it: <c>--arg:name=value</c> — the value verbatim, everything
+        /// after the first '=' — or <c>--arg:name</c> for "true". False for anything else (an empty name too).</summary>
         internal static bool TryParseArg(string token, out string name, out string value)
         {
             name = null; value = null;
             const string prefix = "--arg:";
-            if (token == null) return false;
-            string t = token.Trim();
-            if (!t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
-            string rest = t.Substring(prefix.Length);
+            if (token == null || !token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+            string rest = token.Substring(prefix.Length);
             int eq = rest.IndexOf('=');
-            name = (eq < 0 ? rest : rest.Substring(0, eq)).Trim();
-            value = eq < 0 ? "true" : rest.Substring(eq + 1).Trim().Trim('"');
-            if (name.Length == 0) { name = null; value = null; return false; }
+            name = eq < 0 ? rest : rest.Substring(0, eq);
+            value = eq < 0 ? "true" : rest.Substring(eq + 1);
+            if (name.Trim().Length == 0) { name = null; value = null; return false; }
             return true;
         }
     }

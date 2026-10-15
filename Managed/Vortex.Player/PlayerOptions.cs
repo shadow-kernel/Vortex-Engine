@@ -29,6 +29,9 @@ namespace Vortex.Player
         /// <summary>Automation (#463): write each frame's duration in ms to this file, one per line — run_player's frame-time
         /// percentiles. Off unless given.</summary>
         public string FrameTimesPath;
+        /// <summary>Automation (#463 review): the process that started this run — the editor of run_player. When it is gone the
+        /// player closes itself, so no run outlives a killed editor. 0 = none.</summary>
+        public int ParentPid;
 
         public static PlayerOptions Parse(string[] args)
         {
@@ -50,7 +53,8 @@ namespace Vortex.Player
                 else if (a.StartsWith("--capture-dir=", StringComparison.OrdinalIgnoreCase)) o.CaptureDir = a.Substring(14).Trim('"');
                 else if (a.Equals("--dump-scene", StringComparison.OrdinalIgnoreCase)) o.DumpScene = true;
                 else if (a.StartsWith("--frame-times=", StringComparison.OrdinalIgnoreCase)) o.FrameTimesPath = a.Substring(14).Trim('"');
-                else if (Vortex.Application.TryParseArg(a, out string name, out string value)) o.Args[name] = value;
+                else if (a.StartsWith("--parent-pid=", StringComparison.OrdinalIgnoreCase) && int.TryParse(a.Substring(13), out int pid)) o.ParentPid = pid;
+                else if (Vortex.Application.TryParseArg(raw, out string name, out string value)) o.Args[name] = value;   // the untrimmed token: values stay verbatim
             }
             return o;
         }

@@ -55,16 +55,29 @@ namespace VortexEditor.Claude.Tools
             if (sources != null) settings.SourceFlags = (int)Sources(sources);
             timeout_seconds = Math.Clamp(timeout_seconds, 10, 600);
 
-            // the window's path: geometry on the UI thread, Recast on a worker, then save + load
+            // the window's path: geometry on the UI thread, Recast on a worker, then save + load — other tools run meanwhile
+            var project = SceneModel.Project;
             var geo = NavigationService.CollectGeometry(s, settings.SourceFlags);
-            var bake = Task.Run(() => NavigationService.Bake(geo, settings));
-            if (await Task.WhenAny(bake, Task.Delay(TimeSpan.FromSeconds(timeout_seconds))) != bake)
+            NavBakeResult r = null;
+            bool timedOut = false;
+            await ToolHost.Unlocked(async () =>
             {
-                NavigationService.CancelBake();
-                try { await bake.WaitAsync(TimeSpan.FromSeconds(30)); } catch { }
-                throw new ToolError("The bake took longer than " + timeout_seconds + " s and was cancelled — raise cell_size or tile_size, or timeout_seconds.");
-            }
-            var r = await bake;
+                var bake = Task.Run(() => NavigationService.Bake(geo, settings));
+                if (await Task.WhenAny(bake, Task.Delay(TimeSpan.FromSeconds(timeout_seconds))) != bake)
+                {
+                    timedOut = true;
+                    NavigationService.CancelBake();
+                    try { await bake.WaitAsync(TimeSpan.FromSeconds(30)); } catch { }
+                }
+                else r = await bake;
+                return true;
+            });
+            if (timedOut) throw new ToolError("The bake took longer than " + timeout_seconds + " s and was cancelled — raise cell_size or tile_size, or timeout_seconds.");
+            // the editor went on while the bake ran (#449 review): only into the scene it was baked from, and never into a running game
+            if (!ReferenceEquals(ProjectData.Current, project) || !project.Scenes.Contains(s) || !s.IsLoaded)
+                throw new ToolError("The project or the scene changed while the bake ran: nothing was saved — bake again.");
+            if (SceneModel.Playing)
+                throw new ToolError("Play started while the bake ran: nothing was saved or loaded (the game's agents walk on the loaded navmesh) — exit_play_mode and bake again.");
             foreach (var n in geo.Notes) ConsoleService.Instance.LogWarning("[Navigation] " + n);
             if (!r.Success) throw new ToolError(r.Message + (geo.Notes.Count > 0 ? " Notes: " + string.Join(" ", geo.Notes) : ""));
             if (!NavigationService.Save(s, r.Data, out var path))

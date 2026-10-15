@@ -30,12 +30,17 @@ namespace Vortex.Player
         private int _next;
         private double _now;
         public string CaptureDir;
+        /// <summary>Captures only into <see cref="CaptureDir"/>, by plain file name, and at most <see cref="MaxCaptures"/> — set when
+        /// the run was given its capture folder (--capture-dir, run_player): a script cannot write anywhere else (#463 review).</summary>
+        public bool PlainNamesOnly;
+        public const int MaxCaptures = 200;
+        private int _captures;
         public bool ExitRequested { get; private set; }
         public int Count => _cmds.Count;
 
-        public static InputScript Load(string path, string captureDir)
+        public static InputScript Load(string path, string captureDir, bool plainNamesOnly = false)
         {
-            var s = new InputScript { CaptureDir = captureDir };
+            var s = new InputScript { CaptureDir = captureDir, PlainNamesOnly = plainNamesOnly };
             foreach (string raw in File.ReadAllLines(path))
             {
                 string line = raw; int hash = line.IndexOf('#'); if (hash >= 0) line = line.Substring(0, hash);
@@ -73,6 +78,13 @@ namespace Vortex.Player
                         else _looks.Add((now + c.Num3, c.Num1 / c.Num3, c.Num2 / c.Num3));
                         break;
                     case "capture":
+                        if (PlainNamesOnly)
+                        {
+                            if (!Editor.Core.Services.Build.PlayerRun.IsPlainFileName(c.Arg)) { Console.Error.WriteLine("[WARN] capture refused: '" + c.Arg + "' is no plain file name"); break; }
+                            if (++_captures > MaxCaptures) { if (_captures == MaxCaptures + 1) Console.Error.WriteLine("[WARN] capture refused: more than " + MaxCaptures + " captures"); break; }
+                            try { capture(Path.Combine(CaptureDir, c.Arg)); } catch { }
+                            break;
+                        }
                         try { capture(Path.IsPathRooted(c.Arg) ? c.Arg : Path.Combine(CaptureDir ?? Path.GetTempPath(), c.Arg)); } catch { }
                         break;
                     case "exit": ExitRequested = true; break;

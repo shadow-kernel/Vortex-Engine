@@ -68,6 +68,35 @@ namespace VortexEditor.Claude
 
         internal static void FileWritten(FileChange f) => Files.Add(f);
 
+        /// <summary>A tool call is running (between Begin and End).</summary>
+        internal static bool Running => _running;
+
+        /// <summary>The running call's context, set aside while other calls run (<see cref="ToolHost.Unlocked{T}"/>).</summary>
+        internal sealed class Saved
+        {
+            internal string Origin, UndoLabel;
+            internal HashSet<Guid> Touched;
+            internal List<FileChange> Files;
+            internal HashSet<Scene> Scenes;
+            internal bool DryRun, Running;
+            internal List<(string Key, Action Run)> After;
+        }
+
+        internal static Saved Save() => new Saved
+        {
+            Origin = Origin, UndoLabel = UndoLabel, Touched = Touched, Files = Files, Scenes = TouchedScenes,
+            DryRun = DryRun, Running = _running, After = _afterSuccess.ToList(),
+        };
+
+        internal static void Restore(Saved s)
+        {
+            if (s == null) return;
+            Origin = s.Origin; UndoLabel = s.UndoLabel; Touched = s.Touched; Files = s.Files; TouchedScenes = s.Scenes;
+            DryRun = s.DryRun; _running = s.Running;
+            _afterSuccess.Clear();
+            _afterSuccess.AddRange(s.After);
+        }
+
         internal static void Begin(string origin, bool dryRun)
         {
             Reset(origin);
@@ -199,6 +228,25 @@ namespace VortexEditor.Claude
                 return await Dispatcher.UIThread.InvokeAsync(() => RunAsync(def, args ?? new Dictionary<string, object>(), origin, ct));
             }
             finally { Gate.Release(); }
+        }
+
+        /// <summary>
+        /// Run <paramref name="wait"/> — a wait on something outside the editor: the standalone player, a bake on a worker thread —
+        /// with the gate open, so other calls (the Claude panel's too) run meanwhile instead of queueing behind it for minutes
+        /// (#463 review). Only for a tool without an undo group of its own (ManagesUndo or ReadOnly); it re-checks what it relies on
+        /// (play mode, the project, the scene) when this returns. The call's context is set aside meanwhile and put back.
+        /// </summary>
+        internal static async Task<T> Unlocked<T>(Func<Task<T>> wait)
+        {
+            if (!ToolContext.Running) return await wait();   // not inside a gated call (a smoke check calling the method itself)
+            var saved = ToolContext.Save();
+            Gate.Release();
+            try { return await wait(); }
+            finally
+            {
+                await Gate.WaitAsync();
+                ToolContext.Restore(saved);
+            }
         }
 
         /// <summary>The error for argument keys the tool's schema does not know (null when all are known), with the
