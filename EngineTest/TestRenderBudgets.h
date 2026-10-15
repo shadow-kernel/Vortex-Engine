@@ -2,6 +2,7 @@
 
 #include "../Engine/Graphics/Skinning/BonePalettes.h"
 #include "../Engine/Graphics/Lighting/LightSelection.h"
+#include "../Engine/Graphics/Lighting/CascadeSplits.h"
 
 #include "Test.h"
 
@@ -21,7 +22,9 @@ using namespace vortex::graphics;
 //   * the light budget (#416): beyond 16 point / 8 spot lights the choice holds still (hysteresis), changes fade where
 //     they would show, a fast turn or a cut is lit right at once, a light the game switches on shows at once, the spot
 //     cone and the view frustum count, shadow maps stay put (within the budget: the first casters, as before) and a view
-//     rendered now and then never stops half-faded.
+//     rendered now and then never stops half-faded;
+//   * the sun's cascade splits (#466): the classic scheme up to 80 m, beyond it the first cascade grows only slowly and
+//     the boxes reach back towards the light by no more than the near cascade did at 80 m.
 // Prints "ALL PASSED" or "FAILURES!" and exits non-zero on a failure.
 class engine_test : public test
 {
@@ -42,6 +45,9 @@ public:
 		lights_fast_turn();
 		lights_shadow_maps_stay();
 		lights_preview_settles();
+		cascades_classic_up_to_80m();
+		cascades_adapt_beyond_80m();
+		cascades_pull_back();
 		std::printf(m_failures ? "FAILURES!\n" : "ALL PASSED\n");
 	}
 
@@ -692,5 +698,70 @@ private:
 		for (const auto& [id, l] : lit) full = full && l.fade == 1.0f;
 		check(settled_still && busy && renders <= 12, "a view that renders every 100 ms is unsettled while a light fades and settles within ~1 s");
 		check(busy_again && full, "a render after more than 0.25 s finishes every fade at once: the view is settled");
+	}
+
+	// ---------------------------------------------------------------------------------------- the sun's cascades (#466)
+
+	// the scheme both renderers ran before #466: lambda 0.6 at any distance
+	static float classic_split(float far_z, unsigned c)
+	{
+		const float near_z = 0.1f, f = (float)(c + 1) / 3.0f;
+		const float log_split = near_z * powf(far_z / near_z, f);
+		const float uni_split = near_z + (far_z - near_z) * f;
+		return uni_split + 0.6f * (log_split - uni_split);
+	}
+
+	void cascades_classic_up_to_80m()
+	{
+		std::printf("sun cascades: the classic split scheme up to the default 80 m (#466)\n");
+		bool same = true;
+		for (float d : { 5.0f, 20.0f, 40.0f, 80.0f })
+		{
+			float s[3];
+			lighting::cascade_splits(d, 3, s);
+			for (unsigned c = 0; c < 3; ++c) same = same && s[c] == classic_split(d, c);
+		}
+		float s80[3];
+		lighting::cascade_splits(80.0f, 3, s80);
+		std::printf("    80 m: %.2f / %.2f / %.2f m\n", s80[0], s80[1], s80[2]);
+		check(same, "up to 80 m the splits are exactly the classic lambda-0.6 scheme");
+		check(s80[2] == 80.0f, "the last cascade ends at the shadow distance");
+	}
+
+	void cascades_adapt_beyond_80m()
+	{
+		std::printf("sun cascades: a longer distance keeps the near cascade small (#466)\n");
+		float s80[3], s300[3], s1000[3];
+		lighting::cascade_splits(80.0f, 3, s80);
+		lighting::cascade_splits(300.0f, 3, s300);
+		lighting::cascade_splits(1000.0f, 3, s1000);
+		std::printf("    300 m: %.2f / %.2f / %.2f m (lambda %.3f), the classic scheme would give %.2f / %.2f\n",
+			s300[0], s300[1], s300[2], lighting::cascade_lambda(300.0f, 3), classic_split(300.0f, 0), classic_split(300.0f, 1));
+		std::printf("    1000 m: %.2f / %.2f / %.2f m (lambda %.3f)\n", s1000[0], s1000[1], s1000[2], lighting::cascade_lambda(1000.0f, 3));
+		check(s300[0] > s80[0] && s300[0] < 1.5f * s80[0] && s300[0] < 0.5f * classic_split(300.0f, 0),
+			"300 m: the first cascade grows by less than half (the classic scheme: x3.6)");
+		check(s1000[0] < 2.0f * s80[0], "1000 m: the first cascade stays under twice its 80 m size");
+		bool ordered = true, lambda_ok = true;
+		float prev_first = 0.0f;
+		for (float d = 80.0f; d <= 5000.0f; d *= 1.25f)
+		{
+			float s[3];
+			lighting::cascade_splits(d, 3, s);
+			ordered = ordered && s[0] > lighting::CASCADE_NEAR_Z && s[0] < s[1] && s[1] < s[2] && s[2] == d && s[0] >= prev_first;
+			const float l = lighting::cascade_lambda(d, 3);
+			lambda_ok = lambda_ok && l >= lighting::CASCADE_CLASSIC_LAMBDA && l <= lighting::CASCADE_MAX_LAMBDA;
+			prev_first = s[0];
+		}
+		check(ordered, "80 m .. 5 km: the splits rise strictly, the last is the distance, the first never shrinks");
+		check(lambda_ok, "the blend stays between the classic 0.6 and 0.97");
+	}
+
+	void cascades_pull_back()
+	{
+		std::printf("sun cascades: how far a cascade's box reaches back towards the light (#466)\n");
+		check(lighting::cascade_pull_back(80.0f, 14.0f) == 80.0f && lighting::cascade_pull_back(80.0f, 120.0f) == 80.0f
+			&& lighting::cascade_pull_back(40.0f, 10.0f) == 40.0f, "up to 80 m: the shadow distance, as before");
+		check(lighting::cascade_pull_back(300.0f, 20.0f) == 80.0f && lighting::cascade_pull_back(300.0f, 57.0f) == 114.0f
+			&& lighting::cascade_pull_back(300.0f, 370.0f) == 300.0f, "300 m: 80 m for the near cascade, the cascade's diameter beyond, at most the distance");
 	}
 };

@@ -1,6 +1,7 @@
 #include "SdlGpuRenderer.h"
 #include "SdlGpuResources.h"
 #include "../../Common/Platform.h"
+#include "../Lighting/CascadeSplits.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -289,8 +290,10 @@ namespace vortex::graphics::sdlgpu
 				lightDir = XMVector3Normalize(lightDir);
 				XMVECTOR lightUp = fabsf(XMVectorGetY(lightDir)) > 0.99f ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
 				XMMATRIX lightView = XMMatrixLookToLH(XMVectorZero(), lightDir, lightUp);
-				const float nearZ = 0.1f, farZ = m_dir_shadow_distance, lambda = 0.6f;
-				float splitNear = nearZ;
+				// the split scheme adapts to the distance (#466): the classic 0.6 blend up to 80 m, towards the logarithmic split beyond
+				float splits[CSM_CASCADES];
+				lighting::cascade_splits(m_dir_shadow_distance, CSM_CASCADES, splits);
+				float splitNear = lighting::CASCADE_NEAR_Z;
 				XMVECTOR eye = XMLoadFloat3(&m_camera_position);
 				XMVECTOR fwd = XMVectorSubtract(XMLoadFloat3(&m_camera_target), eye);
 				if (XMVectorGetX(XMVector3LengthSq(fwd)) > 1e-6f)
@@ -304,10 +307,7 @@ namespace vortex::graphics::sdlgpu
 					const float tanHalfX = tanHalfY * aspect;
 					for (u32 c = 0; c < CSM_CASCADES; ++c)
 					{
-						const float f = (float)(c + 1) / (float)CSM_CASCADES;
-						const float logSplit = nearZ * powf(farZ / nearZ, f);
-						const float uniSplit = nearZ + (farZ - nearZ) * f;
-						const float splitFar = uniSplit + lambda * (logSplit - uniSplit);
+						const float splitFar = splits[c];
 						XMVECTOR corners[8]; int k = 0;
 						for (int d = 0; d < 2; ++d)
 						{
@@ -331,7 +331,9 @@ namespace vortex::graphics::sdlgpu
 						float cx = floorf(XMVectorGetX(cLS) / worldPerTexel) * worldPerTexel;
 						float cy = floorf(XMVectorGetY(cLS) / worldPerTexel) * worldPerTexel;
 						const float cz = XMVectorGetZ(cLS);
-						XMMATRIX proj = XMMatrixOrthographicOffCenterLH(cx - radius, cx + radius, cy - radius, cy + radius, cz - radius - m_dir_shadow_distance, cz + radius);
+						// the box reaches back towards the light for casters outside the slice — the distance up to 80 m, beyond it
+						// the cascade's own size (#466: the depth bias is a fraction of this range)
+						XMMATRIX proj = XMMatrixOrthographicOffCenterLH(cx - radius, cx + radius, cy - radius, cy + radius, cz - radius - lighting::cascade_pull_back(m_dir_shadow_distance, radius), cz + radius);
 						XMStoreFloat4x4(&m_csm_vp[c], lightView * proj);
 						m_csm_splits[c] = splitFar;
 						m_csm_radius[c] = radius;

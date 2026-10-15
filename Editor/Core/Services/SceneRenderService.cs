@@ -2472,6 +2472,8 @@ namespace Editor.Core.Services
         private bool _hasDirectionalLight = false;
         // the sun as last submitted (the sky light's ground bounce reads it): colour × intensity and the direction's y
         private float _sunR = 1f, _sunG = 1f, _sunB = 1f, _sunIntensity = 0f, _sunDirY = -1f, _sunDirX = 0f, _sunDirZ = 0f;
+        // the scene's Directional Light's shadow settings as last submitted: a script's sun (#466) takes the ones it leaves out
+        private bool _sceneHasSun, _sceneSunCasts; private float _sceneSunStrength = 1f, _sceneSunBias = 0.0008f, _sceneSunDistance = 80f;
         private SkyLight.Coefficients _lastSkyLight;
         private float _lastAmbientStrength = 0.35f;
         /// <summary>With <see cref="DebugThirdPersonView"/>: render the first-person viewmodel (layer 1) as world
@@ -2497,6 +2499,28 @@ namespace Editor.Core.Services
             public float[] Gradient;   // top rgb, horizon rgb, bottom rgb — when no texture
         }
         public static SkyOverride ScriptSky;
+
+        /// <summary>The sun a game script set with Vortex.Lighting.SetDirectional (#466) — wins over the scene's Directional Light
+        /// (and over the default sun) until Lighting.ClearDirectional or the end of play, so the next scene-light submit no longer
+        /// resets it. Shadow values the script left out (null) are the scene's Directional Light's, else the classic defaults.</summary>
+        public sealed class SunOverride
+        {
+            public float DirX, DirY = -1f, DirZ, R = 1f, G = 1f, B = 1f, Intensity = 1f;
+            public bool? CastShadows;
+            public float? ShadowStrength;
+            public float? ShadowDistance;
+
+            /// <summary>The shadow values the renderer gets: the script's where it gave them, else the scene sun's (when the scene
+            /// has a Directional Light), else off / 1 / 80 m.</summary>
+            public void Resolve(bool sceneHasSun, bool sceneCasts, float sceneStrength, float sceneDistance,
+                                out bool castShadows, out float shadowStrength, out float shadowDistance)
+            {
+                castShadows = CastShadows ?? (sceneHasSun && sceneCasts);
+                shadowStrength = ShadowStrength ?? (sceneHasSun ? sceneStrength : 1f);
+                shadowDistance = ShadowDistance ?? (sceneHasSun ? sceneDistance : 80f);
+            }
+        }
+        public static SunOverride ScriptSun;
 
         /// <summary>The identity a light keeps in the renderer's light budget from frame to frame (#416): its entity's saved id
         /// folded to 64 bits — the same while the entity lives, whatever the light does (moves, flickers, changes colour), so
@@ -2542,8 +2566,11 @@ namespace Editor.Core.Services
                 SubmitEntityLightsRecursive(entity);
             }
 
+            // a script's sun (#466) wins over the scene's Directional Light and the default sun until it is cleared
+            _sceneHasSun = _hasDirectionalLight;
+            if (ScriptSun != null) ApplyScriptSun(ScriptSun);
             // If no lights in scene, use default directional light
-            if (!_hasSceneLights)
+            else if (!_hasSceneLights)
             {
                 // Default sun light (like Unity/Unreal default scene)
                 VortexAPI.SetDirectionalLightParams(
@@ -2852,13 +2879,17 @@ namespace Editor.Core.Services
                             // CSM (#24): ShadowType != None turns on the sun's cascade pass. Bias mapping:
                             // the component's legacy 0.05 default scales by 0.016 to land on the tuned
                             // CSM NDC bias (0.0008); user tweaks stay proportional (same idea as spots).
+                            // ShadowDistance (#466): the far end of the last cascade — it used to fall back to the wrapper's 80 m here
+                            _sceneSunCasts = light.ShadowType != ECS.Components.Lighting.ShadowType.None;
+                            _sceneSunStrength = light.ShadowStrength; _sceneSunBias = light.ShadowBias * 0.016f; _sceneSunDistance = light.ShadowDistance;
                             VortexAPI.SetDirectionalLightParams(
                                 dirX, dirY, dirZ,
                                 light.ColorR, light.ColorG, light.ColorB,
                                 light.Intensity,
-                                light.ShadowType != ECS.Components.Lighting.ShadowType.None,
+                                _sceneSunCasts,
                                 light.ShadowStrength,
-                                light.ShadowBias * 0.016f);
+                                _sceneSunBias,
+                                light.ShadowDistance);
                             // Soft = a 16-tap Poisson disk of 4 shadow texels (a penumbra), Hard = the 3x3 box
                             VortexAPI.SetDirectionalShadowSoftnessTexels(light.ShadowType == ECS.Components.Lighting.ShadowType.Soft ? 10.0f : 1.0f);   // the cap of the contact-hardening filter: the radius grows with the blocker distance, so a wide cap keeps contact shadows sharp
                             break;
@@ -2961,6 +2992,20 @@ namespace Editor.Core.Services
             }
             VortexAPI.ApplySkyboxTexture(_skyboxTextureId, exposure, rotationDeg, hdrMode);
             return true;
+        }
+
+        /// <summary>The sun a script set (#466): its direction, colour and intensity; the shadow values it left out are the scene
+        /// Directional Light's (as the last scene-light submit found it), else off / 1 / 80 m. It is the sun for the sky light's
+        /// ground bounce and the world radiance cache too. Lighting.SetDirectional calls it at once as well.</summary>
+        internal void ApplyScriptSun(SunOverride s)
+        {
+            bool sceneSun = _sceneHasSun;
+            s.Resolve(sceneSun, _sceneSunCasts, _sceneSunStrength, _sceneSunDistance, out bool cast, out float strength, out float distance);
+            VortexAPI.SetDirectionalLightParams(s.DirX, s.DirY, s.DirZ, s.R, s.G, s.B, s.Intensity, cast, strength, sceneSun ? _sceneSunBias : 0.0008f, distance);
+            float l = (float)Math.Sqrt(s.DirX * s.DirX + s.DirY * s.DirY + s.DirZ * s.DirZ);
+            if (l > 1e-6f) { _sunDirX = s.DirX / l; _sunDirY = s.DirY / l; _sunDirZ = s.DirZ / l; }
+            _sunR = s.R; _sunG = s.G; _sunB = s.B; _sunIntensity = s.Intensity;
+            _hasDirectionalLight = true;
         }
 
         /// <summary>The sky a script asked for (#349): its texture through the sky pass, or its gradient.</summary>

@@ -873,6 +873,7 @@ namespace Editor.Scripting
             // Scripted scene-atmosphere state starts clean each run (a previous run's ambient/fog/sky must not leak).
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
             Editor.Core.Services.SceneRenderService.ScriptSky = null;
+            Editor.Core.Services.SceneRenderService.ScriptSun = null;   // #466
             // The authored per-scene environment (fog + post-FX) is the baseline every run starts from —
             // the End() above wiped ALL post-FX, including what ActivateEntities just applied on boot.
             // Scripts may override from Start() onwards.
@@ -1429,6 +1430,7 @@ namespace Editor.Scripting
             // EDITOR viewport after leaving play mode (the fog CB is persistent frame state).
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = null;
             Editor.Core.Services.SceneRenderService.ScriptSky = null;   // #349
+            Editor.Core.Services.SceneRenderService.ScriptSun = null;   // #466: the scene's Directional Light again
             try { Editor.DllWrapper.VortexAPI.SetFog(0f, 0f, 0f, 0f, 0f, 0f); } catch { }
             try { Editor.DllWrapper.VortexAPI.RenderDistance(0f); Editor.DllWrapper.VortexAPI.GeometricLod(true, 40f, 120f); } catch { }   // #360 defaults
             // Post-FX is persistent renderer state too — scripted grain/vignette must not stick to the

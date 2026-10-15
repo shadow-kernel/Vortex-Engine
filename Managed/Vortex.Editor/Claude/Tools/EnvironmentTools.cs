@@ -281,7 +281,8 @@ namespace VortexEditor.Claude.Tools
         }
 
         [McpServerTool(Name = "environment_info", ReadOnly = true, Idempotent = true)]
-        [Description("The scene's environment settings (fog, SSAO, bloom, volumetrics, grading, vignette) and its sky and directional light.")]
+        [Description("The scene's environment settings (fog, SSAO, bloom, volumetrics, grading, vignette) and its sky and directional light " +
+                     "(its shadow_distance is the far end of the sun's shadows in metres; set it with set_component_properties on the Light).")]
         public static object EnvironmentInfo()
         {
             var scene = Scene();
@@ -292,7 +293,7 @@ namespace VortexEditor.Claude.Tools
                 if (s != null && sky == null) sky = new { entity = e.Name, type = s.SkyboxType.ToString(), texture = s.TexturePath, exposure = s.Exposure, ambient = s.AmbientIntensity };
                 var l = e.GetComponent<Light>();
                 if (l != null && l.LightType == LightType.Directional && sun == null)
-                    sun = new { entity = e.Name, rotation = e.Transform != null ? new[] { e.Transform.LocalRotation.X, e.Transform.LocalRotation.Y, e.Transform.LocalRotation.Z } : null, intensity = l.Intensity, color = new[] { l.ColorR, l.ColorG, l.ColorB }, shadows = l.ShadowType.ToString() };
+                    sun = new { entity = e.Name, rotation = e.Transform != null ? new[] { e.Transform.LocalRotation.X, e.Transform.LocalRotation.Y, e.Transform.LocalRotation.Z } : null, intensity = l.Intensity, color = new[] { l.ColorR, l.ColorG, l.ColorB }, shadows = l.ShadowType.ToString(), shadow_distance = l.ShadowDistance };
             }
             return new { settings = Info(scene.Settings), sky, sun };
         }

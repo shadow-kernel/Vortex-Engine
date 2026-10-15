@@ -1986,6 +1986,9 @@ namespace Vortex
         }
         /// <summary>How dark the shadowed area gets: 1 = pitch black (horror default), 0 = shadows off.</summary>
         public float ShadowStrength { get { return _c.ShadowStrength; } set { _c.ShadowStrength = value; Dirty(); } }
+        /// <summary>A Directional light's shadow distance (m, #466): how far from the camera its shadows reach — the far end of the
+        /// last shadow cascade. 80 by default; 200–500 for a road, a city or a flight (5 .. 10000). Point and spot lights ignore it.</summary>
+        public float ShadowDistance { get { return _c.ShadowDistance; } set { _c.ShadowDistance = value; Dirty(); } }
 
         /// <summary>Procedural flicker in [0..1] — multiply into Intensity each Update() for a dying
         /// bulb: <c>light.Intensity = 40f * Light.Flicker(t, 14f);</c>. Two detuned sines, cheap + loopless.</summary>
@@ -2010,13 +2013,33 @@ namespace Vortex
             Editor.Core.Services.SceneRenderService.ScriptAmbientOverride = strength;
             Editor.DllWrapper.VortexAPI.SetAmbientLightStrength(strength);
         }
-        /// <summary>The sun/key directional light: direction (dx,dy,dz), color (r,g,b 0..1), and intensity.
-        /// castShadows (#24) renders cascaded shadow maps for the sun — moonlight through a window throws
-        /// real moving shadows; shadowDistance = how far from the camera shadows reach (world units).</summary>
+        /// <summary>The sun/key directional light: direction (dx,dy,dz — the way the light travels), color (r,g,b 0..1), and
+        /// intensity. It replaces the scene's Directional Light (and the default sun) until <see cref="ClearDirectional"/> or the
+        /// end of play — scene re-submits no longer reset it (#466), so a day/night script can drive the sun every frame.
+        /// castShadows (#24) renders cascaded shadow maps for the sun — moonlight through a window throws real moving shadows;
+        /// shadowDistance = how far from the camera they reach (m; 80 by default, 200–500 for roads, cities, flights). Shadow
+        /// values left out keep the scene Directional Light's settings (off / 1 / 80 m without one).
+        /// <c>Lighting.SetDirectional(-0.3f, -0.8f, 0.5f, 1f, 0.95f, 0.85f, 5f, castShadows: true, shadowDistance: 300f);</c></summary>
         public static void SetDirectional(float dx, float dy, float dz, float r, float g, float b, float intensity,
-                                          bool castShadows = false, float shadowStrength = 1f, float shadowDistance = 80f)
-            { Editor.DllWrapper.VortexAPI.SetDirectionalLightParams(dx, dy, dz, r, g, b, intensity,
-                  castShadows, shadowStrength, 0.0008f, shadowDistance); }
+                                          bool? castShadows = null, float? shadowStrength = null, float? shadowDistance = null)
+        {
+            var sun = new Editor.Core.Services.SceneRenderService.SunOverride
+            {
+                DirX = dx, DirY = dy, DirZ = dz, R = r, G = g, B = b, Intensity = intensity,
+                CastShadows = castShadows, ShadowStrength = shadowStrength, ShadowDistance = shadowDistance
+            };
+            Editor.Core.Services.SceneRenderService.ScriptSun = sun;
+            Editor.Core.Services.SceneRenderService.Instance.ApplyScriptSun(sun);   // at once; every scene-light submit applies it again
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+        }
+
+        /// <summary>Hands the sun back to the scene's Directional Light (or the default sun) after <see cref="SetDirectional"/>.</summary>
+        public static void ClearDirectional()
+        {
+            Editor.Core.Services.SceneRenderService.ScriptSun = null;
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+        }
+
         public static void ClearLights() { Editor.DllWrapper.VortexAPI.ClearAllLights(); }
     }
 

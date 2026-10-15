@@ -43,6 +43,7 @@ namespace Editor.ECS.Components.Lighting
         private float _shadowNormalBias = 0.4f;
         private int _shadowResolution = 2048;
         private int _cullingMask = -1;
+        private float _shadowDistance = 80f;
 
         public override string DisplayName => $"{_lightType} Light";
         public override string IconCode => "\uE793";
@@ -190,6 +191,25 @@ namespace Editor.ECS.Components.Lighting
         {
             get => _cullingMask;
             set => SetProperty(ref _cullingMask, value, nameof(CullingMask));
+        }
+
+        /// <summary>
+        /// How far from the camera a Directional light's shadows reach (m) — the far end of its last shadow cascade (#466).
+        /// 80 m by default; a road, a city or a flight wants 200–500 m. The cascades adapt: the near one stays sharp and
+        /// the last one stretches out. Point and spot lights ignore it (their shadows end at their range).
+        /// </summary>
+        [DataMember(Name = "shadowDistance", Order = 24)]
+        public float ShadowDistance
+        {
+            get => _shadowDistance;
+            set => SetProperty(ref _shadowDistance, float.IsNaN(value) ? 80f : (value < 5f ? 5f : (value > 10000f ? 10000f : value)), nameof(ShadowDistance));
+        }
+
+        [OnDeserializing]
+        private void OnDeserializingLight(StreamingContext context)
+        {
+            // DataContract skips constructors: a light saved before #466 has no shadowDistance and keeps the classic 80 m
+            _shadowDistance = 80f;
         }
 
         // NOTE: the light's enabled flag is the base Component.IsEnabled ("isEnabled", Order 1). Light used to
