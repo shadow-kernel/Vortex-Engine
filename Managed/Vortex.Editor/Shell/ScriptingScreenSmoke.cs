@@ -41,8 +41,12 @@ namespace VortexEditor.Shell
                 var cur = Vortex.Screen.CurrentDisplayMode;
                 log.Log("scripting screen: " + modes.Length + " display modes (" + string.Join(", ", modes.Take(4).Select(m => m.ToString())) + (modes.Length > 4 ? ", …" : "")
                     + "), current " + cur + " at " + cur.Scale + "×");
-                if (modes.Length == 0) { log.LogError("scripting screen: Screen.DisplayModes() lists nothing for the main display"); ok = false; }
-                if (cur.Width <= 0 || cur.Height <= 0) { log.LogError("scripting screen: Screen.CurrentDisplayMode is unknown"); ok = false; }
+                if (modes.Length == 0 && cur.Width <= 0) log.Log("scripting screen: this machine reports no display (a headless runner) — the display-mode part is skipped");
+                else
+                {
+                    if (modes.Length == 0) { log.LogError("scripting screen: Screen.DisplayModes() lists nothing for the main display"); ok = false; }
+                    if (cur.Width <= 0 || cur.Height <= 0) { log.LogError("scripting screen: Screen.CurrentDisplayMode is unknown"); ok = false; }
+                }
 
                 float up = Vortex.Settings.SetRenderResolution(pw * 2, ph * 2);
                 var frame = await CameraSkySmoke.Sample("screen_supersampled.bmp", 0.5, 0.5);
