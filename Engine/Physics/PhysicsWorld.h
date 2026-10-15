@@ -61,6 +61,9 @@ namespace vortex::physics {
 	inline constexpr u32 lock_rotation_y{ 1u << 4 };
 	inline constexpr u32 lock_rotation_z{ 1u << 5 };
 
+	// Raycast flags (raycast_ex)
+	inline constexpr u32 raycast_solid{ 1u << 0 };   // convex shapes are solid: a ray that starts inside one hits it at distance 0
+
 	// Contact event kinds
 	inline constexpr s32 contact_added{ 0 };
 	inline constexpr s32 contact_persisted{ 1 };
@@ -158,10 +161,27 @@ namespace vortex::physics {
 	f32  get_mass(u32 body);                                                       // 0 for static bodies
 
 	// ---- Queries ----------------------------------------------------------------------------------------
+	// Closest hit along `dir`. Rays that start inside geometry (#418): a convex shape (box, sphere, capsule, cylinder,
+	// convex hull) that CONTAINS the origin is not hit — the ray reports what lies beyond it; triangle meshes and height
+	// fields are surfaces and are hit from either side. An origin ON a surface (within 1 mm of it) pointing into it hits
+	// it at distance 0; pointing away it does not, for meshes too. The normal always faces the origin. raycast() = raycast_ex()
+	// without flags and without ignored entities.
 	bool raycast(const f32* origin, const f32* dir /*unit*/, f32 max_dist, u32 layer_mask,
+		f32* out_point, f32* out_normal, f32* out_dist, u64* out_entity, u32* out_body);
+	// flags: raycast_solid = Jolt's solid convex shapes (an origin inside one is a hit at distance 0). The bodies in
+	// `ignore_bodies` (body handles) and the capsules of the characters in `ignore_characters` (character handles) are
+	// never hit (#406 / #418) — a ray that starts inside the caller's own collider or capsule passes through it, however
+	// deep the origin is. (Handles, not entity ids: an entity loaded from a scene file carries no unique engine id.)
+	bool raycast_ex(const f32* origin, const f32* dir /*unit*/, f32 max_dist, u32 layer_mask, u32 flags,
+		const u32* ignore_bodies, s32 ignore_body_count, const u32* ignore_characters, s32 ignore_character_count,
 		f32* out_point, f32* out_normal, f32* out_dist, u64* out_entity, u32* out_body);
 	s32  overlap_sphere(const f32* center, f32 radius, u32 layer_mask,
 		u64* out_entities, u32* out_bodies, s32 max_count);
+	// Every body whose shape contains the point (#418: "is this point inside something?"), one entry per body. Convex
+	// shapes are solid; a triangle mesh contains a point with an odd number of its triangles straight above it AND
+	// straight below it — what a closed mesh encloses (an open one, a roof or a cave shell, contains nothing); height
+	// fields contain nothing.
+	s32  overlap_point(const f32* point, u32 layer_mask, u64* out_entities, u32* out_bodies, s32 max_count);
 
 	// Contact events since the previous drain (sensor and solid contacts). Writes up to max_count events, removes
 	// the written ones from the queue and returns the count written.
@@ -169,12 +189,20 @@ namespace vortex::physics {
 
 	// ---- Character controller (Jolt CharacterVirtual, issue #105) ---------------------------------------
 	// `pos` is the character's feet; radius/height describe the capsule (height = total height).
+	// The character's inner body (a kinematic capsule on the CHARACTER layer, so rigid bodies and queries see the
+	// character) has no body handle; its user data is character_user_data | the character handle (#406), so a query
+	// that hits the capsule reports body 0 and that value as its entity — the caller maps it to whatever the character is.
+	inline constexpr u64 character_user_data{ 1ull << 63 };
 	u32  character_create(f32 radius, f32 height, const f32* pos, f32 max_slope_deg, f32 step_height, f32 mass);
-	void character_destroy(u32 character);
+	void character_destroy(u32 character);   // removes the inner body from the world with it
 	void character_set_position(u32 character, const f32* pos);
 	// desired_velocity = what the game wants this frame (horizontal move + vertical from gravity/jump). The
 	// controller slides along walls, walks stairs (step_height), sticks to floors and pushes DYNAMIC bodies.
 	void character_move(u32 character, const f32* desired_velocity, f32 dt,
+		f32* out_pos, f32* out_velocity, s32* out_grounded, f32* out_ground_normal);
+	// #417: character_move that passes through the listed bodies (body handles: the moving entity's own colliders).
+	void character_move_ex(u32 character, const f32* desired_velocity, f32 dt,
+		const u32* ignore_bodies, s32 ignore_body_count,
 		f32* out_pos, f32* out_velocity, s32* out_grounded, f32* out_ground_normal);
 
 	// ---- Constraints / joints (issue #103) ---------------------------------------------------------------

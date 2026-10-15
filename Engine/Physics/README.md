@@ -64,6 +64,17 @@ All entry points are `extern "C"` + `EDITOR_INTERFACE`, plain C types only. The 
   scaled to the given mass, `EOverrideMassProperties::MassAndInertiaProvided`).
 * **Lock flags** (bitmask): bit0-2 lock position X/Y/Z, bit3-5 lock rotation X/Y/Z — the same bit layout as
   `JPH::EAllowedDOFs`. Locking all six is rejected (logged) because Jolt cannot simulate a body with no DOFs.
+* **Raycasts** (#418): `PhysicsRaycast` returns the closest hit. A convex shape (box, sphere, capsule, cylinder,
+  convex hull) that *contains* the origin is not hit — the ray reports what lies beyond it (Jolt's
+  `mTreatConvexAsSolid = false`, convex back faces ignored); triangle meshes and height fields are surfaces and are hit
+  from either side; the reported normal always faces the origin. `PhysicsRaycastEx` adds `flags` (bit 0 = solid convex
+  shapes: an origin inside one is a hit at distance 0), `ignoreBodies` (body handles) and `ignoreCharacters` (character
+  handles): those bodies and character capsules are filtered inside the cast by a `BodyFilter` (#406 — the caller's own
+  colliders, ragdoll parts and capsule; this works however deep inside them the ray starts). Handles, not entity ids:
+  entities loaded from a scene file carry no unique engine id (they all read 0), so no filter may rely on user data.
+* **Point queries** (#418): `PhysicsOverlapPoint(point, layerMask, outEntities, outBodies, maxCount)` lists every body
+  whose shape contains the point (Jolt `CollidePoint`: convex shapes are solid, a closed mesh contains what it
+  encloses, height fields contain nothing) — the "am I inside something?" question rays no longer answer.
 * **Contacts**: `PhysicsContact` = `{entityA, entityB, bodyA, bodyB, point[3], normal[3] (A→B), impulse,
   kind (0 added / 1 persisted / 2 removed), isTrigger}`. Events are reported per Jolt sub-shape pair (one per body
   pair for primitive shapes); persisted events come every step; `impulse` is an estimate (approach velocity ×
@@ -73,11 +84,17 @@ All entry points are `extern "C"` + `EDITOR_INTERFACE`, plain C types only. The 
 * **Character controller**: `PhysicsCharacterCreate(radius, height, feetPos, maxSlopeDeg, stepHeight, mass)`
   builds a `CharacterVirtual` with a capsule whose origin is at the feet, a supporting volume that only accepts
   the lower hemisphere and an inner kinematic body in the CHARACTER layer (so rigid bodies and queries see the
-  character). `PhysicsCharacterMove` sets the desired velocity (horizontal move + vertical from gravity/jump —
+  character). The inner body has no body handle; its user data is `(1 << 63) | the character handle` (#406), so rays,
+  overlaps and contacts on the capsule report body 0 and that value — the caller maps it to its character (it used to
+  be 0, which named nobody). `PhysicsCharacterDestroy` removes the inner body from the world.
+  `PhysicsCharacterMove` sets the desired velocity (horizontal move + vertical from gravity/jump —
   the controller does not add gravity itself) and runs `ExtendedUpdate` (stick-to-floor 0.5 m, stair step =
   `stepHeight`). `outVelocity` is the velocity the controller used (desired velocity with components into steep
   slopes cancelled); when `outGrounded` is 1 the game should reset its vertical velocity before the next call.
   The character is moved in `PhysicsCharacterMove`, independent of `PhysicsStep`; call both once per fixed step.
+  `PhysicsCharacterMoveEx(c, desiredVelocity, dt, ignoreBodies, ignoreBodyCount, …)` (#417) is the same move with a
+  `BodyFilter` that passes through the listed bodies (handles) — the moving entity's own colliders, which would
+  otherwise push the character out of its own body.
 * **Debug lines**: `PhysicsGetDebugLines` fills `x0 y0 z0 x1 y1 z1` segments of every enabled joint first (see
   "Joints"), then every body's shape (boxes: 12 edges; spheres: 3 circles; capsules: rings + edges + cap arcs;
   cylinders: rings + edges; convex hulls: face edges; meshes and everything else: Jolt's triangle iterator, capped at
