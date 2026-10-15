@@ -42,7 +42,9 @@ EDITOR_INTERFACE s32 AudioGetWaveform(const char* path, f32* peaks, s32 bin_coun
 }
 
 // reverb_send: the voice's reverb send from its first sample (#496) — reverbZoneMix x listener zone weight, 0..1.
-EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus, s32 hrtf, s32 occlusion, f32 reverb_send)
+// start_time: the mixer frame (AudioGetDspTime) the voice starts on, 0 = now; start_position: seconds into the clip (#465).
+EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus, s32 hrtf, s32 occlusion, f32 reverb_send,
+	u64 start_time, d64 start_position)
 {
 	runtime::audio::voice_params params{};
 	params.volume = volume;
@@ -55,7 +57,108 @@ EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32
 	params.hrtf = hrtf != 0;              // Steam Audio HRTF (#21), opt-in; no-op unless SA is available
 	params.occlusion = occlusion != 0;
 	params.reverb_send = reverb_send;
+	params.start_time = start_time;
+	params.start_position = start_position;
 	return runtime::audio::voice_play(path, params);
+}
+
+// ---- playback position + the mixer clock (#465) -----------------------------------
+
+// The mixer clock: frames mixed since the engine started (Unity's dspTime x rate); the rate goes to *sample_rate.
+EDITOR_INTERFACE u64 AudioGetDspTime(s32* sample_rate)
+{
+	if (sample_rate) *sample_rate = (s32)runtime::audio::engine_sample_rate();
+	return runtime::audio::engine_time_frames();
+}
+
+// The voice's mixer position and clip length in its own frames at *sample_rate; 0 = stale handle.
+EDITOR_INTERFACE s32 AudioGetVoicePosition(u64 handle, u64* cursor, u64* length, s32* sample_rate)
+{
+	u32 rate = 0;
+	const bool ok = runtime::audio::voice_get_position(handle, cursor, length, &rate);
+	if (sample_rate) *sample_rate = (s32)rate;
+	return ok ? 1 : 0;
+}
+
+// Seek a voice to `seconds` into its clip (decoded or streamed), applied by the mixer before its next read.
+EDITOR_INTERFACE void AudioSeekVoice(u64 handle, d64 seconds)
+{
+	runtime::audio::voice_seek(handle, seconds);
+}
+
+// ---- adaptive music (#437): a .vmusic's stems mixed sample-locked in one voice ------------
+
+// Plays `count` stems as one music voice (priority 0, never pitched). Frames are at the engine rate (AudioGetDspTime):
+// the loop region [loop_start, loop_end) (loop_end 0 = the longest stem), the start frame, and start_time — the mixer
+// frame the music begins on (0 = now). File stems stream unless `decode`. 0 = a stem could not be opened.
+EDITOR_INTERFACE u64 AudioPlayMusic(const char** stems, s32 count, const f32* state_gains, const f32* param_gains,
+	u64 loop_start, u64 loop_end, u64 start_frame, s32 loop, s32 decode, s32 out_bus, f32 volume, u64 start_time)
+{
+	if (!stems || count <= 0) return runtime::audio::invalid_voice;
+	runtime::audio::music_desc desc{};
+	desc.stems = stems;
+	desc.stem_count = (u32)count;
+	desc.state_gains = state_gains;
+	desc.param_gains = param_gains;
+	desc.loop_start = loop_start;
+	desc.loop_end = loop_end;
+	desc.start_frame = start_frame;
+	desc.loop = loop != 0;
+	desc.decode = decode != 0;
+	runtime::audio::voice_params params{};
+	params.volume = volume;
+	params.priority = 0;				// the music channel is never stolen
+	params.bus = out_bus;
+	params.start_time = start_time;
+	return runtime::audio::voice_play_music(desc, params);
+}
+
+// Ramp one gain stage (0 = the state's stem volumes, 1 = the parameter mapping's) of every stem to `gains`, beginning
+// exactly when the music has played `at_frame` frames (0 = next mix), over `ramp_frames`.
+EDITOR_INTERFACE void AudioMusicSchedule(u64 handle, s32 stage, const f32* gains, s32 count, u64 at_frame, u64 ramp_frames)
+{
+	if (!gains || count <= 0) return;
+	runtime::audio::voice_music_schedule(handle, stage == 1 ? runtime::audio::music_stage::parameter : runtime::audio::music_stage::state,
+		gains, (u32)count, at_frame, ramp_frames);
+}
+
+// A stinger: the clip mixed once into the music from its frame `at_frame`. 0 = could not be opened / no free slot.
+EDITOR_INTERFACE s32 AudioMusicPlayStinger(u64 handle, const char* path, f32 volume, u64 at_frame)
+{
+	return runtime::audio::voice_music_stinger(handle, path, volume, at_frame) ? 1 : 0;
+}
+
+// The music's clock, mirrored by Editor.DllWrapper.VortexAudio.MusicClock (blittable, this field order).
+struct AudioMusicClockData
+{
+	u64 played, position, loops, loop_start, loop_end, length, last_state_frame;
+	d64 seconds_since_mix;
+	s32 sample_rate;
+	s32 stalled;
+};
+
+EDITOR_INTERFACE s32 AudioMusicGetClock(u64 handle, AudioMusicClockData* out)
+{
+	if (!out) return 0;
+	runtime::audio::music_clock c{};
+	if (!runtime::audio::voice_music_clock(handle, &c)) { *out = AudioMusicClockData{}; return 0; }
+	out->played = c.played;
+	out->position = c.position;
+	out->loops = c.loops;
+	out->loop_start = c.loop_start;
+	out->loop_end = c.loop_end;
+	out->length = c.length;
+	out->last_state_frame = c.last_state_frame;
+	out->seconds_since_mix = c.seconds_since_mix;
+	out->sample_rate = (s32)c.sample_rate;
+	out->stalled = c.stalled ? 1 : 0;
+	return 1;
+}
+
+// One stem's gain (state x parameter) after the last mix; -1 = no such stem / not a music voice.
+EDITOR_INTERFACE f32 AudioMusicGetStemGain(u64 handle, s32 stem)
+{
+	return stem < 0 ? -1.0f : runtime::audio::voice_music_stem_gain(handle, (u32)stem);
 }
 
 // Steam Audio v2 (issue #21): project master switch + occlusion geometry. Both no-op unless phonon.dll loads.
@@ -138,6 +241,13 @@ EDITOR_INTERFACE f32 AudioGetVoiceReverbSend(u64 handle)
 EDITOR_INTERFACE void AudioFadeVoice(u64 handle, f32 target, f32 seconds, s32 stop_when_done)
 {
 	runtime::audio::voice_fade(handle, target, seconds, stop_when_done != 0);
+}
+
+// The same with an explicit start level (a fade-in from silence) — one request, so a fade-in issued right after
+// the voice started begins at `from` instead of collapsing into a fade from the current level.
+EDITOR_INTERFACE void AudioFadeVoiceFrom(u64 handle, f32 from, f32 target, f32 seconds, s32 stop_when_done)
+{
+	runtime::audio::voice_fade_from(handle, from, target, seconds, stop_when_done != 0);
 }
 
 // Hands a .vpak audio entry to the native engine — the name then plays exactly

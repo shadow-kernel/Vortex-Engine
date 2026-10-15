@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Common/CommonHeaders.h"
+#include "AudioMusic.h"
 
 // Voice management (issue #7): a fixed, preallocated pool of playback voices on
 // top of the AudioEngine core, with priority-driven stealing when the pool is
@@ -32,6 +33,12 @@ namespace vortex::runtime::audio {
 		// Reverb send 0..1 from the first sample on (#496): a one-shot that is over before the bridge's next
 		// per-frame voice_set_reverb_send would otherwise stay dry — a gunshot's transient is what the room answers.
 		f32 reverb_send{ 0.0f };
+		// Scheduled start (#465): the mixer frame (engine_time_frames) the first sample plays on — sample-accurate,
+		// a pitched voice one frame later (the resampler's constant latency, the same for every pitched voice).
+		// 0, or a frame the mixer has already passed, starts at once.
+		u64 start_time{ 0 };
+		// Where in the clip playback begins, in seconds (#465) — AudioSource.Time set before Play().
+		d64 start_position{ 0.0 };
 	};
 
 	// 3D properties mirrored from the AudioSource component. Stored per voice by
@@ -76,11 +83,36 @@ namespace vortex::runtime::audio {
 	// The current reverb send (diagnostics, tests); -1 for a stale handle or while the reverb node is down.
 	f32 voice_get_reverb_send(voice_handle handle);
 
+	// Playback position (#465): the frame the mixer reads next and the clip's length (0 = unknown), both in the
+	// voice's own frames at *sample_rate — the engine rate for decoded and file-streamed clips (they are converted
+	// on load), the clip's rate for streamed pak clips. It advances in mixer blocks at the voice's pitch, holds while
+	// paused, and a seek not yet applied reads as its target. False (all 0) for a stale handle.
+	bool voice_get_position(voice_handle handle, u64* cursor, u64* length, u32* sample_rate);
+	// Jump to `seconds` into the clip (#465): the mixer applies it before its next read, for decoded and streamed
+	// voices alike (a streamed voice is silent while its stream refills from the new spot). Clamped to the clip,
+	// wrapped for a looping voice; seeking a one-shot to its end finishes it. Safe no-op for a stale handle.
+	void voice_seek(voice_handle handle, d64 seconds);
+
+	// Adaptive music (#437): a stem group (AudioMusic.h) played as ONE voice — routed through its bus, faded, paused,
+	// sought and stopped like any voice (it never pitches: a music frame is a mixer frame, and it stays 2D and dry).
+	// The voice owns the group. Uses params.volume / priority / bus / start_time; desc.loop decides whether it ends.
+	// invalid_voice when a stem cannot be opened (checked before a slot is taken, so it never steals) or every voice
+	// outranks it.
+	voice_handle voice_play_music(const music_desc& desc, const voice_params& params);
+	// The music_* calls on a music voice's group; safe no-ops (false / -1) for any other or stale handle.
+	void voice_music_schedule(voice_handle handle, music_stage stage, const f32* gains, u32 count, u64 at_frame, u64 ramp_frames);
+	bool voice_music_stinger(voice_handle handle, const char* path, f32 volume, u64 at_frame);
+	bool voice_music_clock(voice_handle handle, music_clock* out);
+	f32 voice_music_stem_gain(voice_handle handle, u32 stem);
+
 	// Fade envelope (issue #17): a sample-accurate multiplier ON TOP of the voice
 	// volume (final gain = volume x bus x envelope — no write conflicts, no zipper).
 	// target 0..1; starting a new fade retargets smoothly from the CURRENT value.
 	// stop_when_done releases the voice once the fade completes (FadeOut semantics).
 	void voice_fade(voice_handle handle, f32 target, f32 seconds, bool stop_when_done);
+	// The same fade with an explicit start level 0..1 (a fade-in from silence): one request with both ends, so it
+	// cannot collapse with a snap issued in the same frame (miniaudio keeps one pending fade per sound).
+	void voice_fade_from(voice_handle handle, f32 from, f32 target, f32 seconds, bool stop_when_done);
 
 	// Stats for diagnostics and the future mixer window meters.
 	u32 voices_active_count();

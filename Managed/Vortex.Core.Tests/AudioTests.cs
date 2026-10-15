@@ -254,5 +254,64 @@ public class Shots : VortexBehaviour
             var errors = Editor.Scripting.RoslynScriptCompiler.CheckSources(new[] { ("Shots.cs", code) });
             t.True(errors.Count == 0, string.Join(" | ", errors.ConvertAll(e => e.Id + " " + e.Message)));
         }
+
+        [Test]
+        public static void TimeSamplesCountTheClipsOwnSamples(TestContext t)
+        {
+            // #465: a 44.1 kHz clip decoded for a 48 kHz mixer has its cursor in mixer frames; TimeSamples counts the clip's
+            t.Equal(44100L, AudioPlaybackService.SamplesAtClipRate(48000, 48000, 44100), "one second");
+            t.Equal(22050L, AudioPlaybackService.SamplesAtClipRate(24000, 48000, 44100), "half a second");
+            t.Equal(26460000L, AudioPlaybackService.SamplesAtClipRate(28800000, 48000, 44100), "ten minutes in, still sample-exact");
+            t.Equal(12345L, AudioPlaybackService.SamplesAtClipRate(12345, 44100, 44100), "same rate (a streamed pak clip): the cursor itself");
+            t.Equal(777L, AudioPlaybackService.SamplesAtClipRate(777, 48000, 0), "unknown clip rate: the cursor");
+        }
+
+        [Test]
+        public static void PlaybackPositionApiCompilesAndOldCallsStillBind(TestContext t)
+        {
+            // #465: the position members read like Unity's, and Time.DeltaTime still means the frame time in a behaviour
+            const string code = @"using Vortex;
+public class Fiesta : VortexBehaviour
+{
+    AudioSource band;
+    double next;
+    public override void Start() { band = GetAudioSource(); band.Time = 12.5f; band.Play(); next = Audio.DspTime + 0.5; }
+    public override void Update(float dt)
+    {
+        float beatPhase = band.Time % 0.5f;
+        float progress = band.NormalizedTime;
+        int samples = band.TimeSamples;
+        float len = band.Length;
+        if (Audio.DspTime > next - 0.1) { band.PlayScheduled(next); next += 2.0; }
+        band.NormalizedTime = 0.5f;
+        band.TimeSamples = samples + 441;
+        float music = Audio.Music.Time + Audio.Music.Length + Audio.Music.NormalizedTime + Audio.Music.TimeSamples;
+        Audio.Music.Time = 3f;
+        float frame = Time.DeltaTime;
+        band.Play(); band.Stop(); band.Pause(); band.Resume(); band.FadeTo(0.5f, 1f);
+        bool on = band.IsPlaying; band.Volume = 0.5f; band.Pitch = 1.1f; band.Loop = true; band.Clip = ""a.wav"";
+    }
+}";
+            var errors = Editor.Scripting.RoslynScriptCompiler.CheckSources(new[] { ("Fiesta.cs", code) });
+            t.True(errors.Count == 0, string.Join(" | ", errors.ConvertAll(e => e.Id + " " + e.Message)));
+        }
+
+        [Test]
+        public static void PlaybackPositionIsInTheScriptingReference(TestContext t)
+        {
+            // what get_scripting_api prints under the new members (#465)
+            string Doc(System.Reflection.MemberInfo m) => Editor.Scripting.ScriptApiDocs.Summary(m) ?? "";
+            var src = typeof(Vortex.AudioSource);
+            string time = Doc(src.GetProperty("Time")), scheduled = Doc(src.GetMethod("PlayScheduled"));
+            string samples = Doc(src.GetProperty("TimeSamples")), dsp = Doc(typeof(Vortex.Audio).GetProperty("DspTime"));
+            string music = Doc(typeof(Vortex.Audio.Music).GetProperty("Time"));
+            t.True(time.Contains("mixer") && time.Contains("Pause") && time.Contains("Streaming") && time.Contains("while stopped"), "Time: " + time);
+            t.True(scheduled.Contains("Sample-accurate") && scheduled.Contains("Audio.DspTime") && scheduled.Contains("IsPlaying"), "PlayScheduled: " + scheduled);
+            t.True(samples.Contains("sample rate") && samples.Contains("timeSamples"), "TimeSamples: " + samples);
+            t.True(dsp.Contains("dspTime") && dsp.Contains("PlayScheduled"), "DspTime: " + dsp);
+            t.True(music.Contains("seek"), "Music.Time: " + music);
+            foreach (var name in new[] { "Length", "NormalizedTime" })
+                t.True(Doc(src.GetProperty(name)).Length > 0, "AudioSource." + name + " has a summary");
+        }
     }
 }
