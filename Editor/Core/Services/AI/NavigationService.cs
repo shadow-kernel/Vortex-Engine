@@ -447,6 +447,7 @@ namespace Editor.Core.Services.AI
             public float Yaw;
             public bool YawKnown;
             public bool Active = true;
+            public bool? UpdatePosition, UpdateRotation;   // #434: runtime overrides of the component (null = the component's)
         }
 
         private static readonly Dictionary<GameEntity, AgentRec> _agents = new Dictionary<GameEntity, AgentRec>();
@@ -534,7 +535,17 @@ namespace Editor.Core.Services.AI
                     AddToCrowd(r, feet);
                     continue;
                 }
-                if (r.HasLastFeet && (feet - r.LastFeet).LengthSquared() > 0.05f * 0.05f)
+                if (Follows(r))
+                {
+                    // #434: the entity moves itself (Update Position off, root motion #113): the agent follows it before the
+                    // crowd steers — along the navmesh with its path kept, or placed there with its target kept when the walk
+                    // cannot follow (a teleport, a jump) — and carries the entity's own velocity, what the other agents avoid.
+                    // (A move of more than 5 cm used to count as a teleport and re-plan the path.)
+                    var entityVel = r.HasLastFeet && dt > 1e-5f ? (feet - r.LastFeet) / dt : SysVec.Zero;
+                    Fill(_fa, feet); Fill(_fb, entityVel);
+                    Follow(r, _fa, _fb);
+                }
+                else if (r.HasLastFeet && (feet - r.LastFeet).LengthSquared() > 0.05f * 0.05f)
                 {
                     // Moved by a script / physics since our last write: teleport and keep the destination.
                     Fill(_fa, feet);
@@ -562,15 +573,12 @@ namespace Editor.Core.Services.AI
                 r.StateValid = true;
                 var nav = new SysVec(r.State.PosX, r.State.PosY, r.State.PosZ);
                 var feet = nav;
-                bool rootDriven = Animation.AnimationService.Instance.RootMotionDrives(r.Entity);
-                if (rootDriven)
+                if (Follows(r))
                 {
-                    // #113: the clip's root motion moves the entity (through collision); the crowd agent follows it, so the
-                    // path corridor and the desired velocity (Navigation.Velocity — the script picks walk / run from it)
-                    // stay valid, and the agent only turns the body toward the path.
-                    var cur = EntityFeet(r);
-                    if (!r.HasLastFeet || (cur - nav).LengthSquared() > 1e-6f) { Fill(_fa, cur); VortexAPI.NavAgentMovePosition(r.Handle, _fa); }
-                    feet = cur;
+                    // #434 / #113: never moved here — root motion, a script or a ragdoll moves the entity (through collision,
+                    // by Navigation.DesiredVelocity: the script picks walk / run from it); the agent followed it before the crowd
+                    // step, so its path corridor and desired velocity stay valid, and it only turns the body (Update Rotation).
+                    feet = EntityFeet(r);
                 }
                 else if (r.Agent.ResolveCollisions && CollisionService.IsBuilt && r.HasLastFeet)
                 {
@@ -594,7 +602,7 @@ namespace Editor.Core.Services.AI
                 // Face the walking direction.
                 float vx = r.State.VelX, vz = r.State.VelZ;
                 float speed = (float)Math.Sqrt(vx * vx + vz * vz);
-                if (r.Agent.UpdateRotation && speed > 0.1f && r.Agent.AngularSpeed > 0f)
+                if (UpdatesRotation(r) && speed > 0.1f && r.Agent.AngularSpeed > 0f)
                 {
                     float target = (float)(Math.Atan2(vx, vz) * 180.0 / Math.PI);
                     if (!r.YawKnown) { r.Yaw = EntityYaw(r.Entity); r.YawKnown = true; }
@@ -720,8 +728,38 @@ namespace Editor.Core.Services.AI
             return r != null && r.StateValid ? new Vector3(r.State.CornerX, r.State.CornerY, r.State.CornerZ) : Vector3.Zero;
         }
 
-        /// <summary>Place an agent somewhere else (its path is cleared). False when the point is not on / near the navmesh, or
-        /// while the agent is limp (#407: a ragdoll at or under it is active — warp it after Ragdoll.Deactivate).</summary>
+        /// <summary>#434: the velocity the agent steers for (m/s) — along its path and around the other agents (local
+        /// avoidance), before its acceleration limit; zero without a path. With Update Position off, what to move the entity by.</summary>
+        public static Vector3 GetDesiredVelocity(GameEntity e)
+        {
+            var r = Rec(e, false);
+            return r != null && r.StateValid ? new Vector3(r.State.DesiredVelX, r.State.DesiredVelY, r.State.DesiredVelZ) : Vector3.Zero;
+        }
+
+        /// <summary>#434: the agent's feet after the last crowd step, on the navmesh — where Update Position puts the entity
+        /// (plus its Base Offset); with it off, where the agent would be. Zero when it is not in the crowd.</summary>
+        public static Vector3 GetNextPosition(GameEntity e)
+        {
+            var r = Rec(e, false);
+            return r != null && r.StateValid ? new Vector3(r.State.PosX, r.State.PosY, r.State.PosZ) : Vector3.Zero;
+        }
+
+        /// <summary>#434: switch Update Position at runtime (the component is not changed). Off: the agent plans, steers and
+        /// avoids, but never moves the entity — something else does, and the agent follows it.</summary>
+        public static void SetUpdatePosition(GameEntity e, bool on) { var r = Rec(e, true); if (r != null) r.UpdatePosition = on; }
+
+        /// <summary>#434: does the service move the entity (the runtime override, else the component)?</summary>
+        public static bool GetUpdatePosition(GameEntity e) { var r = Rec(e, false); return r != null && UpdatesPosition(r); }
+
+        /// <summary>#434: switch Update Rotation at runtime (the component is not changed).</summary>
+        public static void SetUpdateRotation(GameEntity e, bool on) { var r = Rec(e, true); if (r != null) r.UpdateRotation = on; }
+
+        /// <summary>#434: does the service turn the entity toward its movement (the runtime override, else the component)?</summary>
+        public static bool GetUpdateRotation(GameEntity e) { var r = Rec(e, false); return r != null && UpdatesRotation(r); }
+
+        /// <summary>Place an agent somewhere else (its path is cleared) — the entity too, also with Update Position off (#434:
+        /// the one call that moves it then). False when the point is not on / near the navmesh, or while the agent is limp
+        /// (#407: a ragdoll at or under it is active — warp it after Ragdoll.Deactivate).</summary>
         public static bool Warp(GameEntity e, Vector3 position)
         {
             var r = Rec(e, true);
@@ -797,6 +835,25 @@ namespace Editor.Core.Services.AI
 
         /// <summary>#407: a ragdoll at or under the agent is active — it takes no navigation orders and stays out of the crowd.</summary>
         private static bool Limp(AgentRec r) => RagdollService.ActiveAtOrUnder(r.Entity);
+
+        private static bool UpdatesPosition(AgentRec r) => r.UpdatePosition ?? r.Agent.UpdatePosition;
+        private static bool UpdatesRotation(AgentRec r) => r.UpdateRotation ?? r.Agent.UpdateRotation;
+
+        /// <summary>#434: does something else move the entity — Update Position off, or the clip's root motion (#113)? Then
+        /// the agent follows the entity and the pose is never written.</summary>
+        private static bool Follows(AgentRec r) => !UpdatesPosition(r) || Animation.AnimationService.Instance.RootMotionDrives(r.Entity);
+
+        private static bool _followUnavailable;   // an engine library from before #434
+
+        private static void Follow(AgentRec r, float[] feet, float[] velocity)
+        {
+            if (!_followUnavailable)
+            {
+                try { VortexAPI.NavAgentFollow(r.Handle, feet, velocity); return; }
+                catch (EntryPointNotFoundException) { _followUnavailable = true; }
+            }
+            VortexAPI.NavAgentMovePosition(r.Handle, feet);
+        }
 
         /// <summary>May the agent be in the crowd: its component enabled, its entity active, not limp (the callers check that a
         /// navmesh is loaded).</summary>

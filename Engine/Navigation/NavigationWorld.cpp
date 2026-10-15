@@ -675,6 +675,49 @@ namespace vortex::navigation {
 		return true;
 	}
 
+	s32 agent_follow(u32 agent, const f32* pos, const f32* velocity)
+	{
+		const int idx = slot_of(agent);
+		if (idx < 0 || !finite3(pos)) return 0;
+		dtCrowdAgent* ag = g.crowd->getEditableAgent(idx);
+		// How far the surface walk may end from the entity and still be "where it is": an entity's capsule may stand up to
+		// its radius beyond the navmesh, which is eroded by the agent radius (a character against a wall).
+		const f32 slack = std::max(0.3f, ag->params.radius * 1.5f);
+		constexpr f32 k_follow_reach{ 10.0f };   // farther in one tick is a teleport: no surface walk (it visits 16 polygons at most)
+		bool slid = false;
+		if (ag->state == DT_CROWDAGENT_STATE_WALKING && dtVdist2DSqr(ag->npos, pos) <= k_follow_reach * k_follow_reach
+			&& ag->corridor.movePosition(pos, g.query, &g.filter))
+		{
+			const f32* walked = ag->corridor.getPos();
+			slid = dtVdist2DSqr(walked, pos) <= slack * slack;
+			if (!slid)
+			{
+				// short of the entity: just off the navmesh next to where the walk ended (a slide), or somewhere the walk
+				// cannot reach — the far side of a wall, another floor (placed there below)
+				dtPolyRef ref = 0;
+				f32 nearest[3];
+				slid = dtStatusSucceed(g.query->findNearestPoly(pos, g.crowd->getQueryHalfExtents(), &g.filter, &ref, nearest)) && ref != 0
+					&& dtVdist2DSqr(nearest, walked) <= slack * slack && std::fabs(nearest[1] - walked[1]) <= ag->params.height * 0.5f;
+			}
+			dtVcopy(ag->npos, walked);
+		}
+		if (!slid)
+		{
+			// placed where the entity is; the target (or a velocity request) survives the reset
+			const bool target = ag->targetState != DT_CROWDAGENT_TARGET_NONE && ag->targetState != DT_CROWDAGENT_TARGET_FAILED
+				&& ag->targetState != DT_CROWDAGENT_TARGET_VELOCITY && ag->targetRef != 0;
+			const bool steered = ag->targetState == DT_CROWDAGENT_TARGET_VELOCITY;
+			const dtPolyRef target_ref = ag->targetRef;
+			f32 target_pos[3];
+			dtVcopy(target_pos, ag->targetPos);   // (the requested velocity under DT_CROWDAGENT_TARGET_VELOCITY)
+			if (!agent_teleport(agent, pos)) return 0;
+			if (target) g.crowd->requestMoveTarget(idx, target_ref, target_pos);
+			else if (steered) g.crowd->requestMoveVelocity(idx, target_pos);
+		}
+		if (finite3(velocity)) dtVcopy(ag->vel, velocity);   // what the entity really does: others avoid that, steering starts from it
+		return slid ? 1 : 2;
+	}
+
 	bool agent_get_state(u32 agent, agent_state* out)
 	{
 		const int idx = slot_of(agent);
@@ -683,7 +726,7 @@ namespace vortex::navigation {
 		agent_state s{};
 		dtVcopy(s.position, ag->npos);
 		dtVcopy(s.velocity, ag->vel);
-		dtVcopy(s.desired_velocity, ag->dvel);
+		dtVcopy(s.desired_velocity, ag->nvel);   // #434: after local avoidance (dvel is the path-following part before it)
 		s.on_navmesh = ag->state == DT_CROWDAGENT_STATE_WALKING ? 1 : 0;
 		s.partial = ag->partial ? 1 : 0;
 		switch (ag->targetState)
@@ -793,6 +836,7 @@ namespace vortex::navigation {
 	bool agent_set_velocity(u32, const f32*) { return false; }
 	bool agent_teleport(u32, const f32*) { return false; }
 	bool agent_move_position(u32, const f32*) { return false; }
+	s32  agent_follow(u32, const f32*, const f32*) { return 0; }
 	bool agent_get_state(u32, agent_state*) { return false; }
 	s32  agent_get_corners(u32, f32*, s32) { return 0; }
 	s32  agent_count() { return 0; }

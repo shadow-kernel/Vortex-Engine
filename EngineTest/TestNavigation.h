@@ -49,6 +49,7 @@ public:
 				run_query_tests();
 				run_serialization_tests();
 				run_crowd_tests();
+				run_follow_tests();
 				run_tall_level_tests();   // replaces the loaded navmesh
 				run_legacy_file_tests();
 				run_corrupt_file_tests();
@@ -447,6 +448,135 @@ private:
 		const u32 w = navigation::agent_add(a0, &p);
 		navigation::load(_blob.data(), (s32)_blob.size());
 		check("reload drops agents", w != 0 && !navigation::agent_valid(w) && navigation::agent_count() == 0);
+	}
+
+	// ---- agents whose entity moves itself (#434: Update Position off) ----------------------------------------------------
+	// The game moves the entity (here: by the agent's desired velocity, the way a script would); every frame the agent
+	// follows it before the crowd step. It never fights the entity, keeps its path, avoids others, and re-plans after a jump.
+
+	struct follower
+	{
+		u32 agent{ 0 };
+		f32 pos[3]{};
+		f32 vel[3]{};
+	};
+
+	// One frame of a follower: the agent follows the entity, the crowd steps, the "script" moves the entity by the desired
+	// velocity. Returns agent_follow's answer (1 slid, 2 placed).
+	static s32 follow_step(follower& f)
+	{
+		const s32 r = navigation::agent_follow(f.agent, f.pos, f.vel);
+		return r;
+	}
+
+	static void move_by_desired(follower& f, bool move_entity)
+	{
+		navigation::agent_state st{};
+		navigation::agent_get_state(f.agent, &st);
+		for (int k = 0; k < 3; ++k) f.vel[k] = move_entity ? st.desired_velocity[k] : 0.0f;
+		f.vel[1] = 0.0f;
+		for (int k = 0; k < 3; ++k) f.pos[k] += f.vel[k] * k_dt;
+		f.pos[1] = st.position[1];   // the "script" keeps its feet on the ground under it
+	}
+
+	void run_follow_tests()
+	{
+		const auto p = params();
+		const f32 start[3] = { -5, 0, 0 }, goal[3] = { 5, 0, 0 };
+
+		// (a) the entity stands still: the agent stays with it, its desired velocity leads along the path at full speed
+		follower f{ navigation::agent_add(start, &p), { -5, 0, 0 }, {} };
+		navigation::agent_set_target(f.agent, goal);
+		navigation::agent_state st{};
+		bool stayed = true;
+		for (int i = 0; i < 30; ++i)
+		{
+			follow_step(f);
+			navigation::crowd_update(k_dt);
+			navigation::agent_get_state(f.agent, &st);
+			move_by_desired(f, false);
+		}
+		navigation::agent_follow(f.agent, f.pos, f.vel);
+		navigation::agent_get_state(f.agent, &st);
+		stayed = dist(st.position, f.pos) < 0.05f;
+		const f32 to_corner[3] = { st.next_corner[0] - f.pos[0], 0.0f, st.next_corner[2] - f.pos[2] };
+		const f32 corner_len = std::sqrt(to_corner[0] * to_corner[0] + to_corner[2] * to_corner[2]);
+		const f32 dv = std::sqrt(st.desired_velocity[0] * st.desired_velocity[0] + st.desired_velocity[2] * st.desired_velocity[2]);
+		const f32 along = corner_len > 1e-4f && dv > 1e-4f ? (st.desired_velocity[0] * to_corner[0] + st.desired_velocity[2] * to_corner[2]) / (corner_len * dv) : 0.0f;
+		std::printf("[info] follower standing still: agent at (%.2f, %.2f), desired velocity %.2f m/s, %.2f along the next corner, %d corners\n",
+			st.position[0], st.position[2], dv, along, st.corner_count);
+		check("follower: an entity that stands still keeps its agent with it", stayed);
+		check("follower: its desired velocity leads to the next corner at full speed", along > 0.8f && dv > 3.0f && dv < 3.6f);
+
+		// (b) the entity is moved by the desired velocity: it walks around the wall to the goal, the agent always slides
+		bool always_slid = true;
+		f32 clearance = 1.0e9f;
+		int arrive = -1;
+		for (int i = 0; i < 60 * 12 && arrive < 0; ++i)
+		{
+			always_slid = follow_step(f) == 1 && always_slid;
+			navigation::crowd_update(k_dt);
+			move_by_desired(f, true);
+			clearance = std::min(clearance, wall_distance(f.pos[0], f.pos[2]));
+			if (dist(f.pos, goal) < 0.4f) arrive = i;
+		}
+		std::printf("[info] follower walked by its desired velocity: arrived after %.2f s, wall clearance %.3f m, always slid %d\n",
+			arrive / 60.0f, clearance, always_slid ? 1 : 0);
+		check("follower: moved by its desired velocity the entity reaches the goal around the wall", arrive > 0);
+		check("follower: … keeping its radius from the wall (minus the simplification tolerance)", clearance > k_radius - 0.27f);
+		check("follower: … and the agent followed it along the navmesh every frame (never re-planned)", always_slid);
+
+		// (c) the entity jumps through the wall: the agent is placed on the other side and keeps its target
+		const f32 near_wall[3] = { -2, 0, 0 }, beyond[3] = { 2, 0, 0 };
+		navigation::agent_teleport(f.agent, near_wall);
+		navigation::agent_set_target(f.agent, goal);
+		for (int i = 0; i < 10; ++i) navigation::crowd_update(k_dt);
+		std::copy(beyond, beyond + 3, f.pos);
+		const f32 still[3] = { 0, 0, 0 };
+		const s32 jumped = navigation::agent_follow(f.agent, f.pos, still);
+		for (int i = 0; i < 20; ++i) navigation::crowd_update(k_dt);
+		navigation::agent_get_state(f.agent, &st);
+		std::printf("[info] follower through the wall: follow %d, state %d, remaining %.2f m\n", jumped, st.move_state, st.remaining_distance);
+		check("follower: an entity moved through the wall is followed by placing the agent there", jumped == 2);
+		check("follower: … which keeps its target and re-plans from there (~3 m straight, not around the wall)",
+			st.move_state == navigation::move_moving && st.remaining_distance > 2.0f && st.remaining_distance < 3.6f);
+
+		// (d) an entity just off the navmesh (a capsule pressed against the wall, inside the eroded margin) is still a slide
+		const f32 hugging[3] = { -0.6f, 0, 2 };
+		const f32 approach[3] = { -1.5f, 0, 2 };
+		navigation::agent_teleport(f.agent, approach);
+		navigation::agent_set_target(f.agent, goal);
+		for (int i = 0; i < 10; ++i) navigation::crowd_update(k_dt);
+		const s32 hugged = navigation::agent_follow(f.agent, hugging, still);
+		navigation::agent_get_state(f.agent, &st);
+		check("follower: an entity against the wall, off the eroded navmesh, keeps its path (a slide, no re-plan)",
+			hugged == 1 && st.move_state == navigation::move_moving);
+		navigation::crowd_clear();
+
+		// (e) two followers head-on: moved by their desired velocities they pass each other without touching
+		follower a{ navigation::agent_add(start, &p), {}, {} }, b{};
+		const f32 a0[3] = { -6, 0, -9 }, a1[3] = { 6, 0, -9 };
+		navigation::agent_teleport(a.agent, a0);
+		std::copy(a0, a0 + 3, a.pos);
+		b.agent = navigation::agent_add(a1, &p);
+		std::copy(a1, a1 + 3, b.pos);
+		navigation::agent_set_target(a.agent, a1);
+		navigation::agent_set_target(b.agent, a0);
+		f32 min_sep = 100.0f;
+		for (int i = 0; i < 60 * 15; ++i)
+		{
+			follow_step(a);
+			follow_step(b);
+			navigation::crowd_update(k_dt);
+			move_by_desired(a, true);
+			move_by_desired(b, true);
+			const f32 dx = a.pos[0] - b.pos[0], dz = a.pos[2] - b.pos[2];
+			min_sep = std::min(min_sep, std::sqrt(dx * dx + dz * dz));
+		}
+		std::printf("[info] head-on followers: min separation %.3f m, A (%.2f, %.2f) B (%.2f, %.2f)\n", min_sep, a.pos[0], a.pos[2], b.pos[0], b.pos[2]);
+		check("followers head-on: their desired velocities avoid each other (min separation > 0.9 x radii)", min_sep > 0.9f * 2.0f * k_radius);
+		check("followers head-on: both arrive", dist(a.pos, a1) < 0.6f && dist(b.pos, a0) < 0.6f);
+		navigation::crowd_clear();
 	}
 
 	// ---- tall levels (#451) ---------------------------------------------------------------------------------------

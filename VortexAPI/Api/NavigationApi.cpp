@@ -179,6 +179,9 @@ EDITOR_INTERFACE int32_t NavAgentResetTarget(uint32_t agent)                    
 EDITOR_INTERFACE int32_t NavAgentSetVelocity(uint32_t agent, const float* velocity) { return nav::agent_set_velocity(agent, velocity) ? 1 : 0; }
 EDITOR_INTERFACE int32_t NavAgentTeleport(uint32_t agent, const float* pos)       { return nav::agent_teleport(agent, pos) ? 1 : 0; }
 EDITOR_INTERFACE int32_t NavAgentMovePosition(uint32_t agent, const float* pos)   { return nav::agent_move_position(agent, pos) ? 1 : 0; }
+// #434: the agent of an entity something else moves follows it — slid along the navmesh (path kept) or placed where it is
+// (target kept); velocity (may be null) = the entity's own. 1 = slid, 2 = placed, 0 = failed.
+EDITOR_INTERFACE int32_t NavAgentFollow(uint32_t agent, const float* pos, const float* velocity) { return nav::agent_follow(agent, pos, velocity); }
 EDITOR_INTERFACE int32_t NavAgentGetState(uint32_t agent, NavAgentState* out)
 {
 	return nav::agent_get_state(agent, reinterpret_cast<nav::agent_state*>(out)) ? 1 : 0;

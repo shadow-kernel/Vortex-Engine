@@ -44,6 +44,7 @@ namespace Editor.DllWrapper
     {
         public float PosX, PosY, PosZ;
         public float VelX, VelY, VelZ;
+        /// <summary>#434: the velocity the agent steers for — path following and local avoidance, before its acceleration limit.</summary>
         public float DesiredVelX, DesiredVelY, DesiredVelZ;
         public float TargetX, TargetY, TargetZ;
         public float CornerX, CornerY, CornerZ;
@@ -186,6 +187,12 @@ namespace Editor.DllWrapper
         /// <summary>Nudge the agent along the navmesh surface (collision correction); keeps the path.</summary>
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int NavAgentMovePosition(uint agent, float[] pos);
+
+        /// <summary>#434: the agent of an entity something else moves (Update Position off, root motion) follows it — slid along
+        /// the navmesh with its path kept, or placed where it is (through a wall, a jump) with its target kept; velocity (may be
+        /// null) = how fast the entity moved. 1 = slid, 2 = placed, 0 = failed. Throws EntryPointNotFound on an older library.</summary>
+        [DllImport(_dllName, CallingConvention = _cc)]
+        public static extern int NavAgentFollow(uint agent, float[] pos, float[] velocity);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         public static extern int NavAgentGetState(uint agent, out NavAgentState state);

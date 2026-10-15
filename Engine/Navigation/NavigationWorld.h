@@ -153,7 +153,8 @@ namespace vortex::navigation {
 	{
 		f32 position[3];             // on the navmesh surface
 		f32 velocity[3];             // actual velocity (m/s)
-		f32 desired_velocity[3];     // path-following velocity before avoidance
+		f32 desired_velocity[3];     // #434: the velocity it steers for — path following and local avoidance, before the
+		                             // acceleration limit (Unity's desiredVelocity)
 		f32 target[3];               // current move target (clamped to the reachable end for partial paths)
 		f32 next_corner[3];          // next path corner (== position when there is none)
 		f32 remaining_distance;      // along the path corners to the target (m); -1 = no path
@@ -218,6 +219,12 @@ namespace vortex::navigation {
 	bool agent_set_velocity(u32 agent, const f32* velocity);      // manual steering (still avoids others)
 	bool agent_teleport(u32 agent, const f32* pos);               // place anywhere; clears the path
 	bool agent_move_position(u32 agent, const f32* pos);          // nudge along the surface (collision correction)
+	// #434: the agent of an entity that something else moves (Update Position off, root motion) follows it: slid along the
+	// surface to pos with its path kept — an entity just off the navmesh (a capsule against a wall) stays a slide — or,
+	// when the walk along the surface cannot get there (through a wall, a jump, a teleport of the entity), placed on the
+	// navmesh closest to pos with its target kept (re-planned). velocity (m/s, may be null) = how fast the entity moved:
+	// what the crowd's avoidance expects of it and where its next velocity starts from. 1 = slid, 2 = placed, 0 = failed.
+	s32  agent_follow(u32 agent, const f32* pos, const f32* velocity);
 	bool agent_get_state(u32 agent, agent_state* out);
 	s32  agent_get_corners(u32 agent, f32* out_points, s32 max_points);   // remaining path corners
 	s32  agent_count();

@@ -60,7 +60,8 @@ namespace Vortex
         /// Ragdoll.Deactivate — send it again then). Calling it again with a new point (a moving player) re-plans.</summary>
         public static bool SetDestination(long entity, Vector3 point) { return NavigationService.SetDestination(E(entity), V(point)); }
 
-        /// <summary>Stop the agent (the destination is cleared; it slows to a halt).</summary>
+        /// <summary>Stop the agent (the destination is cleared; it slows to a halt — with Update Position off its
+        /// <see cref="DesiredVelocity"/> runs down to zero).</summary>
         public static void Stop(long entity) { NavigationService.Stop(E(entity)); }
 
         /// <summary>Freeze the agent in place without losing its destination (true) / let it continue (false).</summary>
@@ -96,6 +97,35 @@ namespace Vortex
         /// <summary>The next path corner the agent walks towards — aim the head / flashlight there.</summary>
         public static Vector3 SteeringTarget(long entity) { return V(NavigationService.GetSteeringTarget(E(entity))); }
 
+        /// <summary>The velocity the agent wants this frame (m/s): along its path and around the other agents (local
+        /// avoidance), before its acceleration limit — zero without a path. With Update Position off this is what your code
+        /// moves the entity by (Unity's desiredVelocity):
+        /// <c>_feet = Physics.MoveCharacter(_feet, 0.35f, 1.8f, Navigation.DesiredVelocity(EntityId) * dt, EntityId);</c>
+        /// or pick the walk / run clip from its length when root motion moves the entity.</summary>
+        public static Vector3 DesiredVelocity(long entity) { return V(NavigationService.GetDesiredVelocity(E(entity))); }
+
+        /// <summary>Where the agent's simulation is after this frame's step: its feet on the navmesh (Unity's nextPosition).
+        /// With Update Position on the entity is put there (plus its Base Offset); off, it is where the agent would be.</summary>
+        public static Vector3 NextPosition(long entity) { return V(NavigationService.GetNextPosition(E(entity))); }
+
+        /// <summary>Switch the agent's Update Position at runtime (the component is not changed; play stays non-destructive).
+        /// Off: the agent still plans, follows its path and avoids the other agents, but never moves the entity — a script, root
+        /// motion or a ragdoll does (by <see cref="DesiredVelocity"/>), and every frame the agent follows the entity wherever it
+        /// was moved: along the navmesh with its path kept, or — when the entity went somewhere the navmesh does not lead (a
+        /// teleport, a jump, through a wall) — placed there with its destination kept. <see cref="Warp"/> still moves both.
+        /// <see cref="Stop"/> clears the destination as always.</summary>
+        public static void SetUpdatePosition(long entity, bool updatePosition) { NavigationService.SetUpdatePosition(E(entity), updatePosition); }
+
+        /// <summary>True while the agent moves its entity (its runtime setting, else the component's Update Position).</summary>
+        public static bool GetUpdatePosition(long entity) { return NavigationService.GetUpdatePosition(E(entity)); }
+
+        /// <summary>Switch the agent's Update Rotation at runtime (the component is not changed): on, the entity turns (yaw)
+        /// toward the agent's velocity — with Update Position off too.</summary>
+        public static void SetUpdateRotation(long entity, bool updateRotation) { NavigationService.SetUpdateRotation(E(entity), updateRotation); }
+
+        /// <summary>True while the agent turns its entity (its runtime setting, else the component's Update Rotation).</summary>
+        public static bool GetUpdateRotation(long entity) { return NavigationService.GetUpdateRotation(E(entity)); }
+
         /// <summary>The corners of the agent's remaining path (empty without one).</summary>
         public static Vector3[] GetPath(long entity)
         {
@@ -105,8 +135,9 @@ namespace Vortex
             return result;
         }
 
-        /// <summary>Teleport the agent (its path is cleared). False when the point is not on / near the navmesh, or while the
-        /// agent is a ragdoll (warp it after Ragdoll.Deactivate).</summary>
+        /// <summary>Teleport the agent and its entity (the path is cleared) — with Update Position off too: the one call that
+        /// moves the entity then. False when the point is not on / near the navmesh, or while the agent is a ragdoll (warp it
+        /// after Ragdoll.Deactivate).</summary>
         public static bool Warp(long entity, Vector3 position) { return NavigationService.Warp(E(entity), V(position)); }
 
         /// <summary>Override the agent's speed at runtime (m/s) — walk 1.5 on patrol, run 5 in a chase. Negative = back to the
