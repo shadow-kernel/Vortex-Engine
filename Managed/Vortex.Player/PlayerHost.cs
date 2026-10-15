@@ -140,6 +140,9 @@ namespace Vortex.Player
             string projDir = !string.IsNullOrEmpty(options.ProjectPath) ? Path.GetFullPath(options.ProjectPath)
                 : (!string.IsNullOrEmpty(debugProjectPath) && Directory.Exists(debugProjectPath) ? debugProjectPath : exeDir);
             if (!string.IsNullOrEmpty(options.ProjectPath)) PlayModeService.Instance.IsReleaseMode = false;
+            // --project is a play test from the project (the editor's "Play in Standalone Player", automated runs): the
+            // project's Play-mode saves setting picks the save folder, as in editor play; an exported game keeps its own (#458)
+            Vortex.Save.PlaysFromProject = !string.IsNullOrEmpty(options.ProjectPath);
 
             Console.WriteLine("Vortex Player — loading " + projDir);
             var project = ProjectService.Instance.LoadProjectFromPath(projDir);

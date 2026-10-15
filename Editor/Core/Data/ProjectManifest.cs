@@ -202,5 +202,19 @@ namespace Editor.Core.Data
         /// Empty = derived from the company and product names.</summary>
         [DataMember(Name = "bundleIdentifier", Order = 9)]
         public string BundleIdentifier { get; set; } = "";
+
+        /// <summary>Where Save keeps its slots while the game is played from the editor (Play, and the standalone player the
+        /// editor starts) (#458): <see cref="SandboxSaves"/> — separate test saves in VortexGames/&lt;Game&gt;/editor, so play
+        /// testing never changes the exported game's saves — or <see cref="SharedSaves"/>, the exported game's own files.
+        /// New projects use the sandbox; a project.vortex without the key (every project made before) reads as null and
+        /// keeps sharing the files, as it always did. An exported game always uses its own files.</summary>
+        [DataMember(Name = "playModeSaves", Order = 10)]
+        public string PlayModeSaves { get; set; } = SandboxSaves;
+
+        public const string SandboxSaves = "Sandbox";
+        public const string SharedSaves = "Shared";
+
+        /// <summary>Editor play keeps its own save files (<see cref="PlayModeSaves"/> is Sandbox).</summary>
+        public bool SandboxedPlaySaves => string.Equals(PlayModeSaves, SandboxSaves, StringComparison.OrdinalIgnoreCase);
     }
 }
