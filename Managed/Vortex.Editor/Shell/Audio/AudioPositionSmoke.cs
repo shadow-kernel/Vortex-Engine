@@ -22,6 +22,37 @@ namespace VortexEditor.Shell.Audio
         private const string Clip = "Assets/Audio/smoke_position.wav";
         private const double ClipSeconds = 3.0;
         private const int ClipRate = 44100;
+        /// <summary>A device mixes ahead of what it plays (a period or a few), so a position read after a measured wall time
+        /// may lead that time by this much — the slack EngineTest's position bounds use too.</summary>
+        private const double ReadAhead = 0.25;
+
+        /// <summary>A position on the looping clip, unwrapped past the clip's end when it lies before <paramref name="target"/>.</summary>
+        private static double Unwrapped(double value, double target) => value < target - 1e-3 ? value + ClipSeconds : value;
+
+        /// <summary>A position read <paramref name="since"/> seconds of wall time after it was put at <paramref name="target"/>:
+        /// from the target on, and at most that wall time plus the read-ahead further — measured, never an assumed delay
+        /// (on the WARP runner a 300 ms delay lasted ~450 ms). The looping clip may have wrapped once.</summary>
+        private static bool After(double value, double target, double since)
+        {
+            double v = Unwrapped(value, target);
+            return v >= target - 1e-3 && v <= target + since + ReadAhead;
+        }
+
+        /// <summary>A value read between two reads of Time: up to five tries for a pair no mix fell between (both Time reads
+        /// equal, so the value comes from that very cursor), else the last bracket — a mix moves the cursor by a block.</summary>
+        private static (double Before, T Value, double After) Bracketed<T>(Vortex.AudioSource src, Func<T> read)
+        {
+            (double, T, double) last = default;
+            for (int i = 0; i < 5; i++)
+            {
+                double a = src.Time;
+                T v = read();
+                double b = src.Time;
+                last = (a, v, b);
+                if (a == b) break;
+            }
+            return last;
+        }
 
         [ModuleInitializer]
         internal static void Register()
@@ -89,36 +120,48 @@ namespace VortexEditor.Shell.Audio
                 Expect(Math.Abs(ratio - 2.0) < 0.1, "Time runs at the Pitch (ratio " + ratio.ToString("0.000") + ")");
                 src.Pitch = 1f;
 
-                // Seek a decoded clip: the target reads back at once, playback continues from there
+                // Seek a decoded clip: the target reads back at once, playback continues from there — by at most the wall time
+                // since the seek plus the device's read-ahead (measured: a 200 ms delay lasts longer on a slow runner)
                 src.Time = 2.0f;
+                var since = System.Diagnostics.Stopwatch.StartNew();
                 float sought = src.Time;
                 await Task.Delay(200);
                 float after = src.Time;
-                Expect(Math.Abs(sought - 2.0f) < 0.001f && after > 2.0f && after < 2.5f, "seeking a decoded clip (" + sought + " then " + after + ")");
-                Expect(Math.Abs(src.Length - ClipSeconds) < 0.01, "Length " + src.Length);
-                float nt = src.NormalizedTime, tm = src.Time;
-                Expect(Math.Abs(nt - tm / ClipSeconds) < 0.01, "NormalizedTime " + nt + " = Time / Length");
-                int samples = src.TimeSamples; tm = src.Time;
-                Expect(Math.Abs(samples - tm * ClipRate) < 0.01 * ClipRate, "TimeSamples " + samples + " counts the clip's 44.1 kHz samples (Time " + tm + ")");
+                double afterSince = since.Elapsed.TotalSeconds;
+                Expect(Math.Abs(sought - 2.0f) < 0.001f && Unwrapped(after, 2.0) > 2.0 && After(after, 2.0, afterSince),
+                    "seeking a decoded clip (" + sought + " then " + after + ", " + afterSince.ToString("0.000") + " s later)");
+                double length = src.Length;
+                Expect(Math.Abs(length - ClipSeconds) < 0.01, "Length " + length);
+                // NormalizedTime and TimeSamples come from the same cursor as Time: each is read between two reads of Time, and
+                // the pair with no mix in between (both Time reads equal) must agree to the sample
+                var (ta, nt, tb) = Bracketed(src, () => src.NormalizedTime);
+                Expect(nt >= ta / length - 1e-5 && nt <= tb / length + 1e-5, "NormalizedTime " + nt + " = Time / Length (Time " + ta + " … " + tb + ")");
+                var (sa, samples, sb) = Bracketed(src, () => src.TimeSamples);
+                Expect(samples >= sa * ClipRate - 1 && samples <= sb * ClipRate + 1, "TimeSamples " + samples + " counts the clip's 44.1 kHz samples (Time " + sa + " … " + sb + ")");
 
                 // Stop rewinds; a Time set while stopped is where Play() begins
                 src.Stop();
                 Expect(src.Time == 0f, "Stop rewinds Time to 0 (" + src.Time + ")");
                 src.Time = 1.5f;
                 Expect(Math.Abs(src.Time - 1.5f) < 1e-4f, "a stopped source reads the Time it will start from (" + src.Time + ")");
+                since.Restart();
                 src.Play();
                 float resumed = src.Time;
-                Expect(resumed >= 1.5f - 1e-4f && resumed < 1.7f, "Play() begins at the Time set while stopped (" + resumed + ")");
+                Expect(After(resumed, 1.5, since.Elapsed.TotalSeconds), "Play() begins at the Time set while stopped (" + resumed + ")");
 
-                // Seek a streamed clip
+                // Seek a streamed clip: the target reads back at once, then the stream refills from there and plays on
                 src.Stop();
                 comp.Streaming = true;
                 src.Play();
                 await Task.Delay(150);
                 src.Time = 2.5f;
+                since.Restart();
+                float streamSought = src.Time;
                 await Task.Delay(300);
                 float streamed = src.Time;
-                Expect(streamed >= 2.5f && streamed < 2.95f, "seeking a streamed clip (" + streamed + ")");
+                double streamedSince = since.Elapsed.TotalSeconds;
+                Expect(Math.Abs(streamSought - 2.5f) < 0.001f && After(streamed, 2.5, streamedSince),
+                    "seeking a streamed clip (" + streamSought + " then " + streamed + ", " + streamedSince.ToString("0.000") + " s later)");
                 src.Stop();
 
                 // the music channel
