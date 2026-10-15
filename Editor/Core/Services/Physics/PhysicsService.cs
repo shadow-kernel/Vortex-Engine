@@ -1527,10 +1527,15 @@ namespace Editor.Core.Services.Physics
         /// <paramref name="owner"/> = the entity the character moves, when the caller knows it (#406: rays and overlaps that
         /// hit the capsule report that entity; #417: its own bodies and its children's are no obstacles for the character;
         /// #407: no Jolt character while the owner is switched off or limp — the move is resolved by the managed controller
-        /// without registering anything, see <see cref="CollisionService.MayRegister"/>).</summary>
+        /// without registering anything, see <see cref="CollisionService.MayRegister"/>). Null = the owner the id already
+        /// has, else anonymous.</summary>
         public static Vector3 MoveCharacterJolt(Vector3 feet, float radius, float height, Vector3 move, float dt,
             out bool grounded, long selfId, float stepHeight, float maxSlopeDeg, GameEntity owner = null)
         {
+            // #406: a move that names no owner keeps the one the id has — another script's code moving the character (a
+            // shotgun's knock-back) must not make its capsule anonymous: rays would report no entity, Destroy would leave it
+            if (owner == null && selfId != 0)
+                owner = _joltChars.TryGetValue(selfId, out var known) && known.Owner != null ? known.Owner : CollisionService.KnownOwner(selfId);
             if (!IsBuilt)
                 return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg, owner);
             if (!CollisionService.MayRegister(owner))

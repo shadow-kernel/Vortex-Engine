@@ -1279,11 +1279,19 @@ namespace Vortex
         }
 
         /// <summary>As above, but <paramref name="characterId"/> (e.g. your entity's EntityId) registers this
-        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors. When the id is the
-        /// calling script's own EntityId, that entity's own colliders and its children's are no obstacles for the character,
-        /// in both controllers (#417): give a guard a solid Collider so rays hit it, it still walks freely (other characters
-        /// and rays still collide with that collider; it raises no OnCollisionEnter against itself). Any other id is a
-        /// custom one: the character belongs to no entity and every collider blocks it (#406).
+        /// character so OTHER characters can't walk through it — for multiplayer / multiple actors. A character that
+        /// belongs to an entity ignores that entity's own colliders and its children's, in both controllers (#417): give a
+        /// guard a solid Collider so rays hit it, it still walks freely (other characters and rays still collide with that
+        /// collider; it raises no OnCollisionEnter against itself) — and rays that hit its capsule report that entity.
+        /// <para>Which entity a character belongs to (#406): the entity whose code moves it with its own EntityId — a
+        /// callback of one of its scripts (Start, Update, a coroutine, OnMessage, a UI action on it), a task of its
+        /// behaviour tree (passing <c>Agent</c>), a handler of its Areas.Entered / Exited event (passing the id it is
+        /// handed). Once a character belongs to an entity it keeps it for every later move of the id, from any code: a
+        /// shotgun's Update calling <c>guard.Step()</c> moves the guard's own capsule. A script that moves a character
+        /// none of whose own code ever moved it — a squad manager stepping its guards — names the entity with
+        /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long, long)"/>. Any other id is a custom one: the
+        /// character belongs to no entity and every collider blocks it, even when the id equals some entity's
+        /// handle.</para>
         /// <para>Lifetime (#407): the registered capsule stays where the last move left it until play stops — or until the
         /// entity (or an ancestor) is destroyed or deactivated, it (or the model under it) becomes a ragdoll, or
         /// <see cref="RemoveCharacter"/> is called. The next MoveCharacter with the id registers it again.</para></summary>
@@ -1291,6 +1299,24 @@ namespace Vortex
         {
             if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
             bool g; var r = Host.MoveCharacter(feet, radius, height, move, out g, characterId); _grounded = g; return r;
+        }
+
+        /// <summary>As above, with the entity the character belongs to named outright (#406) — for a script that moves
+        /// OTHER entities' characters, such as a squad manager stepping its guards: <paramref name="ownerEntity"/> is that
+        /// entity (a behaviour's EntityId, a Scene.Find handle). Its own colliders are no obstacles for the capsule, rays
+        /// that hit the capsule report it, and the capsule goes when it is destroyed, deactivated or becomes a ragdoll. The
+        /// character keeps that owner for every later move of <paramref name="characterId"/>, from any code. 0 = no owner
+        /// named: the same as the overload without it.
+        /// <c>Physics.MoveCharacter(guardFeet, 0.35f, 1.8f, step, guardId, guardId);</c></summary>
+        public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 move, long characterId, long ownerEntity)
+        {
+            if (Host == null) return new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z);
+            var rt = Host as Editor.Scripting.ScriptRuntime;
+            var owner = ownerEntity != 0 && rt != null ? rt.FindEntityByHandle(ownerEntity) : null;
+            bool g;
+            var r = owner != null ? rt.MoveCharacter(feet, radius, height, move, out g, characterId, owner)
+                                  : Host.MoveCharacter(feet, radius, height, move, out g, characterId);
+            _grounded = g; return r;
         }
 
         /// <summary>Unregister a character (#407): the capsule MoveCharacter registered under <paramref name="characterId"/>
@@ -1326,9 +1352,9 @@ namespace Vortex
         /// <para>Rays and characters (#406): with "managed" a character is no physics body — rays and
         /// <see cref="OverlapSphere"/> never hit it (give it a Collider to make it shootable). With "jolt" every character
         /// is a capsule body: <see cref="Raycast(Vector3, Vector3, float, out RaycastHit, int)"/> (default mask),
-        /// OverlapSphere and <see cref="OverlapPoint"/> hit it and report the entity of the script that passed its own
-        /// EntityId to MoveCharacter (a custom id reports nothing), and a ray with that entity as ignoreEntity passes
-        /// through its capsule — even from inside it.</para></summary>
+        /// OverlapSphere and <see cref="OverlapPoint"/> hit it and report the entity the character belongs to (see
+        /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>; a custom id reports nothing), and a ray with
+        /// that entity as ignoreEntity passes through its capsule — even from inside it.</para></summary>
         public static void SetCharacterController(string controller)
         {
             bool jolt = controller != null && (controller.Trim().ToLowerInvariant() == "jolt" || controller.Trim().ToLowerInvariant() == "v2");
@@ -1354,9 +1380,9 @@ namespace Vortex
         /// stand-up ceiling check: before a crouched character rises, ask with the STANDING height — false means a
         /// ceiling, a table top or another character is in the way, so stay crouched this frame. Tests the level
         /// colliders, simulated props and other characters; <paramref name="characterId"/> excludes your own capsule
-        /// and, when it is your script's own EntityId, your entity's own colliders (pass what you pass to
-        /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>). Works with both controllers. Without a
-        /// collision world → true.</summary>
+        /// and, when the character belongs to an entity (your script's own EntityId, or see
+        /// <see cref="MoveCharacter(Vector3, float, float, Vector3, long)"/>), that entity's own colliders — pass what you
+        /// pass to MoveCharacter. Works with both controllers. Without a collision world → true.</summary>
         public static bool CanStand(Vector3 feet, float radius, float height, long characterId = 0)
         {
             // a 2 cm lift keeps the floor the character stands on out of the test — only what is ABOVE counts
@@ -1403,8 +1429,8 @@ namespace Vortex
         /// <para>What a ray hits: solid colliders (never triggers) and simulated props at their current pose. Characters
         /// depend on the controller (<see cref="SetCharacterController"/>): with the default "managed" controller rays never
         /// hit a character — give it a Collider to make it shootable (MoveCharacter ignores the mover's own colliders);
-        /// with "jolt" the character capsules are bodies and a hit reports the character's entity (EntityId, Name, Tag of
-        /// the entity whose EntityId was passed to MoveCharacter). A ray with an explicit layer mask casts against the
+        /// with "jolt" the character capsules are bodies and a hit reports the entity the character belongs to (EntityId,
+        /// Name, Tag; see MoveCharacter — none for a custom id). A ray with an explicit layer mask casts against the
         /// engine's own collision world, where characters are never hit.</para>
         /// <para>Rays that start inside something (#418), the same on every path: a box, sphere, capsule or convex collider
         /// that contains the origin is not hit — the ray reports what lies beyond it. A ray that starts ON a surface (or

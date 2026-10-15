@@ -239,9 +239,10 @@ public class Sidekick : VortexBehaviour
                 foreach (var cls in classes) e.AddComponentDirect(new Editor.ECS.Components.Scripting.Script(e, "Assets/Scripts/" + cls + ".cs"));
             });
 
-        /// <summary>#406 review: a characterId names an entity ONLY when it is the EntityId of the script that is running —
-        /// a custom id equal to some other entity's handle (1 = the scripted "Level" root here) used to make that entity
-        /// the owner, its floor child no obstacle, and the capsule fell through the floor.</summary>
+        /// <summary>#406 review: a characterId names an entity only when it is the EntityId of the script that is running
+        /// (and from then on the capsule keeps it) — a custom id equal to some other entity's handle (1 = the scripted
+        /// "Level" root here) used to make that entity the owner, its floor child no obstacle, and the capsule fell through
+        /// the floor.</summary>
         [Test]
         public static void CustomCharacterIdsBelongToNoEntity(TestContext t)
         {
@@ -254,6 +255,7 @@ public class Sidekick : VortexBehaviour
             var player = Scripted(s, null, "Player", new Vector3(-5f, 0, 0), false, "CustomIdWalker");
             var guard = Scripted(s, null, "Guard", new Vector3(5f, 0, 0), true, "OwnIdWalker");
             var twin = Scripted(s, null, "Twin", new Vector3(10f, 0, 0), true, "LevelScript", "Sidekick");
+            var statue = Scripted(s, null, "Statue", new Vector3(15f, 0, 0), true, "LevelScript");   // scripted, never moves a capsule
             var rt = Editor.Scripting.ScriptRuntime.Instance;
             try
             {
@@ -282,11 +284,18 @@ public class Sidekick : VortexBehaviour
                 feet = (Vortex.Vector3)Field(rt.BehavioursOf(twin)[1], "Feet");
                 t.True(Math.Abs(feet.Y) < 0.02f && Math.Abs(feet.X - 10f) < 1e-3f, "a second script of an entity, from OnMessage, owns the capsule too (" + feet.X + ", " + feet.Y + ")");
 
-                // outside any script callback the same id is a custom one: shoved out of the guard's collider
-                var outside = new Vortex.Vector3(5f, 0f, 0f);
-                for (int i = 0; i < 10; i++) outside = Vortex.Physics.MoveCharacter(outside, R, H, new Vortex.Vector3(0f, -0.1f, 0f), own.EntityId);
-                t.True(outside.Y > 0.3f || Math.Abs(outside.X - 5f) > 0.3f || Math.Abs(outside.Z) > 0.3f,
-                       "called from outside a script, the guard's id names no owner (" + outside.X + ", " + outside.Y + ", " + outside.Z + ")");
+                // outside any script callback an entity's id names nothing by itself: the statue's capsule (never moved by the
+                // statue's own code) is shoved out of the statue's collider ...
+                long statueId = rt.BehavioursOf(statue)[0].EntityId;
+                var outside = new Vortex.Vector3(15f, 0f, 0f);
+                for (int i = 0; i < 10; i++) outside = Vortex.Physics.MoveCharacter(outside, R, H, new Vortex.Vector3(0f, -0.1f, 0f), statueId);
+                t.True(outside.Y > 0.3f || Math.Abs(outside.X - 15f) > 0.3f || Math.Abs(outside.Z) > 0.3f,
+                       "called from outside a script, the statue's id names no owner (" + outside.X + ", " + outside.Y + ", " + outside.Z + ")");
+                // ... while the guard's capsule, which already belongs to the guard, keeps it (#406 review, round two)
+                var kept = new Vortex.Vector3(5f, 0f, 0f);
+                for (int i = 0; i < 10; i++) kept = Vortex.Physics.MoveCharacter(kept, R, H, new Vortex.Vector3(0f, -0.1f, 0f), own.EntityId);
+                t.True(Math.Abs(kept.Y) < 0.02f && Math.Abs(kept.X - 5f) < 1e-3f && Math.Abs(kept.Z) < 1e-3f,
+                       "moved from outside a script, the guard's capsule keeps the guard (" + kept.X + ", " + kept.Y + ", " + kept.Z + ")");
 
                 // #418 without a Jolt world: Physics.OverlapPoint answers from the collision world
                 var inGuard = Vortex.Physics.OverlapPoint(new Vortex.Vector3(5f, 1f, 0.1f));

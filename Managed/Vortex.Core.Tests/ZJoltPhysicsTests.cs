@@ -362,6 +362,33 @@ namespace VortexTests
             finally { RagdollService.TestMarkActive(model, false); NavigationService.End(); NavigationService.Unload(); ClearWorlds(); }
         }
 
+        /// <summary>#406 review, round two, with "jolt": a shotgun's Update knocks the guard back through the guard's own
+        /// Step — the rays before and after both report the guard (the knock-back used to make its capsule anonymous: the
+        /// second ray reported entity 0), and Destroy takes the Jolt character along.</summary>
+        [Test]
+        public static void KnockBackByAnotherScriptKeepsTheJoltCapsulesEntity(TestContext t)
+        {
+            if (!Jolt()) return;
+            var asm = CharacterOwnerTests.Compile(t);
+            var s = new Scene { Name = "ShotgunJolt" };
+            CharacterOwnerTests.Floor(s);
+            var guard = CharacterOwnerTests.Guard(s, 1 | 8, collider: false);   // moves itself, "jolt", no collider: only its capsule is hit
+            var shooter = PhysicsRaycastTests.Add(s, null, "Shooter", new Vector3(-5f, 0, 0), e => CharacterOwnerTests.Attach(e, "Shotgun"));
+            var rt = Editor.Scripting.ScriptRuntime.Instance;
+            try
+            {
+                rt.Begin(s, asm);
+                long gid = rt.BehavioursOf(guard)[0].EntityId;
+                for (int i = 0; i < 8; i++) rt.Update(1f / 60f);
+                t.True(PhysicsService.IsBuilt, "(the Jolt world is up)");
+                var shotgun = rt.BehavioursOf(shooter)[0];
+                long before = (long)CharacterOwnerTests.Field(shotgun, "RayBefore"), after = (long)CharacterOwnerTests.Field(shotgun, "RayAfter");
+                t.True(before == gid && after == gid, "both rays report the guard (before " + before + ", after " + after + ", guard " + gid + ")");
+                t.True(PhysicsService.JoltCharacterCount == 0 && !CollisionService.HasCharacter(gid), "Destroy took the Jolt character along");
+            }
+            finally { rt.End(); ClearWorlds(); }
+        }
+
         /// <summary>#418: the opt-in "is this point inside something?" query.</summary>
         [Test]
         public static void OverlapPointFindsWhatContainsThePoint(TestContext t)

@@ -65,15 +65,39 @@ namespace Editor.Scripting
         }
         private bool _active;
 
-        // The behaviour whose callback (Start, Update, a coroutine step, a message...) runs right now — null between them.
+        // Whose code runs right now (#406) — null between callbacks: the behaviour whose callback (Start, Update, a coroutine
+        // step, a message, a UI action...) runs, or, when none does, the entity whose behaviour tree or area event runs.
         private Vortex.VortexBehaviour _dispatching;
+        private GameEntity _dispatchingEntity;
 
-        /// <summary>The entity a script character moves (#406): a characterId equal to the EntityId of the behaviour that is
-        /// running right now names that behaviour's entity (all of an entity's behaviours share one, #408) — its own
-        /// colliders don't block the capsule. Any other id is a custom one and stays anonymous, even when it happens to
-        /// equal some other entity's handle (a characterId 1 used to resolve to whatever entity had handle 1).</summary>
+        /// <summary>The entity a script character moves (#406), from whose code is running: a characterId equal to the
+        /// EntityId of the behaviour whose callback runs names that behaviour's entity (all of an entity's behaviours share
+        /// one, #408); while an entity's behaviour tree ticks or its area event is raised, a characterId that is one of its
+        /// handles (the tree's Agent) names it. Any other id is a custom one and names no entity, even when it happens to
+        /// equal some other entity's handle (a characterId 1 used to resolve to whatever entity had handle 1). An id the
+        /// collision world already knows an owner for keeps that owner (CollisionService.KnownOwner).</summary>
         internal GameEntity CharacterOwner(long characterId)
-            => characterId != 0 && _dispatching != null && _dispatching.EntityId == characterId ? FindEntityByHandle(characterId) : null;
+        {
+            if (characterId == 0) return null;
+            if (_dispatching != null) return _dispatching.EntityId == characterId ? FindEntityByHandle(characterId) : null;
+            return _dispatchingEntity != null && ReferenceEquals(FindEntityByHandle(characterId), _dispatchingEntity) ? _dispatchingEntity : null;
+        }
+
+        /// <summary>Who ran before <see cref="EnterEntityCode"/> — handed back to <see cref="ExitEntityCode"/>.</summary>
+        internal struct CodeContext { internal Vortex.VortexBehaviour Behaviour; internal GameEntity Entity; }
+
+        /// <summary>Code that runs on behalf of <paramref name="e"/> without being one of its behaviours' callbacks — its
+        /// behaviour tree's tasks, the handlers of its area events (#406): until <see cref="ExitEntityCode"/>, a characterId
+        /// that is one of its handles names it.</summary>
+        internal CodeContext EnterEntityCode(GameEntity e)
+        {
+            var prev = new CodeContext { Behaviour = _dispatching, Entity = _dispatchingEntity };
+            _dispatching = null;
+            _dispatchingEntity = e;
+            return prev;
+        }
+
+        internal void ExitEntityCode(CodeContext prev) { _dispatching = prev.Behaviour; _dispatchingEntity = prev.Entity; }
 
         // ================= Scripting wave (#35-#40): handles, queries, coroutines, spawn/destroy =================
 
@@ -1240,9 +1264,18 @@ namespace Editor.Scripting
                     finally { _dispatching = prev; }
                 }
             }
+            RaiseAreaEvent(e, kind, info);
+        }
+
+        /// <summary>Areas.Entered / Exited for <paramref name="e"/>: the handlers run on its behalf (#406) — one that moves
+        /// the entity's character with the id it is handed names the entity.</summary>
+        internal void RaiseAreaEvent(GameEntity e, int kind, Vortex.AreaInfo info)
+        {
             long id = HandleForEntity(e);
+            var ctx = EnterEntityCode(e);
             try { if (kind == 0) Vortex.Areas.RaiseEntered(id, info); else if (kind == 2) Vortex.Areas.RaiseExited(id, info); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] area event handler: " + ex.Message); }
+            finally { ExitEntityCode(ctx); }
         }
 
         private Vortex.AreaInfo AreaInfoFor(Editor.Core.Services.Areas.AreaInstance a)
@@ -1341,8 +1374,10 @@ namespace Editor.Scripting
                     continue;
                 }
                 var m = GetParamlessMethod(target.GetType(), a.Action);
+                var prev = _dispatching; _dispatching = target;   // the action is that behaviour's code (#406)
                 try { m.Invoke(target, null); }
                 catch (Exception ex) { LogScriptError(target.GetType().Name, a.Action, ex); }   // #322
+                finally { _dispatching = prev; }
             }
         }
 
@@ -1462,7 +1497,7 @@ namespace Editor.Scripting
             _scriptOf.Clear();
             _behavioursByEntity.Clear();
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
-            _dispatching = null;
+            _dispatching = null; _dispatchingEntity = null;
             try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
             try { Editor.Core.Services.AI.AiRuntime.End(); } catch { }
             try { Editor.Core.Animation.AnimationService.Instance.ResetStates(); } catch { }
@@ -2550,6 +2585,13 @@ namespace Editor.Scripting
         }
 
         Vortex.Vector3 Vortex.IScriptHost.MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded, long selfId)
+            => MoveCharacter(feet, radius, height, move, out grounded, selfId, null);
+
+        /// <summary>Physics.MoveCharacter: <paramref name="explicitOwner"/> is the entity a script named as the owner (#406, a
+        /// squad manager moving its guards' capsules); without one, the code that runs decides (<see cref="CharacterOwner"/>),
+        /// and an id the collision world already knows keeps its owner.</summary>
+        internal Vortex.Vector3 MoveCharacter(Vortex.Vector3 feet, float radius, float height, Vortex.Vector3 move, out bool grounded, long selfId,
+            GameEntity explicitOwner)
         {
             // a NaN or an infinity from the game's math must not reach the collision world or Jolt's native character (#455):
             // a non-finite move is no move this frame; a non-finite position or capsule skips the step (feet come back as given)
@@ -2563,7 +2605,7 @@ namespace Editor.Scripting
             }
             var f = new Editor.ECS.Vector3(feet.X, feet.Y, feet.Z);
             var m = new Editor.ECS.Vector3(move.X, move.Y, move.Z);
-            var owner = CharacterOwner(selfId);   // the calling behaviour's own EntityId names its entity; any other id is anonymous
+            var owner = explicitOwner ?? CharacterOwner(selfId);   // null: the services keep the owner the id already has
             Editor.ECS.Vector3 r;
             if (Editor.Core.Services.Physics.PhysicsService.JoltCharacters)   // #187: the scene opted into Jolt's CharacterVirtual
                 r = Editor.Core.Services.Physics.PhysicsService.MoveCharacterJolt(f, radius, height, m, Vortex.Time.DeltaTime, out grounded, selfId,
