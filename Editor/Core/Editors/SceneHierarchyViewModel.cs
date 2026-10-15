@@ -868,6 +868,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             {
                 _oldScene?.Entities.Add(_entity);
             }
+            _entity.SyncEngineState();   // under an inactive parent it leaves the engine, out from under one it joins it
         }
 
         public override void Undo()
@@ -896,6 +897,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 else
                     _oldScene.Entities.Add(_entity);
             }
+            _entity.SyncEngineState();
         }
     }
 
@@ -927,6 +929,9 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
 
         public override void Execute()
         {
+            // out of the source scene's engine scene first (its own native entities), into the target's below
+            _entity.SyncEngineStateRecursive(false);
+
             // Entferne aus alter Scene
             if (_oldParent != null)
                 _oldParent.Children.Remove(_entity);
@@ -940,10 +945,13 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
             
             // Aktualisiere Scene-Referenz f�r alle Kinder
             UpdateChildScenes(_entity, _targetScene);
+            _entity.SyncEngineState();   // registered only while the target scene is active
         }
 
         public override void Undo()
         {
+            _entity.SyncEngineStateRecursive(false);
+
             // Entferne aus Ziel-Scene
             _targetScene.Entities.Remove(_entity);
 
@@ -966,6 +974,7 @@ namespace Editor.Editors.WorldEditor.Components.SceneHierarchy
                 else
                     _sourceScene.Entities.Add(_entity);
             }
+            _entity.SyncEngineState();
         }
 
         private void UpdateChildScenes(GameEntity entity, Scene scene)

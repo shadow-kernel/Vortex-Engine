@@ -211,11 +211,14 @@ namespace Editor.Core.Services
             entity.PrefabPath = ToProjectRelative(full, project?.Path);
             SetActiveRecursive(entity, true);   // a freshly-loaded subtree must be active or SubmitEntity skips it
 
+            // Each add below registers the subtree with the engine only while it is active in an ACTIVE scene
+            // (SyncEngineState): an instance re-created in a scene that is not open (Apply / Revert propagation) stays out,
+            // and that scene stays inactive.
             if (parent != null)
             {
                 entity.Parent = parent;
                 parent.Children.Add(entity);   // child add is already raw (non-undoable)
-                entity.SyncEngineStateRecursive(parent.ActiveInHierarchy);
+                entity.SyncEngineState();
             }
             else if (undoable)
             {
@@ -227,15 +230,17 @@ namespace Editor.Core.Services
                 // with RevertInstance's raw RemoveFromScene and never leaves a dangling undo command on the stack.
                 entity.Scene = scene;
                 scene.Entities.Add(entity);
-                entity.SyncEngineStateRecursive(scene.IsActive);
+                entity.SyncEngineState();
                 scene.IsDirty = true;
             }
 
             // Force the editor's render service to resolve meshes/materials for the WHOLE new subtree so even a
             // LARGE, multi-submesh prefab shows up the same frame instead of staying invisible (the "saved a big
             // prefab, it doesn't render" bug). SubmitScene imports meshes on demand; PreloadSceneAssets primes
-            // textures/materials so nothing renders untextured/white on the first frame.
-            EnsureRendered(scene);
+            // textures/materials so nothing renders untextured/white on the first frame. Only for the scene on screen:
+            // preloading a scene that is not open evicts every model the open one uses but that one does not.
+            if (scene.IsActive) EnsureRendered(scene);
+            else scene.IsDirty = true;
             return entity;
         }
 
@@ -250,7 +255,7 @@ namespace Editor.Core.Services
         private static void SetActiveRecursive(GameEntity e, bool active)
         {
             if (e == null) return;
-            try { e.IsActive = active; } catch { }
+            e.SetActiveFlagOnly(active);   // the flag only: the subtree is not in the scene yet, the add right after syncs it
             if (e.Children != null)
                 foreach (var c in e.Children) SetActiveRecursive(c, active);
         }
@@ -367,9 +372,10 @@ namespace Editor.Core.Services
             }
             if (toDelete.Count == 0) return 0;
 
-            // Remove the instances UNDOABLY. DeleteEntitiesCommand only mutates the C# ObservableCollections, so pair
+            // Remove the instances UNDOABLY. DeleteEntitiesCommand takes them out of the collections and the engine; pair
             // it (in a CompositeCommand) with an ActionCommand that detaches/re-attaches each instance from the NATIVE
-            // engine via SyncEngineStateRecursive + refreshes the viewport — mirroring Scene.RemoveEntity/AddEntity.
+            // engine as well + refreshes the viewport — mirroring Scene.RemoveEntity/AddEntity. Re-attaching respects the
+            // scene (SyncEngineState): an instance in a scene that is not open stays out, and that scene stays inactive.
             // Do NOT use SceneRenderService.RemoveEntity here: it DeleteMesh's imported-model meshes that are SHARED
             // across instances (double-free). Order: detach-engine THEN remove-from-collection; Undo runs in reverse
             // (re-insert THEN re-attach), so instances come back rendered.
@@ -377,7 +383,7 @@ namespace Editor.Core.Services
             var composite = new Editor.Core.UndoRedo.Commands.CompositeCommand("Delete " + n + " prefab instance" + (n == 1 ? "" : "s"));
             composite.Add(new Editor.Core.UndoRedo.Commands.ActionCommand("detach prefab instances",
                 () => { foreach (var e in toDelete) { try { e.SyncEngineStateRecursive(false); } catch { } } RequestViewportResubmit(); },
-                () => { foreach (var e in toDelete) { try { e.SyncEngineStateRecursive(true); } catch { } } RequestViewportResubmit(); }));
+                () => { foreach (var e in toDelete) { try { e.SyncEngineState(); } catch { } } RequestViewportResubmit(); }));
             composite.Add(new DeleteEntitiesCommand(toDelete));
             Editor.Core.UndoRedo.UndoRedoManager.Instance.Execute(composite);
 

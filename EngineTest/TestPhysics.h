@@ -49,6 +49,7 @@ public:
 			run_quaternion_tests();   // (d) convention
 			run_character_tests();    // (e) CharacterVirtual
 			run_kinematic_and_query_tests();
+			run_query_contract_tests();   // rays from inside, ignored entities, character identity (#406 / #417 / #418)
 			run_constraint_tests();   // (f)..(l) joints, issue #103
 			run_teardown_tests();
 		}
@@ -358,6 +359,200 @@ private:
 		physics::destroy_body(cylinder);
 		check("destroyed bodies are invalid", !physics::body_valid(sphere) && !physics::body_valid(trigger));
 		check("stale handle is rejected after destroy (entity 0)", physics::body_entity(sphere) == 0);
+	}
+
+	// ---- query contract (#406 / #417 / #418) ----------------------------------------------------------------------
+	// Its own little world at x = -40 (nothing else is there): a ground slab, a 1 m crate the rays start in, a wall
+	// 3 m further, a closed triangle-mesh room, and a Jolt character. Everything is destroyed again at the end.
+
+	void run_query_contract_tests()
+	{
+		constexpr u64 k_floor = 8101, k_crate = 8102, k_wall = 8103, k_room = 8104, k_self = 8105, k_pad = 8106, k_gazebo = 8107;
+		const f32 floor_half[3] = { 6.0f, 0.5f, 6.0f };
+		const f32 floor_pos[3] = { -40.0f, -0.5f, 0.0f };
+		const u32 floor = physics::create_body(k_floor, physics::shape_box, floor_half, floor_pos, k_identity,
+			physics::motion_static, 0.0f, 0.5f, 0.0f, 0.0f, 0.0f, false, physics::layer_static, 0, 1.0f);
+		const f32 crate_half[3] = { 0.5f, 0.5f, 0.5f };
+		const f32 crate_pos[3] = { -40.0f, 0.5f, 0.0f };
+		const u32 crate = physics::create_body(k_crate, physics::shape_box, crate_half, crate_pos, k_identity,
+			physics::motion_static, 0.0f, 0.5f, 0.0f, 0.0f, 0.0f, false, physics::layer_static, 0, 1.0f);
+		const f32 wall_half[3] = { 0.5f, 0.5f, 0.5f };
+		const f32 wall_pos[3] = { -40.0f, 0.5f, 3.0f };
+		const u32 wall = physics::create_body(k_wall, physics::shape_box, wall_half, wall_pos, k_identity,
+			physics::motion_static, 0.0f, 0.5f, 0.0f, 0.0f, 0.0f, false, physics::layer_static, 0, 1.0f);
+		check("query scene bodies created", floor != 0 && crate != 0 && wall != 0);
+		physics::step(k_dt, 1);   // the static tree is rebuilt before the queries
+
+		const f32 inside[3] = { -40.0f, 0.5f, 0.0f };   // the crate's centre
+		const f32 forward[3] = { 0.0f, 0.0f, 1.0f };
+		f32 p[3]{}, n[3]{}, d = 0.0f; u64 entity = 0; u32 body = 0;
+
+		// (#418) a ray that starts inside a convex shape does not hit it: it reports the wall 2.5 m ahead
+		bool hit = physics::raycast(inside, forward, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		std::printf("[info] ray from inside the crate: hit=%d entity=%llu dist=%.3f normal=(%.2f, %.2f, %.2f)\n",
+			hit ? 1 : 0, (unsigned long long)entity, d, n[0], n[1], n[2]);
+		check("ray from inside a box skips it and hits the wall behind", hit && entity == k_wall && std::fabs(d - 2.5f) < 0.02f);
+		check("... with the wall's surface normal facing the origin", n[2] < -0.99f);
+		hit = physics::raycast_ex(inside, forward, 10.0f, physics::layer_mask_all, physics::raycast_solid, nullptr, 0, nullptr, 0, p, n, &d, &entity, &body);
+		check("raycast_solid: the same ray hits the crate at distance 0", hit && entity == k_crate && d < 1e-4f);
+		check("raycast_solid: a hit at the origin reports -direction as its normal", n[2] < -0.99f);
+
+		// (#406 / #418) an ignored body is passed through, whatever the origin's depth and the solid flag
+		const f32 behind[3] = { -40.0f, 0.5f, -2.0f };
+		const u32 ignore_crate[1] = { crate };
+		hit = physics::raycast_ex(behind, forward, 10.0f, physics::layer_mask_all, 0, ignore_crate, 1, nullptr, 0, p, n, &d, &entity, &body);
+		check("ignored body is passed through from outside", hit && entity == k_wall && std::fabs(d - 4.5f) < 0.02f);
+		hit = physics::raycast_ex(inside, forward, 10.0f, physics::layer_mask_all, physics::raycast_solid, ignore_crate, 1, nullptr, 0, p, n, &d, &entity, &body);
+		check("ignored body is passed through from deep inside (solid flag on)", hit && entity == k_wall && std::fabs(d - 2.5f) < 0.02f);
+		const u32 ignore_both[3] = { crate, wall, 0x7FFF0001u };   // plus a stale handle, which is dropped
+		hit = physics::raycast_ex(behind, forward, 10.0f, physics::layer_mask_all, 0, ignore_both, 3, nullptr, 0, p, n, &d, &entity, &body);
+		check("every listed body is ignored (nothing else on the line)", !hit);
+
+		// (#418) a closed triangle-mesh room: a ray from inside hits its far wall (back face), the normal turned to the origin
+		const f32 room_verts[8 * 3] = {
+			-1.0f, 0.0f, -1.0f,   1.0f, 0.0f, -1.0f,   1.0f, 0.0f, 1.0f,   -1.0f, 0.0f, 1.0f,
+			-1.0f, 2.0f, -1.0f,   1.0f, 2.0f, -1.0f,   1.0f, 2.0f, 1.0f,   -1.0f, 2.0f, 1.0f };
+		const u32 room_indices[12 * 3] = {          // outward-facing (counter-clockwise seen from outside)
+			0, 1, 2,  0, 2, 3,   4, 6, 5,  4, 7, 6,   // floor (down), ceiling (up)
+			0, 4, 5,  0, 5, 1,   2, 6, 7,  2, 7, 3,   // -Z, +Z
+			1, 5, 6,  1, 6, 2,   3, 7, 4,  3, 4, 0 }; // +X, -X
+		const f32 room_pos[3] = { -36.0f, 0.0f, 0.0f };
+		const f32 one[3] = { 1.0f, 1.0f, 1.0f };
+		const u32 room = physics::create_mesh_body(k_room, room_verts, 8, room_indices, 36, room_pos, k_identity, one,
+			false, physics::motion_static, 0.0f, 0.5f, 0.0f, false, physics::layer_static);
+		check("closed mesh room created", room != 0);
+		physics::step(k_dt, 1);
+		const f32 in_room[3] = { -36.0f, 0.7f, 0.2f };   // off the walls' diagonals (a ray along a shared edge is ambiguous)
+		hit = physics::raycast(in_room, forward, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		std::printf("[info] ray inside the mesh room: hit=%d entity=%llu dist=%.3f normal=(%.2f, %.2f, %.2f)\n",
+			hit ? 1 : 0, (unsigned long long)entity, d, n[0], n[1], n[2]);
+		check("a ray inside a closed mesh hits its wall from behind", hit && entity == k_room && std::fabs(d - 0.8f) < 0.02f);
+		check("... and the back-face normal faces the origin", n[2] < -0.99f);
+
+		// a ray that starts ON a surface and points into it hits it at distance 0 (the cast starts 1 mm behind the origin);
+		// pointing away it does not, for boxes and meshes alike
+		const f32 down[3] = { 0.0f, -1.0f, 0.0f };
+		const f32 up[3] = { 0.0f, 1.0f, 0.0f };
+		const f32 on_crate[3] = { -40.0f, 1.0f, 0.0f };   // the crate's top face
+		hit = physics::raycast(on_crate, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		std::printf("[info] ray down from the crate's top: hit=%d entity=%llu dist=%.5f point y=%.4f normal y=%.2f\n",
+			hit ? 1 : 0, (unsigned long long)entity, d, p[1], n[1]);
+		check("a ray down from a box's top face hits the box at distance 0", hit && entity == k_crate && d < 1e-4f && n[1] > 0.99f && std::fabs(p[1] - 1.0f) < 1e-3f);
+		const f32 hair_inside[3] = { -40.0f, 0.9995f, 0.1f };
+		hit = physics::raycast(hair_inside, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("... from half a millimetre inside too (distance clamped at 0)", hit && entity == k_crate && d < 1e-4f);
+		const f32 cm_inside[3] = { -40.0f, 0.99f, 0.1f };
+		hit = physics::raycast(cm_inside, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("1 cm inside the box is inside: the ray reports the floor below it", hit && entity == k_floor && std::fabs(d - 0.99f) < 0.01f);
+		check("a ray up from the box's top face does not hit the box", !physics::raycast(on_crate, up, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body));
+		const f32 above_crate[3] = { -40.0f, 3.0f, 0.0f };
+		hit = physics::raycast(above_crate, down, 2.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("a surface exactly max_dist away is still hit", hit && entity == k_crate && std::fabs(d - 2.0f) < 1e-3f);
+		const f32 on_roof[3] = { -36.0f, 2.0f, 0.2f };   // the room's ceiling (normal up)
+		hit = physics::raycast(on_roof, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("a ray down from a mesh's top face hits the mesh at distance 0", hit && entity == k_room && d < 1e-4f && n[1] > 0.99f);
+		check("a ray up from a mesh's top face does not hit it (a surface behind the origin, seen from behind)",
+			!physics::raycast(on_roof, up, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body));
+		// 1 mm above a mesh surface at y 0 the cast starts exactly ON it (fraction 0): still the surface the origin lies on
+		const f32 pad_verts[4 * 3] = { -1.0f, 0.0f, -1.0f,   1.0f, 0.0f, -1.0f,   1.0f, 0.0f, 1.0f,   -1.0f, 0.0f, 1.0f };
+		const u32 pad_indices[2 * 3] = { 0, 2, 1,   0, 3, 2 };   // facing up
+		const f32 pad_pos[3] = { -30.0f, 0.0f, 0.0f };
+		const u32 pad = physics::create_mesh_body(k_pad, pad_verts, 4, pad_indices, 6, pad_pos, k_identity, one,
+			false, physics::motion_static, 0.0f, 0.5f, 0.0f, false, physics::layer_static);
+		check("mesh pad created", pad != 0);
+		physics::step(k_dt, 1);
+		const f32 mm_above_pad[3] = { -30.0f, 0.001f, 0.3f };
+		check("a ray up from 1 mm above a mesh surface does not hit it (the cast starts exactly on it)",
+			!physics::raycast(mm_above_pad, up, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body));
+		hit = physics::raycast(mm_above_pad, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("... a ray down from there hits it 1 mm away", hit && entity == k_pad && std::fabs(d - 0.001f) < 2e-4f && n[1] > 0.99f);
+
+		// (#418) overlap_point: the "is this point inside something?" query that rays no longer answer
+		u64 ents[8]{}; u32 bods[8]{};
+		s32 found = physics::overlap_point(inside, physics::layer_mask_all, ents, bods, 8);
+		check("overlap_point finds the crate the point is in", found == 1 && ents[0] == k_crate && bods[0] == crate);
+		found = physics::overlap_point(in_room, physics::layer_mask_all, ents, bods, 8);
+		check("overlap_point finds the closed mesh around the point", found == 1 && ents[0] == k_room);
+		const f32 open_air[3] = { -38.0f, 1.5f, 0.0f };
+		check("overlap_point in open air finds nothing", physics::overlap_point(open_air, physics::layer_mask_all, ents, bods, 8) == 0);
+		// an open mesh overhead (the room without its floor) does not make a point under its roof "inside" (#418 review)
+		const u32 gazebo_indices[10 * 3] = {
+			4, 6, 5,  4, 7, 6,                    // ceiling (up)
+			0, 4, 5,  0, 5, 1,   2, 6, 7,  2, 7, 3,   // -Z, +Z
+			1, 5, 6,  1, 6, 2,   3, 7, 4,  3, 4, 0 }; // +X, -X
+		const f32 gazebo_pos[3] = { -30.0f, 0.0f, 4.0f };
+		const u32 gazebo = physics::create_mesh_body(k_gazebo, room_verts, 8, gazebo_indices, 30, gazebo_pos, k_identity, one,
+			false, physics::motion_static, 0.0f, 0.5f, 0.0f, false, physics::layer_static);
+		check("floorless gazebo mesh created", gazebo != 0);
+		physics::step(k_dt, 1);
+		const f32 under_roof[3] = { -30.0f, 1.0f, 4.2f };
+		check("overlap_point under an open mesh's roof finds nothing", physics::overlap_point(under_roof, physics::layer_mask_all, ents, bods, 8) == 0);
+		check("... while the closed room still encloses its inside", physics::overlap_point(in_room, physics::layer_mask_all, ents, bods, 8) == 1);
+
+		// (#406) the character's inner body names its character: rays report it, and a ray can skip the capsule
+		const f32 hero_feet[3] = { -42.0f, 0.0f, 0.0f };
+		const u32 hero = physics::character_create(0.35f, 1.8f, hero_feet, 45.0f, 0.3f, 70.0f);
+		check("query character created", hero != 0);
+		physics::step(k_dt, 1);
+		const f32 east[3] = { 1.0f, 0.0f, 0.0f };
+		const f32 west_of_hero[3] = { -45.0f, 1.2f, 0.0f };
+		hit = physics::raycast(west_of_hero, east, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		std::printf("[info] ray at the character: hit=%d entity=%llu body=%u dist=%.3f\n", hit ? 1 : 0, (unsigned long long)entity, body, d);
+		const u64 k_hero = physics::character_user_data | hero;
+		check("a ray hits the character capsule and reports the character (body 0, tagged handle)", hit && entity == k_hero && body == 0 && std::fabs(d - 2.65f) < 0.03f);
+		const f32 in_hero[3] = { -42.0f, 1.0f, 0.0f };
+		found = physics::overlap_point(in_hero, physics::layer_mask_all, ents, bods, 8);
+		check("overlap_point inside the capsule reports the character", found == 1 && ents[0] == k_hero && bods[0] == 0);
+		const f32 eye[3] = { -42.0f, 1.6f, 0.0f };
+		hit = physics::raycast(eye, east, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("an eye ray from inside the capsule does not hit the character itself", !hit || entity != k_hero);
+		const u32 ignore_hero[1] = { hero };
+		hit = physics::raycast_ex(west_of_hero, east, 10.0f, physics::layer_mask_all, physics::raycast_solid, nullptr, 0, ignore_hero, 1, p, n, &d, &entity, &body);
+		check("the character in the ignore list lets the ray through its capsule", !hit || entity != k_hero);
+
+		// (#417) a collider on the character's own entity: without the filter the controller is shoved up onto it,
+		// with the entity ignored it stays on the floor
+		const f32 self_half[3] = { 0.5f, 0.25f, 0.5f };
+		const f32 self_pos[3] = { -42.0f, 0.25f, 0.0f };
+		const u32 self_box = physics::create_body(k_self, physics::shape_box, self_half, self_pos, k_identity,
+			physics::motion_static, 0.0f, 0.5f, 0.0f, 0.0f, 0.0f, false, physics::layer_static, 0, 1.0f);
+		check("the character's own collider created", self_box != 0);
+		physics::step(k_dt, 1);
+		const f32 fall[3] = { 0.0f, -9.81f, 0.0f };
+		f32 pos[3]{}, vel[3]{}, gn[3]{}; s32 grounded = 0;
+		const u32 ignore_self[1] = { self_box };
+		for (int i = 0; i < 30; ++i)
+		{
+			physics::step(k_dt, 1);
+			physics::character_move_ex(hero, fall, k_dt, ignore_self, 1, pos, vel, &grounded, gn);
+		}
+		std::printf("[info] character over its own collider (ignored): pos (%.3f, %.3f, %.3f) grounded=%d\n", pos[0], pos[1], pos[2], grounded);
+		check("character_move_ex: the own collider is not an obstacle (stays on the floor)",
+			std::fabs(pos[1]) < 0.05f && std::fabs(pos[0] + 42.0f) < 0.02f && std::fabs(pos[2]) < 0.02f && grounded != 0);
+		for (int i = 0; i < 30; ++i)
+		{
+			physics::step(k_dt, 1);
+			physics::character_move(hero, fall, k_dt, pos, vel, &grounded, gn);
+		}
+		std::printf("[info] character over the same collider (not ignored): pos (%.3f, %.3f, %.3f)\n", pos[0], pos[1], pos[2]);
+		check("character_move: the same collider does block when not ignored", pos[1] > 0.3f || std::fabs(pos[0] + 42.0f) > 0.3f || std::fabs(pos[2]) > 0.3f);
+
+		// a destroyed character takes its inner body out of the world: nothing left to hit at its old spot
+		physics::character_destroy(hero);
+		physics::step(k_dt, 1);
+		const f32 hero_now[3] = { pos[0] - 3.0f, pos[1] + 1.2f, pos[2] };   // the same ray as above, at where it ended
+		entity = 0;
+		hit = physics::raycast(hero_now, east, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body);
+		check("a destroyed character's capsule no longer blocks rays", !hit || entity != k_hero);
+
+		physics::destroy_body(self_box);
+		physics::destroy_body(pad);
+		physics::destroy_body(gazebo);
+		physics::destroy_body(room);
+		physics::destroy_body(wall);
+		physics::destroy_body(crate);
+		physics::destroy_body(floor);
+		check("query scene cleaned up", !physics::body_valid(floor) && !physics::body_valid(room));
 	}
 
 	// ---- joints (issue #103) --------------------------------------------------------------------------------
@@ -819,6 +1014,9 @@ private:
 		const f32 down[3] = { 0.0f, -1.0f, 0.0f };
 		f32 p[3]{}, n[3]{}, d = 0.0f; u64 entity = 0; u32 body = 0;
 		check("stub: raycast returns false", !physics::raycast(pos, down, 10.0f, physics::layer_mask_all, p, n, &d, &entity, &body));
+		check("stub: raycast_ex / overlap_point find nothing",
+			!physics::raycast_ex(pos, down, 10.0f, physics::layer_mask_all, physics::raycast_solid, nullptr, 0, nullptr, 0, p, n, &d, &entity, &body) &&
+			physics::overlap_point(pos, physics::layer_mask_all, &entity, &body, 1) == 0);
 		physics::contact_event buf[4];
 		check("stub: get_contacts returns 0", physics::get_contacts(buf, 4) == 0);
 		check("stub: character_create returns 0", physics::character_create(0.35f, 1.8f, pos, 45.0f, 0.3f, 70.0f) == 0);

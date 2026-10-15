@@ -119,7 +119,10 @@ namespace Editor.ECS
                 if (_isDeserializing)
                     return;
 
-                SyncEngineStateRecursive(Parent?.ActiveInHierarchy ?? true);
+                // The scene counts too: "Parent?.ActiveInHierarchy ?? true" registered a top-level entity of ANY scene, and
+                // one of a scene never opened this session activated that scene — its fog, exposure and post effects took
+                // over the editor viewport (a prefab Apply re-instantiating the instances of another scene did it).
+                SyncEngineState();
             }
         }
 
@@ -394,6 +397,17 @@ namespace Editor.ECS
 			}
 		}
 
+		/// <summary>Registers or unregisters this entity and its subtree after it was put into (or taken out of) a scene's
+		/// hierarchy or its active flag changed: a valid, unique <see cref="EntityId"/> while it is active in an active scene,
+		/// INVALID_ID otherwise. Takes the parent's and the scene's state from the hierarchy itself (the explicit
+		/// <c>parentActive</c> callers passed the entity's own flag, which registered a child of an inactive parent). An
+		/// entity in no scene — an in-memory template of the prefab editor or a model import — is never in the engine.</summary>
+		internal void SyncEngineState()
+		{
+			if (Scene == null) { SyncEngineStateRecursive(false); return; }
+			SyncEngineStateRecursive(Parent != null ? Parent.ActiveInHierarchy : Scene.IsActive);
+		}
+
 		private void SyncMeshRenderersToEngine()
 		{
 			if (_components == null) return;
@@ -565,7 +579,9 @@ namespace Editor.ECS
 
             child.Parent = this;
             child.Scene = Scene;
-            var command = new CollectionAddCommand<GameEntity>(Children, child, "Children");
+            // like Scene.AddEntity: a child put into a live scene is registered with the engine at once ("Create Child",
+            // a multi-submesh model), not only at the next scene activation — and an undo takes it out again
+            var command = new AddEntityCommand(Children, child, "Children");
             UndoRedoManager.Instance.Execute(command);
         }
 
@@ -580,7 +596,7 @@ namespace Editor.ECS
             if (!Children.Contains(child))
                 return;
 
-            var command = new CollectionRemoveCommand<GameEntity>(Children, child, "Children");
+            var command = new RemoveEntityCommand(Children, child, "Children");   // like Scene.RemoveEntity: out of the engine too
             UndoRedoManager.Instance.Execute(command);
             child.Parent = null;
         }
@@ -646,6 +662,12 @@ namespace Editor.ECS
             // non-serialized defaults must be re-established here. IsExpanded is [IgnoreDataMember] and defaults
             // to true — without this, every entity loaded from disk rendered its sub-hierarchy collapsed.
             _isExpanded = true;
+            // The engine id is not saved either. Left at 0 — a VALID native id — every entity loaded from a scene (and
+            // every duplicate, paste and prefab instance, which are deserialized copies) counted as registered:
+            // SyncEngineStateRecursive never created its native entity, so all of them shared native entity 0 — their
+            // transforms went to it and deactivating any of them removed it from under its real owner. Unregistered,
+            // like an entity created in the editor, until its scene registers it.
+            _entityId = ID.INVALID_ID;
         }
 
         /// <summary>

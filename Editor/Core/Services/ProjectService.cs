@@ -224,7 +224,8 @@ namespace Editor.Core.Services
             LastModified = manifest.LastModified,
             Version = string.IsNullOrWhiteSpace(manifest.Version) ? "1.0.0" : manifest.Version,
             CreatedAt = manifest.CreatedAt == default ? (DateTime?)null : manifest.CreatedAt,
-            Settings = manifest.Settings ?? new ProjectSettings(),
+            // a manifest without settings is a project made before #458: it keeps sharing the game's save files in play
+            Settings = manifest.Settings ?? new ProjectSettings { PlayModeSaves = null },
             ImagePath = manifest.ThumbnailPath,
             StartSceneId = manifest.StartSceneId // round-trip the boot scene so editor saves preserve it
         };
@@ -314,6 +315,8 @@ namespace Editor.Core.Services
             // a new game starts at 1.0.0 on the day it is made, not at the template's version and creation date (#414)
             project.Version = "1.0.0";
             project.CreatedAt = DateTime.Now;
+            // a new game is play-tested in the sandbox (#458) unless its template chose otherwise
+            if (string.IsNullOrEmpty(project.Settings?.PlayModeSaves)) (project.Settings ??= new ProjectSettings()).PlayModeSaves = ProjectSettings.SandboxSaves;
             AssetDatabase.Instance.Initialize(projectPath);
             SaveProject(project);
             System.Diagnostics.Debug.WriteLine($"Project created from template '{templateProjectDir}' at: {projectPath}");

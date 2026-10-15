@@ -215,8 +215,14 @@ endif()
 # libraries are built: Recast (voxelisation -> polygon mesh), Detour (tiled navmesh + queries) and DetourCrowd
 # (steering + local avoidance). The demo / tests / examples are switched off BEFORE the subdirectory is added.
 # Its CMakeLists still declares cmake_minimum_required(3.1), which CMake >= 4 refuses without a policy floor:
-# CMAKE_POLICY_VERSION_MINIMUM is set for the duration of the add only. 32-bit poly refs (default) — the ABI
-# (VortexAPI/Api/NavigationApi.cpp) never exposes a dtPolyRef, so this can change without touching managed code.
+# CMAKE_POLICY_VERSION_MINIMUM is set for the duration of the add only.
+# 64-bit poly refs (#517): a 32-bit dtPolyRef keeps 22 bits for tile + polygon once the 10 salt bits are taken, so
+# the polygons one tile may hold shrank with the tile count of the bake bounds and large, dense levels lost whole
+# tiles. DT_POLYREF64 fixes the split at 16 salt / 28 tile / 20 polygon bits. The Detour target exports it as a
+# PUBLIC compile definition, so the engine, libVortexAPI and the tests see the same dtPolyRef as the library. A
+# dtLink holds a dtPolyRef, so the Detour tile data — the payload of a .vnav — changed with it: .vnav version 2;
+# version 1 files are re-laid out on load (Engine/Navigation/NavigationWorld.cpp). The ABI
+# (VortexAPI/Api/NavigationApi.cpp) never exposes a dtPolyRef, so managed code is untouched.
 # Without it (-DVORTEX_ENABLE_RECAST=OFF, the .vcxproj build) Engine/Navigation compiles the no-op stub.
 if(VORTEX_ENABLE_RECAST)
 	include(FetchContent)
@@ -226,9 +232,10 @@ if(VORTEX_ENABLE_RECAST)
 		GIT_SHALLOW    TRUE)
 
 	foreach(_opt RECASTNAVIGATION_DEMO RECASTNAVIGATION_TESTS RECASTNAVIGATION_EXAMPLES
-			RECASTNAVIGATION_DT_POLYREF64 RECASTNAVIGATION_DT_VIRTUAL_QUERYFILTER)
+			RECASTNAVIGATION_DT_VIRTUAL_QUERYFILTER)
 		set(${_opt} OFF CACHE BOOL "recastnavigation: set by Vortex (Engine/CMakeLists.txt)" FORCE)
 	endforeach()
+	set(RECASTNAVIGATION_DT_POLYREF64 ON CACHE BOOL "recastnavigation: set by Vortex (Engine/CMakeLists.txt, #517)" FORCE)
 	set(_vortex_saved_policy_min "${CMAKE_POLICY_VERSION_MINIMUM}")
 	set(_vortex_saved_warn_deprecated "${CMAKE_WARN_DEPRECATED}")
 	set(CMAKE_POLICY_VERSION_MINIMUM 3.5)

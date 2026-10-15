@@ -95,7 +95,7 @@ namespace Editor.Core.Services.Physics
             public int Motion;
             public int Layer;
             public bool IsTrigger;
-            public bool Secondary;        // the sensor twin of an entity whose primary body is solid
+            public bool Secondary;        // a further body of the entity: a sensor twin, a foliage instance after the first
             public SysVec CenterOffset;   // scaled local offset entity origin -> body origin (mesh bodies with a Center)
             public SysVec BoundsCenter;   // centre of the shape bounds in the body frame
             public SysVec BoundsHalf;     // half extents of the shape bounds in the body frame
@@ -127,6 +127,9 @@ namespace Editor.Core.Services.Physics
         }
 
         private static readonly Dictionary<GameEntity, Body> _byEntity = new Dictionary<GameEntity, Body>();
+        // #406: the handles of EVERY solid body of an entity — a Foliage entity has one per colliding instance — for the
+        // ignore lists of rays and characters (_byEntity holds one body per entity)
+        private static readonly Dictionary<GameEntity, List<uint>> _solidBodiesOf = new Dictionary<GameEntity, List<uint>>();
         private static readonly Dictionary<uint, Body> _byId = new Dictionary<uint, Body>();
         private static readonly List<Body> _bodies = new List<Body>();
         private static readonly List<CollisionService.DynamicBody> _publish = new List<CollisionService.DynamicBody>();
@@ -235,6 +238,7 @@ namespace Editor.Core.Services.Physics
             _jointsDirty = false;
             _scene = null;
             _byEntity.Clear(); _byId.Clear(); _bodies.Clear(); _publish.Clear(); _pushes.Clear(); _stayThisFrame.Clear();
+            _solidBodiesOf.Clear();
             ClearJoltCharacters();
             _accumulator = 0f;
             LastStepCount = 0;
@@ -246,7 +250,7 @@ namespace Editor.Core.Services.Physics
         /// <see cref="CollisionService.AddEntityShapes"/> so dynamic entities can be taken out of the static world again.</summary>
         public static void AddEntity(GameEntity root)
         {
-            if (!IsBuilt || root == null) return;
+            if (!IsBuilt || root == null || !ActiveInHierarchy(root)) return;   // #443: nothing joins under an inactive ancestor
             AddRecursive(root);
             CollectJoints(root);
             CreatePendingJoints(root);
@@ -551,9 +555,14 @@ namespace Editor.Core.Services.Physics
         public const uint SolidLayerMask = (1u << LayerStatic) | (1u << LayerDynamic) | (1u << LayerCharacter) | (1u << LayerDebris);
 
         /// <summary>Closest solid hit along <paramref name="direction"/> (normalised inside). Returns the hit point,
-        /// unit normal, entity and distance. <paramref name="layerMask"/> is the OBJECT-layer mask (bit i = layer i).</summary>
+        /// unit normal, entity and distance. <paramref name="layerMask"/> is the OBJECT-layer mask (bit i = layer i).
+        /// A box / sphere / capsule / convex collider that contains the origin is not hit, meshes are hit from either
+        /// side and the normal faces the origin (#418). <paramref name="ignore"/> and every entity under it are never hit
+        /// (#406): its colliders, ragdoll parts and Jolt character capsule are filtered inside the cast, so a ray that
+        /// starts deep inside the caller still reports what is beyond it. A "jolt" character's capsule reports the entity
+        /// that moves it.</summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, out Vector3 point, out Vector3 normal,
-            out GameEntity entity, out float distance, uint layerMask = SolidLayerMask)
+            out GameEntity entity, out float distance, uint layerMask = SolidLayerMask, GameEntity ignore = null)
         {
             point = origin; normal = new Vector3(0f, 1f, 0f); entity = null; distance = 0f;
             if (!IsBuilt || maxDist <= 0f) return false;
@@ -563,14 +572,75 @@ namespace Editor.Core.Services.Physics
             _f3b[0] = direction.X / len; _f3b[1] = direction.Y / len; _f3b[2] = direction.Z / len;
             float dist; ulong entId; uint body;
             int hit;
-            try { hit = VortexAPI.PhysicsRaycast(_f3a, _f3b, maxDist, layerMask, _f3c, _f4, out dist, out entId, out body); }
+            int ignoreBodies = ignore != null ? SubtreeBodies(ignore, ref _ignoreBodies) : 0;
+            int ignoreChars = ignore != null ? SubtreeCharacters(ignore, ref _ignoreChars) : 0;
+            try
+            {
+                if (!_rayExUnavailable)
+                    hit = VortexAPI.PhysicsRaycastEx(_f3a, _f3b, maxDist, layerMask, 0u, ignoreBodies > 0 ? _ignoreBodies : null, ignoreBodies,
+                        ignoreChars > 0 ? _ignoreChars : null, ignoreChars, _f3c, _f4, out dist, out entId, out body);
+                else
+                    hit = VortexAPI.PhysicsRaycast(_f3a, _f3b, maxDist, layerMask, _f3c, _f4, out dist, out entId, out body);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // an engine library from before #406 / #418: plain casts, no exclusion
+                _rayExUnavailable = true;
+                try { hit = VortexAPI.PhysicsRaycast(_f3a, _f3b, maxDist, layerMask, _f3c, _f4, out dist, out entId, out body); }
+                catch { return false; }
+            }
             catch { return false; }
             if (hit == 0) return false;
             point = new Vector3(_f3c[0], _f3c[1], _f3c[2]);
             normal = new Vector3(_f4[0], _f4[1], _f4[2]);
             distance = dist;
-            entity = EntityOfBody(body) ?? FindByEntityId(entId);
+            entity = EntityOfHit(body, entId);
             return true;
+        }
+
+        private static bool _rayExUnavailable;
+        private static uint[] _ignoreBodies = new uint[16], _ignoreChars = new uint[4];
+
+        /// <summary>The body handles of <paramref name="root"/> and everything under it — all of their colliders' bodies
+        /// (every instance body of a Foliage entity) and the parts of their ragdolls — into <paramref name="ids"/> (grown as
+        /// needed); returns the count. Handles, not engine entity ids: an entity loaded from a scene file has no unique
+        /// engine id (they all read 0), so an id filter would skip every body. (Sensor twins are left out: triggers never
+        /// block a ray or a character.)</summary>
+        private static int SubtreeBodies(GameEntity root, ref uint[] ids)
+        {
+            int n = 0;
+            CollectBodies(root, ref ids, ref n);
+            return RagdollService.AppendBodies(root, ref ids, n);
+        }
+
+        private static void CollectBodies(GameEntity e, ref uint[] ids, ref int n)
+        {
+            if (e == null) return;
+            if (_solidBodiesOf.TryGetValue(e, out var list))
+                for (int i = 0; i < list.Count; i++) Append(ref ids, ref n, list[i]);
+            if (e.Children != null) foreach (var c in e.Children) CollectBodies(c, ref ids, ref n);
+        }
+
+        /// <summary>Test hook (#406): how many body handles a ray or a character that ignores <paramref name="root"/> skips.</summary>
+        internal static int IgnoredBodyCount(GameEntity root)
+        {
+            var ids = new uint[16];
+            return root != null ? SubtreeBodies(root, ref ids) : 0;
+        }
+
+        /// <summary>The handles of the "jolt" characters that belong to <paramref name="root"/> or an entity under it.</summary>
+        private static int SubtreeCharacters(GameEntity root, ref uint[] ids)
+        {
+            int n = 0;
+            foreach (var c in _joltChars.Values)
+                if (c.Owner != null && CollisionService.IsUnder(c.Owner, root)) Append(ref ids, ref n, c.Handle);
+            return n;
+        }
+
+        internal static void Append(ref uint[] ids, ref int n, uint id)
+        {
+            if (n == ids.Length) Array.Resize(ref ids, ids.Length * 2);
+            ids[n++] = id;
         }
 
         /// <summary>Every entity whose body overlaps the sphere (solid layers by default; deduplicated).</summary>
@@ -586,10 +656,45 @@ namespace Editor.Core.Services.Physics
             catch { return result; }
             for (int i = 0; i < n && i < ents.Length; i++)
             {
-                var e = EntityOfBody(bodies[i]) ?? FindByEntityId(ents[i]);
+                var e = EntityOfHit(bodies[i], ents[i]);
                 if (e != null && !result.Contains(e)) result.Add(e);
             }
             return result;
+        }
+
+        /// <summary>#418: every entity whose body CONTAINS the point — the "am I inside something?" question rays no longer
+        /// answer (a ray that starts inside a convex collider does not hit it). Convex colliders are solid, a mesh contains a
+        /// point with an odd number of its triangles straight above AND below it (what a closed mesh encloses; an open one —
+        /// a roof, a cave shell — contains nothing), a terrain contains nothing. Solid layers by default; deduplicated. Empty
+        /// without a physics world.</summary>
+        public static List<GameEntity> OverlapPoint(Vector3 point, uint layerMask = SolidLayerMask, int maxCount = 64)
+        {
+            var result = new List<GameEntity>();
+            if (!IsBuilt) return result;
+            var ents = new ulong[Math.Max(1, maxCount)];
+            var bodies = new uint[ents.Length];
+            _f3a[0] = point.X; _f3a[1] = point.Y; _f3a[2] = point.Z;
+            int n;
+            try { n = VortexAPI.PhysicsOverlapPoint(_f3a, layerMask, ents, bodies, ents.Length); }
+            catch { return result; }
+            for (int i = 0; i < n && i < ents.Length; i++)
+            {
+                var e = EntityOfHit(bodies[i], ents[i]);
+                if (e != null && !result.Contains(e)) result.Add(e);
+            }
+            return result;
+        }
+
+        /// <summary>The entity a query hit: a body of this service by its handle, a ragdoll part / anything else by the
+        /// entity id it carries — and body 0 with the character tag, a character's capsule (#406), by the entity that moves
+        /// that character (null for an anonymous one).</summary>
+        private static GameEntity EntityOfHit(uint body, ulong userData)
+        {
+            if (body != 0) return EntityOfBody(body) ?? FindByEntityId(userData);
+            if ((userData & VortexAPI.PhysicsCharacterUserData) == 0) return null;
+            uint character = unchecked((uint)userData);
+            foreach (var c in _joltChars.Values) if (c.Handle == character) return c.Owner;
+            return null;
         }
 
         // ------------------------------------------------------------------------------------------ joints (#103)
@@ -955,6 +1060,7 @@ namespace Editor.Core.Services.Physics
                 }
                 _byEntity.Remove(e);
             }
+            _solidBodiesOf.Remove(e);
             if (e.Children != null) foreach (var c in e.Children) RemoveRecursive(c);
         }
 
@@ -1100,6 +1206,11 @@ namespace Editor.Core.Services.Physics
             _bodies.Add(b);
             _byId[b.Id] = b;
             if (!secondary) _byEntity[e] = b;
+            if (!b.IsTrigger)
+            {
+                if (!_solidBodiesOf.TryGetValue(e, out var ids)) _solidBodiesOf[e] = ids = new List<uint>(1);
+                ids.Add(b.Id);
+            }
         }
 
         /// <summary>Create one body from a group of colliders (null = derive from the MeshRenderer).</summary>
@@ -1130,11 +1241,10 @@ namespace Editor.Core.Services.Physics
                 }
             }
 
-            var mr = e.GetComponent<MeshRenderer>();
             bool wantMesh = group == null || meshCol != null || (baseMeshCol != null && children.Count == 0);
             if (wantMesh)
             {
-                string meshPath = meshCol != null && !string.IsNullOrEmpty(meshCol.MeshPath) ? meshCol.MeshPath : mr?.MeshPath;
+                string meshPath = CollisionService.MeshSourceOf(e, (Collider)meshCol ?? baseMeshCol);   // #500: one choice for both worlds
                 var centerCol = (Collider)meshCol ?? baseMeshCol;
                 var center = centerCol != null ? Mul(ToSys(centerCol.Center), scale) : SysVec.Zero;
                 bool convex = meshCol != null ? meshCol.Convex : (baseMeshCol != null ? baseMeshCol.ColliderType == ColliderType.Convex : motion != MotionStatic);
@@ -1396,10 +1506,12 @@ namespace Editor.Core.Services.Physics
             public uint Handle;
             public float R, H, Step, Slope, Mass;
             public Vector3 LastPos;
+            public GameEntity Owner;     // the entity the characterId moves (#406) — null for an anonymous id
         }
         private static readonly Dictionary<long, JoltChar> _joltChars = new Dictionary<long, JoltChar>();
         private static readonly float[] _chVel = new float[3], _chPos = new float[3], _chOut = new float[3], _chNrm = new float[3];
-        private static bool _joltCharWarned;
+        private static bool _joltCharWarned, _charMoveExUnavailable;
+        private static uint[] _charIgnoreBodies = new uint[16];
 
         /// <summary>Number of live Jolt characters (one per characterId the scripts moved this scene).</summary>
         public static int JoltCharacterCount => _joltChars.Count;
@@ -1412,12 +1524,26 @@ namespace Editor.Core.Services.Physics
         /// step / slope options change; a feet position that is not where the character ended last frame is a
         /// teleport (respawn, scene start) and moves it there first. The character is registered with
         /// <see cref="CollisionService"/> too, so trigger volumes and the managed characters of other scripts still
-        /// see it. Falls back to the managed controller when the Jolt world is not built.</summary>
+        /// see it. Falls back to the managed controller when the Jolt world is not built.
+        /// <paramref name="owner"/> = the entity the character moves, when the caller knows it (#406: rays and overlaps that
+        /// hit the capsule report that entity; #417: its own bodies and its children's are no obstacles for the character;
+        /// #407: no Jolt character while the owner is switched off or limp — the move is resolved by the managed controller
+        /// without registering anything, see <see cref="CollisionService.MayRegister"/>). Null = the owner the id already
+        /// has, else anonymous.</summary>
         public static Vector3 MoveCharacterJolt(Vector3 feet, float radius, float height, Vector3 move, float dt,
-            out bool grounded, long selfId, float stepHeight, float maxSlopeDeg)
+            out bool grounded, long selfId, float stepHeight, float maxSlopeDeg, GameEntity owner = null)
         {
+            // #406: a move that names no owner keeps the one the id has — another script's code moving the character (a
+            // shotgun's knock-back) must not make its capsule anonymous: rays would report no entity, Destroy would leave it
+            if (owner == null && selfId != 0)
+                owner = _joltChars.TryGetValue(selfId, out var known) && known.Owner != null ? known.Owner : CollisionService.KnownOwner(selfId);
             if (!IsBuilt)
-                return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg);
+                return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg, owner);
+            if (!CollisionService.MayRegister(owner))
+            {
+                if (selfId != 0) RemoveCharacter(selfId);   // (the deactivation / the ragdoll removed it already; a leftover goes too)
+                return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg, owner);
+            }
             grounded = false;
             radius = Math.Max(0.05f, radius);
             height = Math.Max(2f * radius, height);
@@ -1441,7 +1567,7 @@ namespace Editor.Core.Services.Physics
                 try { h = VortexAPI.PhysicsCharacterCreate(radius, height, _chPos, maxSlopeDeg, stepHeight, mass); }
                 catch (Exception ex) { if (!_joltCharWarned) { _joltCharWarned = true; Log("[Physics] Jolt character unavailable (" + ex.Message + ") — using the managed controller"); } }
                 if (h == 0)
-                    return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg);
+                    return CollisionService.MoveCharacter(feet, radius, height, move, out grounded, selfId, stepHeight, maxSlopeDeg, owner);
                 c = new JoltChar { Handle = h, R = radius, H = height, Step = stepHeight, Slope = maxSlopeDeg, Mass = mass, LastPos = feet };
                 _joltChars[selfId] = c;
             }
@@ -1454,16 +1580,80 @@ namespace Editor.Core.Services.Physics
                     VortexAPI.PhysicsCharacterSetPosition(c.Handle, _chPos);
                 }
             }
+            c.Owner = owner;
 
             _chVel[0] = move.X / dt; _chVel[1] = move.Y / dt; _chVel[2] = move.Z / dt;
             int g;
-            VortexAPI.PhysicsCharacterMove(c.Handle, _chVel, dt, _chPos, _chOut, out g, _chNrm);
+            // #417: the entity's own bodies (its collider, a hitbox child) are no obstacles for its character
+            int ignoreCount = c.Owner != null ? SubtreeBodies(c.Owner, ref _charIgnoreBodies) : 0;
+            if (ignoreCount > 0 && !_charMoveExUnavailable)
+            {
+                try { VortexAPI.PhysicsCharacterMoveEx(c.Handle, _chVel, dt, _charIgnoreBodies, ignoreCount, _chPos, _chOut, out g, _chNrm); }
+                catch (EntryPointNotFoundException)
+                {
+                    _charMoveExUnavailable = true;   // an engine library from before #417
+                    VortexAPI.PhysicsCharacterMove(c.Handle, _chVel, dt, _chPos, _chOut, out g, _chNrm);
+                }
+            }
+            else VortexAPI.PhysicsCharacterMove(c.Handle, _chVel, dt, _chPos, _chOut, out g, _chNrm);
             var p = new Vector3(_chPos[0], _chPos[1], _chPos[2]);
             if (float.IsNaN(p.X) || float.IsNaN(p.Y) || float.IsNaN(p.Z)) { p = new Vector3(feet.X + move.X, feet.Y + move.Y, feet.Z + move.Z); }
             grounded = g != 0;
             c.LastPos = p;
-            CollisionService.RegisterCharacter(selfId, p, radius, height);
+            CollisionService.RegisterCharacter(selfId, p, radius, height, owner);
             return p;
+        }
+
+        /// <summary>#407: unregister the character <paramref name="id"/> — its managed capsule (other characters, CanStand,
+        /// trigger volumes) and, with the "jolt" controller, its Jolt character, whose capsule leaves the world with it (rays,
+        /// props and other characters no longer meet it). A later MoveCharacter with the same id creates it again. True when
+        /// anything was registered under the id.</summary>
+        public static bool RemoveCharacter(long id)
+        {
+            bool removed = CollisionService.RemoveCharacter(id);
+            if (_joltChars.TryGetValue(id, out var c))
+            {
+                _joltChars.Remove(id);
+                if (IsBuilt) { try { VortexAPI.PhysicsCharacterDestroy(c.Handle); } catch { } }
+                removed = true;
+            }
+            return removed;
+        }
+
+        /// <summary>#407: unregister every character that belongs to <paramref name="root"/> or an entity under it (runtime
+        /// Destroy / SetActive(false) of the subtree) — the characters whose characterId named one of those entities.
+        /// Returns how many were removed.</summary>
+        public static int RemoveCharactersIn(GameEntity root)
+        {
+            if (root == null) return 0;
+            var ids = CharacterIds(o => CollisionService.IsUnder(o, root));
+            foreach (var id in ids) RemoveCharacter(id);
+            return ids.Count;
+        }
+
+        /// <summary>#407: unregister the character(s) of the NEAREST entity at or above <paramref name="e"/> that moves one —
+        /// a ragdoll is activated on the skinned model, usually a child of the root whose behaviour registered the capsule
+        /// (and a passenger's ragdoll must not take the vehicle's capsule with it). Returns how many were removed.</summary>
+        public static int RemoveCharacterOf(GameEntity e)
+        {
+            for (var p = e; p != null; p = p.Parent)
+            {
+                var owner = p;
+                var ids = CharacterIds(o => ReferenceEquals(o, owner));
+                if (ids.Count == 0) continue;
+                foreach (var id in ids) RemoveCharacter(id);
+                return ids.Count;
+            }
+            return 0;
+        }
+
+        private static List<long> CharacterIds(Func<GameEntity, bool> ownerMatch)
+        {
+            var ids = new List<long>();
+            CollisionService.CharacterIdsOwnedBy(ownerMatch, ids);
+            foreach (var kv in _joltChars)
+                if (kv.Value.Owner != null && ownerMatch(kv.Value.Owner) && !ids.Contains(kv.Key)) ids.Add(kv.Key);
+            return ids;
         }
 
         private static void ClearJoltCharacters()
@@ -1675,6 +1865,9 @@ namespace Editor.Core.Services.Physics
                         var kind = (PhysicsContactKind)c.Kind;
                         bool trigger = c.IsTrigger != 0;
                         if (!trigger && kind != PhysicsContactKind.Added) continue;   // solids: only the first touch has a script callback
+                        // A "jolt" character's inner body (no body handle) names its character since #406. Its touches stay
+                        // with CollisionService.StepEvents, which reports every character in both modes — no duplicates.
+                        if (c.BodyA == 0 || c.BodyB == 0) continue;
                         var a = EntityOfBody(c.BodyA) ?? FindByEntityId(c.EntityA);
                         var b = EntityOfBody(c.BodyB) ?? FindByEntityId(c.EntityB);
                         if (a == null || b == null || ReferenceEquals(a, b)) continue;
@@ -1740,6 +1933,9 @@ namespace Editor.Core.Services.Physics
         private static GameEntity FindByEntityId(ulong entityId)
         {
             long id = unchecked((long)entityId);
+            // a body made for an entity that was not registered with the engine carries INVALID_ID — it names no entity
+            // (matching it would hand the hit to the first other unregistered entity)
+            if (!Editor.Utilities.ID.IsValid(id)) return null;
             for (int i = 0; i < _bodies.Count; i++)
                 if (_bodies[i].Entity != null && _bodies[i].Entity.EntityId == id) return _bodies[i].Entity;
             return null;

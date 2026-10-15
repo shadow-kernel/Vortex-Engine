@@ -329,6 +329,7 @@ namespace VortexEditor.Claude
             "- Every mutating call is ONE undo step in the editor ('Claude: …'); the user can undo it with Ctrl/Cmd+Z, and so can you (undo).\n" +
             "- Errors list the valid values — read them and retry instead of guessing.\n" +
             "- Look at your work: capture_viewport returns an image of the editor viewport (frame the area first with focus_camera).\n" +
+            "- Play-test the game: set_save seeds save data, enter_play_mode, send_input plays keys / mouse / wheel into it, get_script_state and set_script_state read and set live script values, read_console(since_id) returns only what is new; exit_play_mode restores the scene.\n" +
             "- Nothing is saved to disk until save_scene.";
 
         /// <summary>ASP.NET Core / MCP warnings into the editor console (everything below Warning is dropped).</summary>
