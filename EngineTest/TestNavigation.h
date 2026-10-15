@@ -699,6 +699,14 @@ private:
 			!loads(with(_blob, poly_at + offsetof(dtPoly, verts), (unsigned short)mh.vertCount)));
 		check("a polygon whose neighbour index points past its tile is refused",
 			!loads(with(_blob, poly_at + offsetof(dtPoly, neis), (unsigned short)(mh.polyCount + 1))));
+		// the first detail triangle (the first polygon's) and the first BV tree node, past what they may name
+		auto a4 = [](size_t n) { return (n + 3) & ~(size_t)3; };
+		const size_t details_at = poly_at + a4(sizeof(dtPoly) * (size_t)mh.polyCount) + a4(sizeof(dtLink) * (size_t)mh.maxLinkCount);
+		const size_t tris_at = details_at + a4(sizeof(dtPolyDetail) * (size_t)mh.detailMeshCount) + a4(sizeof(f32) * 3 * (size_t)mh.detailVertCount);
+		const size_t bv_at = tris_at + a4(4 * (size_t)mh.detailTriCount);
+		check("a detail triangle whose vertex is past its detail mesh is refused", mh.detailTriCount > 0 && !loads(with(_blob, tris_at, (u8)250)));
+		check("a BV tree leaf that names a polygon past the tile is refused",
+			mh.bvNodeCount > 0 && !loads(with(_blob, bv_at + offsetof(dtBVNode, i), (int)mh.detailMeshCount)));
 		check("the untouched file still loads", loads(_blob));
 #endif
 	}

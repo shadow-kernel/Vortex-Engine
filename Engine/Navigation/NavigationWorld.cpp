@@ -73,13 +73,19 @@ namespace vortex::navigation {
 			return true;
 		}
 
-		// The indices addTile and every query follow unchecked: a polygon's vertices (below vertCount), its neighbours
-		// inside the tile (below polyCount) and each ground polygon's slice of the detail mesh. tile = laid out for this
-		// build (load_tile); a broken one is refused instead of read out of bounds.
+		// The indices addTile and every query follow unchecked: a polygon's vertices (below vertCount) and neighbours
+		// inside the tile (below polyCount), each ground polygon's slice of the detail mesh and its triangles' vertices,
+		// and the BV tree's polygons and escape offsets. tile = laid out for this build (load_tile); a broken one is
+		// refused instead of read out of bounds — a flipped bit in any of them crashed the queries or debug_triangles.
 		bool indices_valid(const unsigned char* tile, const dtMeshHeader& h)
 		{
 			auto a4 = [](size_t n) { return (n + 3) & ~(size_t)3; };
+			tile_layout l{};
+			layout_of(h, sizeof(dtLink), l);
 			const size_t polys_at = a4(sizeof(dtMeshHeader)) + a4(sizeof(f32) * 3 * (size_t)h.vertCount);
+			const size_t details_at = l.links_at + l.links_size;
+			const size_t tris_at = details_at + a4(sizeof(dtPolyDetail) * (size_t)h.detailMeshCount) + a4(sizeof(f32) * 3 * (size_t)h.detailVertCount);
+			const size_t bv_at = tris_at + a4(4 * (size_t)h.detailTriCount);
 			for (int i = 0; i < h.polyCount; ++i)
 			{
 				dtPoly p;
@@ -90,14 +96,22 @@ namespace vortex::navigation {
 					if (p.verts[j] >= h.vertCount) return false;
 					if (p.neis[j] != 0 && !(p.neis[j] & DT_EXT_LINK) && p.neis[j] > h.polyCount) return false;   // neis = index + 1
 				}
-			}
-			tile_layout l{};
-			layout_of(h, sizeof(dtLink), l);
-			for (int i = 0; i < h.detailMeshCount; ++i)
-			{
+				if (i >= h.detailMeshCount) continue;   // off-mesh connections have no detail mesh
 				dtPolyDetail d;
-				std::memcpy(&d, tile + l.links_at + l.links_size + sizeof(dtPolyDetail) * (size_t)i, sizeof(d));
+				std::memcpy(&d, tile + details_at + sizeof(dtPolyDetail) * (size_t)i, sizeof(d));
 				if ((size_t)d.vertBase + d.vertCount > (size_t)h.detailVertCount || (size_t)d.triBase + d.triCount > (size_t)h.detailTriCount) return false;
+				for (unsigned t = 0; t < d.triCount; ++t)
+				{
+					const unsigned char* v = tile + tris_at + 4 * ((size_t)d.triBase + t);   // polygon vertices, then the detail mesh's own
+					if (v[0] >= p.vertCount + d.vertCount || v[1] >= p.vertCount + d.vertCount || v[2] >= p.vertCount + d.vertCount) return false;
+				}
+			}
+			for (int i = 0; i < h.bvNodeCount; ++i)
+			{
+				dtBVNode n;
+				std::memcpy(&n, tile + bv_at + sizeof(dtBVNode) * (size_t)i, sizeof(n));
+				// a leaf names a ground polygon; an inner node's escape offset (-i) lands inside the tree or just past it
+				if (n.i >= 0 ? n.i >= h.detailMeshCount : (s64)i - (s64)n.i > (s64)h.bvNodeCount) return false;
 			}
 			return true;
 		}
