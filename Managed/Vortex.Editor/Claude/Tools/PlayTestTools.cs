@@ -104,7 +104,9 @@ namespace VortexEditor.Claude.Tools
             {
                 await ToolHost.WaitOutsideLock(async () =>
                 {
-                    while (sim.Now <= end)
+                    // past the end, a tap pressed in the last (long) frame still goes up in the next one: wait for it, so the
+                    // answer never reports a key of this sequence as held (#457)
+                    while (sim.Now <= end || sim.ReleasePending)
                     {
                         var state = PlayModeService.Instance.State;
                         if (state == PlayState.Editing) { stopped = "play stopped before the last action ran"; break; }
