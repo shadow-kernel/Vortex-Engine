@@ -121,14 +121,12 @@ namespace Editor.Scripting
         // returns the first). It is built at the session's first query and kept up to date entry by entry — a rename or retag
         // moves that entity, Scene.Instantiate adds the spawn (last in hierarchy order), Scene.Destroy takes the subtree out.
         // Any other change of the hierarchy (the editor, a tool) leaves it stale: the queries then walk the scene as before the
-        // index (without its allocations) until the walks on that state of the hierarchy have cost about one rebuild
-        // (WalksPerRebuild), and only then is it rebuilt — a hierarchy that changes before every query never pays a rebuild per
-        // change, one that settles gets its index back.
+        // index (without its allocations), and the time the walks take is added up from the moment it went stale — further
+        // changes and spawns do not reset it — until it reaches what the last build took; then it is rebuilt (rent-or-buy: the
+        // walks never cost more than about one rebuild per rebuild). A hierarchy changing before every query pays at most about
+        // twice its walks instead of a rebuild per change; one that settles, or keeps spawning through Scene.Instantiate (which
+        // the rebuilt index follows), gets its index back after a bounded number of walks, whatever the scene's size.
 
-        /// <summary>Queries answered by walking a changed hierarchy before the index is rebuilt. Measured on 10,000 entities: a
-        /// rebuild ~0.55 ms, a walk ~50 µs (one before the index: ~95 µs) — with 16, a change followed by any number of queries
-        /// never costs more than those queries did before the index.</summary>
-        internal const int WalksPerRebuild = 16;
         /// <summary>Renames / retags remembered between two queries; beyond that the index goes stale (a rebuild reads every name).</summary>
         internal const int MaxPendingRenames = 256;
 
@@ -139,11 +137,14 @@ namespace Editor.Scripting
         private bool _renamesLost;   // more renames than remembered (under the _renamed lock): stale until the rebuild
         private readonly List<GameEntity> _walkHits = new List<GameEntity>();
         private Scene _indexScene;
-        private int _indexHierarchy = -1, _nextOrder, _staleHierarchy = -1, _staleWalks;
+        private int _indexHierarchy = -1, _nextOrder;
+        private long _buildTicks, _staleWalkTicks;   // Stopwatch ticks: the last (re)build; the walks since the index went stale
         private bool _indexWatching;
 
         /// <summary>How often the name / tag index was built from scratch (the tests count with it).</summary>
         internal int IndexBuilds { get; private set; }
+        /// <summary>Queries answered by walking the scene while the index was stale (the tests count with it).</summary>
+        internal int IndexWalks { get; private set; }
         /// <summary>Names and tags the index keeps lists for (the tests check they do not pile up over a session).</summary>
         internal int IndexKeys => _byName.Count + _byTag.Count;
 
@@ -169,23 +170,29 @@ namespace Editor.Scripting
         }
 
         /// <summary>Ready the index for a query. True: answer from it (the renames since the last query applied). False: walk the
-        /// scene for this one — the hierarchy changed under the index (see above). The session's first query builds it.</summary>
+        /// scene for this one (and time it, <see cref="Walked"/>) — the index is stale and its walks have not yet cost a rebuild
+        /// (see above). The session's first query builds it.</summary>
         private bool IndexReady()
         {
             if (!_indexWatching) { GameEntity.NamingChanged += OnEntityNamingChanged; _indexWatching = true; }
             int h = GameEntity.HierarchyVersion;
             if (IndexCurrent(h)) { ApplyPendingRenames(); return true; }
-            if (ReferenceEquals(_indexScene, _currentScene))   // built before, stale now
-            {
-                if (h != _staleHierarchy) { _staleHierarchy = h; _staleWalks = 0; }
-                if (++_staleWalks <= WalksPerRebuild) return false;
-            }
+            if (ReferenceEquals(_indexScene, _currentScene) && _staleWalkTicks < _buildTicks) return false;
             RebuildIndex(h);
             return true;
         }
 
+        /// <summary>A walk for a stale index ended (it began at Stopwatch timestamp <paramref name="started"/>): its time counts
+        /// towards the next rebuild.</summary>
+        private void Walked(long started)
+        {
+            _staleWalkTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
+            IndexWalks++;
+        }
+
         private void RebuildIndex(int hierarchy)
         {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             var scene = _currentScene;
             lock (_renamed) { _renamed.Clear(); _renamesLost = false; }   // a rename during the walk below is pending again
             foreach (var list in _byName.Values) list.Clear();   // the lists are reused: rebuilding the same names allocates nothing
@@ -196,7 +203,8 @@ namespace Editor.Scripting
                 for (int i = 0; i < scene.Entities.Count; i++) IndexRecursive(scene.Entities[i]);
             DropEmpty(_byName); DropEmpty(_byTag);   // names nobody carries any more do not pile up over a session
             _indexScene = scene; _indexHierarchy = hierarchy;
-            _staleHierarchy = -1; _staleWalks = 0;
+            _buildTicks = Math.Max(1, System.Diagnostics.Stopwatch.GetTimestamp() - started);
+            _staleWalkTicks = 0;
             IndexBuilds++;
         }
 
@@ -301,16 +309,19 @@ namespace Editor.Scripting
             if (_indexWatching) { GameEntity.NamingChanged -= OnEntityNamingChanged; _indexWatching = false; }
             _byName.Clear(); _byTag.Clear(); _indexed.Clear(); _walkHits.Clear();
             lock (_renamed) { _renamed.Clear(); _renamesLost = false; }
-            _indexScene = null; _indexHierarchy = -1; _nextOrder = 0; _staleHierarchy = -1; _staleWalks = 0;
+            _indexScene = null; _indexHierarchy = -1; _nextOrder = 0; _buildTicks = _staleWalkTicks = 0;
         }
 
         // the walk for a stale index: hierarchy order, as the queries walked before the index — by index, no enumerators
 
         private GameEntity WalkFind(string name)
         {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            GameEntity hit = null;
             var roots = _currentScene.Entities;
-            for (int i = 0; i < roots.Count; i++) { var hit = WalkFind(roots[i], name); if (hit != null) return hit; }
-            return null;
+            for (int i = 0; i < roots.Count && hit == null; i++) hit = WalkFind(roots[i], name);
+            Walked(started);
+            return hit;
         }
 
         private static GameEntity WalkFind(GameEntity e, string name)
@@ -324,9 +335,11 @@ namespace Editor.Scripting
 
         private List<GameEntity> WalkTag(string tag)
         {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             _walkHits.Clear();
             var roots = _currentScene.Entities;
             for (int i = 0; i < roots.Count; i++) WalkTag(roots[i], tag, _walkHits);
+            Walked(started);
             return _walkHits;
         }
 

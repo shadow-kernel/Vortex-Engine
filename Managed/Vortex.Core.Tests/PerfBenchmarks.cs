@@ -86,10 +86,25 @@ public class Idle : VortexBehaviour { }
                 var retagged = Measure(200, () => { all[7001].Tag = all[7001].Tag == "Enemy" ? "Dead" : "Enemy"; Vortex.Scene.FindByTag("Enemy"); });
                 var extra = new GameEntity(scene, "Extra");
                 void Toggle() { if (scene.Entities.Contains(extra)) scene.Entities.Remove(extra); else scene.Entities.Add(extra); }
-                var outside = Measure(200, () => { Toggle(); Vortex.Scene.Find("E9999"); });
-                int builds0 = rt.IndexBuilds, rounds = 0;
-                var settled = Measure(50, () => { rounds++; Toggle(); for (int i = 0; i <= ScriptRuntime.WalksPerRebuild; i++) Vortex.Scene.Find("E9999"); });
-                int rebuilds = rt.IndexBuilds - builds0;
+                int b0 = rt.IndexBuilds, w0 = rt.IndexWalks;
+                var outside = Measure(400, () => { Toggle(); Vortex.Scene.Find("E9999"); });
+                int churnBuilds = rt.IndexBuilds - b0, churnWalks = rt.IndexWalks - w0;
+                // one change the index does not follow, then a spawn and 3 Finds per frame (the review's case): it comes back
+                string prefab = t.Write("Bullet.ventity", Editor.Core.Serialization.DataSerializer.ToJson(new GameEntity("Bullet")));
+                Toggle();
+                int b1 = rt.IndexBuilds, staleFrames = -1;
+                var frameMs = new List<double>();
+                for (int f = 0; f < 300; f++)
+                {
+                    Vortex.Scene.Instantiate(prefab, new Vortex.Vector3(0f, 0f, 0f));
+                    var sw = Stopwatch.StartNew();
+                    for (int q = 0; q < 3; q++) Vortex.Scene.Find("E9999");
+                    frameMs.Add(sw.Elapsed.TotalMilliseconds);
+                    if (staleFrames < 0 && rt.IndexBuilds > b1) staleFrames = f + 1;
+                }
+                double firstMs = 0, lastMs = 0;
+                for (int f = 0; f < Math.Max(1, staleFrames); f++) firstMs += frameMs[f];
+                for (int f = 200; f < 300; f++) lastMs += frameMs[f];
                 Console.WriteLine("        Scene.Find last of 10,000:   " + F(last.us) + " us/call, " + last.bytes + " B/call");
                 Console.WriteLine("        Scene.Find middle:            " + F(mid.us) + " us/call, " + mid.bytes + " B/call");
                 Console.WriteLine("        Scene.Find no match:          " + F(miss.us) + " us/call, " + miss.bytes + " B/call");
@@ -97,9 +112,10 @@ public class Idle : VortexBehaviour { }
                 Console.WriteLine("        Scene.FindByTag into a list:  " + F(tagList.us) + " us/call, " + tagList.bytes + " B/call (" + into.Count + " hits)");
                 Console.WriteLine("        rename + Find:                " + F(renamed.us) + " us/call, " + renamed.bytes + " B/call");
                 Console.WriteLine("        retag + FindByTag:            " + F(retagged.us) + " us/call, " + retagged.bytes + " B/call");
-                Console.WriteLine("        root added by the editor + Find (the scene walked): " + F(outside.us) + " us/call, " + outside.bytes + " B/call");
-                Console.WriteLine("        root added by the editor + " + (ScriptRuntime.WalksPerRebuild + 1) + " Finds (" + ScriptRuntime.WalksPerRebuild
-                    + " walks, then the rebuild): " + F(settled.us) + " us, " + settled.bytes + " B (" + rebuilds + " rebuilds in " + rounds + " rounds)");
+                Console.WriteLine("        root added by the editor before every Find: " + F(outside.us) + " us/call, " + outside.bytes + " B/call ("
+                    + churnWalks + " walks, " + churnBuilds + " rebuilds)");
+                Console.WriteLine("        one editor change, then a spawn + 3 Finds per frame: " + F(firstMs / Math.Max(1, staleFrames) * 1000.0) + " us/frame for "
+                    + staleFrames + " frames until the rebuild, then " + F(lastMs / 100 * 1000.0) + " us/frame (" + (rt.IndexBuilds - b1) + " rebuild)");
             }
             finally { rt.End(); }
         }

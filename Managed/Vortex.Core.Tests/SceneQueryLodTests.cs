@@ -42,6 +42,16 @@ public class Idle : VortexBehaviour { }
             return e;
         }
 
+        /// <summary>Run <paramref name="query"/> until the index has been rebuilt since <paramref name="buildsBefore"/> builds —
+        /// the walks of a stale index add up to what a build takes (a time, so the count varies). Returns the queries it took.</summary>
+        private static int QueryUntilRebuilt(TestContext t, ScriptRuntime rt, int buildsBefore, Action query)
+        {
+            int n = 0;
+            while (rt.IndexBuilds == buildsBefore && n < 1_000_000) { query(); n++; }
+            t.True(rt.IndexBuilds > buildsBefore, "the stale index was rebuilt after " + n + " queries");
+            return n;
+        }
+
         // ------------------------------------------------------------------ point 6: the name / tag index
 
         [Test]
@@ -91,15 +101,17 @@ public class Idle : VortexBehaviour { }
                 t.Equal(builds, rt.IndexBuilds, "a destroy patches the index");
 
                 // a hierarchy change the runtime did not make (the editor, a tool): the queries walk the scene — right at once —
-                // until the walks have cost about a rebuild, then the index is rebuilt
+                // until the walks have cost what a build did, then the index is rebuilt
                 var late = Add(s, null, "Late", "Enemy");
+                int walks = rt.IndexWalks;
                 t.Equal(Id(late), Vortex.Scene.Find("Late"), "an entity the editor added is found at once");
+                t.True(rt.IndexWalks == walks + 1 && rt.IndexBuilds == builds, "… by walking the scene, not by a rebuild");
                 t.Equal(string.Join(",", new[] { c, late }.Select(Id)), string.Join(",", Vortex.Scene.FindByTag("Enemy")), "… by its tag too, in hierarchy order");
-                t.Equal(builds, rt.IndexBuilds, "… by walking the scene: no rebuild yet");
-                for (int i = 2; i < ScriptRuntime.WalksPerRebuild; i++) Vortex.Scene.Find("Late");
-                t.Equal(builds, rt.IndexBuilds, "still walking after " + ScriptRuntime.WalksPerRebuild + " queries");
-                t.Equal(Id(late), Vortex.Scene.Find("Late"), "the next query …");
-                t.Equal(builds + 1, rt.IndexBuilds, "… rebuilds the index, once");
+                int queries = QueryUntilRebuilt(t, rt, builds, () => t.Equal(Id(late), Vortex.Scene.Find("Late"), "found while walking"));
+                t.Equal(builds + 1, rt.IndexBuilds, "once the walks cost what a build took, the index is rebuilt — once (after " + queries + " more queries)");
+                walks = rt.IndexWalks;
+                t.Equal(Id(late), Vortex.Scene.Find("Late"), "the rebuilt index finds it");
+                t.Equal(walks, rt.IndexWalks, "… without a walk");
                 late.Name = "Later";
                 t.Equal(Id(late), Vortex.Scene.Find("Later"), "the rebuilt index follows renames again");
                 t.Equal(builds + 1, rt.IndexBuilds, "… without another rebuild");
@@ -123,14 +135,52 @@ public class Idle : VortexBehaviour { }
             {
                 rt.Begin(s, asm);
                 t.True(Vortex.Scene.Find("Box0") != 0, "indexed");
-                int builds = rt.IndexBuilds;
+                int builds = rt.IndexBuilds, walks = rt.IndexWalks;
                 for (int i = 0; i < 40; i++)
                 {
                     var e = Add(s, null, "Fresh" + i, "Box");   // the editor (or a tool) adds an entity before every query
                     t.Equal(rt.HandleForEntity(e), Vortex.Scene.Find("Fresh" + i), "the new entity is found at once (" + i + ")");
                     t.Equal(51 + i, Vortex.Scene.FindByTag("Box").Length, "… and counted by its tag (" + i + ")");
                 }
-                t.Equal(builds, rt.IndexBuilds, "a hierarchy that changes before every query is walked, not rebuilt per change");
+                int rebuilds = rt.IndexBuilds - builds;
+                t.True(rt.IndexWalks - walks >= 40, "the queries on the changed hierarchy walked it (" + (rt.IndexWalks - walks) + " walks)");
+                t.True(rebuilds <= 20, "a hierarchy that changes before every query is not rebuilt per change (" + rebuilds + " rebuilds for 40 changes)");
+            }
+            finally { rt.End(); }
+        }
+
+        /// <summary>#361 review: after one change the index does not follow, a game that spawns (Scene.Instantiate) before every
+        /// query still gets its index back — the walks add up from the moment it went stale, the spawns do not reset that — and
+        /// from then on its spawns patch it: no more walks, no more rebuilds.</summary>
+        [Test]
+        public static void SpawningEveryFrameAfterAnUntrackedChangeGetsTheIndexBack(TestContext t)
+        {
+            var asm = Compile(t);
+            string prefab = t.Write("Bullet.ventity", DataSerializer.ToJson(new GameEntity("Bullet")));
+            var s = new Scene { Name = "Bullets" };
+            var host = Add(s, null, "Host");
+            host.AddComponentDirect(new Script(host, "Assets/Scripts/Idle.cs"));
+            for (int i = 0; i < 200; i++) Add(s, null, "E" + i);
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                rt.Begin(s, asm);
+                long target = Vortex.Scene.Find("E199");
+                t.True(target != 0, "indexed");
+                Add(s, null, "FromTheEditor");   // one change the runtime did not make
+                int builds = rt.IndexBuilds;
+                void Frame()
+                {
+                    t.True(Vortex.Scene.Instantiate(prefab, new Vortex.Vector3(0f, 0f, 0f)) != 0, "spawned");
+                    for (int q = 0; q < 3; q++) t.Equal(target, Vortex.Scene.Find("E199"), "found");
+                }
+                int frames = 0;
+                while (rt.IndexBuilds == builds && frames < 5000) { Frame(); frames++; }
+                t.True(rt.IndexBuilds == builds + 1, "rebuilt once though a spawn came before every query (after " + frames + " frames)");
+                int walks = rt.IndexWalks;
+                for (int f = 0; f < 50; f++) Frame();
+                t.Equal(walks, rt.IndexWalks, "from then on the spawns patch the index: no walks");
+                t.Equal(builds + 1, rt.IndexBuilds, "… and no rebuilds");
             }
             finally { rt.End(); }
         }
@@ -150,15 +200,19 @@ public class Idle : VortexBehaviour { }
             {
                 rt.Begin(s, asm);
                 t.True(Vortex.Scene.Find("Old7") != 0, "indexed");
-                int builds = rt.IndexBuilds;
+                int builds = rt.IndexBuilds, walks = rt.IndexWalks;
                 for (int i = 0; i < n; i++) many[i].Name = "New" + i;   // more renames between two queries than the index remembers
-                for (int i = 0; i < n; i += 37)
+                t.Equal(0L, Vortex.Scene.Find("Old0"), "the old name is gone");
+                t.True(rt.IndexWalks == walks + 1 && rt.IndexBuilds == builds, "… told by a walk (the index lost track of the renames)");
+                int k = 0;
+                QueryUntilRebuilt(t, rt, builds, () =>
                 {
+                    int i = (k++ * 37) % n;
                     t.Equal(0L, Vortex.Scene.Find("Old" + i), "the old name is gone (" + i + ")");
                     t.Equal(rt.HandleForEntity(many[i]), Vortex.Scene.Find("New" + i), "the new one is found (" + i + ")");
-                }
-                t.Equal(rt.HandleForEntity(many[n - 1]), Vortex.Scene.Find("New" + (n - 1)), "the last rename too");
+                });
                 t.Equal(builds + 1, rt.IndexBuilds, "walked first, then rebuilt once");
+                t.Equal(rt.HandleForEntity(many[n - 1]), Vortex.Scene.Find("New" + (n - 1)), "the last rename too");
                 t.Equal(0L, Vortex.Scene.Find("Old3"), "the rebuilt index has the new names only");
             }
             finally { rt.End(); }
@@ -181,10 +235,10 @@ public class Idle : VortexBehaviour { }
                 for (int i = 0; i < 500; i++) { bullet.Name = "Bullet" + i; bullet.Tag = "Shot" + i; Vortex.Scene.Find("Bullet" + i); }
                 t.Equal(keys, rt.IndexKeys, "renamed 500 times: the old names and tags left the index");
                 var temp = Add(s, null, "Temp", "Temporary");   // the editor adds one and takes it away again
-                for (int i = 0; i <= ScriptRuntime.WalksPerRebuild; i++) Vortex.Scene.Find("Temp");
+                QueryUntilRebuilt(t, rt, rt.IndexBuilds, () => Vortex.Scene.Find("Temp"));
                 t.Equal(keys + 2, rt.IndexKeys, "rebuilt with it: its name and tag");
                 s.Entities.Remove(temp);
-                for (int i = 0; i <= ScriptRuntime.WalksPerRebuild; i++) t.Equal(0L, Vortex.Scene.Find("Temp"), "gone (" + i + ")");
+                QueryUntilRebuilt(t, rt, rt.IndexBuilds, () => t.Equal(0L, Vortex.Scene.Find("Temp"), "gone"));
                 t.Equal(keys, rt.IndexKeys, "rebuilt without it: its name and tag left the index");
             }
             finally { rt.End(); }
