@@ -222,6 +222,97 @@ namespace VortexTests
             finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
         }
 
+        /// <summary>A flat <paramref name="size"/> m slab of triangles centred on x/z 0 at height <paramref name="y"/>.</summary>
+        internal static float[] Slab(float size, float y)
+        {
+            var slab = Terrain(8, size, 0f);
+            for (int i = 0; i < slab.Length; i += 3) { slab[i] -= size * 0.5f; slab[i + 1] += y; slab[i + 2] -= size * 0.5f; }
+            return slab;
+        }
+
+        /// <summary>#500: a Mesh Collider with its OWN mesh path (a collision mesh nobody renders) and no Mesh Renderer
+        /// collides for the character and the managed raycast — it was ignored there, while the Jolt bodies and the navmesh
+        /// bake used it, and characters fell through the roofs of a whole city.</summary>
+        [Test]
+        public static void MeshColliderUsesItsOwnMeshPath(TestContext t)
+        {
+            var scene = new Editor.Core.Data.Scene { Name = "City" };
+            var col = new GameEntity(scene, "Col");
+            var mc = new Editor.ECS.Components.Physics.MeshCollider(col) { MeshPath = "Assets/Models/Col.glb" };
+            col.AddComponentDirect(mc);
+            scene.Entities.Add(col);
+            var slab = Slab(20f, 5f);   // the report's repro: a 20 x 20 m floor at y 5
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = path => path == "Assets/Models/Col.glb" ? slab : null;
+            try
+            {
+                CollisionService.Build(scene);
+                t.Equal("Assets/Models/Col.glb", CollisionService.MeshSourceOf(col, mc), "the collider's own path is its mesh");
+                var f = new Vector3(0, 7f, 0);
+                for (int i = 0; i < 40; i++) f = CollisionService.MoveCharacter(f, 0.3f, 1.8f, new Vector3(0, -0.1f, 0), out _, 0);
+                t.True(Math.Abs(f.Y - 5f) < 0.02f, "the capsule lands on the collider's mesh (y = " + f.Y + ")");
+                t.True(CollisionService.Raycast(new Vector3(1f, 10f, 0.3f), new Vector3(0, -1, 0), 20f, ~0, out _, out _, out var e, out float d) && e == col && Math.Abs(d - 5f) < 1e-3f,
+                       "Physics.Raycast (managed) hits it (" + d + ")");
+            }
+            finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        /// <summary>#500: with both, the collider's own mesh wins over the rendered one (a coarse collision GLB under
+        /// detailed visuals); without its own path the renderer's mesh is used as before.</summary>
+        [Test]
+        public static void MeshColliderOwnMeshWinsOverTheRenderer(TestContext t)
+        {
+            var scene = new Editor.Core.Data.Scene { Name = "Visuals" };
+            var house = new GameEntity(scene, "House");
+            house.AddComponentDirect(new Editor.ECS.Components.Rendering.MeshRenderer(house) { MeshPath = "Assets/house.glb" });
+            var mc = new Editor.ECS.Components.Physics.MeshCollider(house) { MeshPath = "Assets/house_col.glb" };
+            house.AddComponentDirect(mc);
+            scene.Entities.Add(house);
+            var visual = Slab(10f, 3f); var coarse = Slab(10f, 5f);
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = path => path == "Assets/house.glb" ? visual : path == "Assets/house_col.glb" ? coarse : null;
+            try
+            {
+                CollisionService.Build(scene);
+                t.True(CollisionService.RaycastDown(new Vector3(1f, 10f, 0.3f), 20f, out var hit, out _) && Math.Abs(hit.Y - 5f) < 1e-3f, "the collision mesh is used (y = " + hit.Y + ")");
+                mc.MeshPath = "";
+                CollisionService.Build(scene);
+                t.True(CollisionService.RaycastDown(new Vector3(1f, 10f, 0.3f), 20f, out hit, out _) && Math.Abs(hit.Y - 3f) < 1e-3f, "without its own path the rendered mesh collides (y = " + hit.Y + ")");
+            }
+            finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
+        /// <summary>#500: a mesh collider that gives the character world nothing logs a warning — once per play session.</summary>
+        [Test]
+        public static void MeshColliderWithoutAShapeWarnsOnce(TestContext t)
+        {
+            var scene = new Editor.Core.Data.Scene { Name = "Ghosts" };
+            var ghost = new GameEntity(scene, "GhostCollider");
+            ghost.AddComponentDirect(new Editor.ECS.Components.Physics.MeshCollider(ghost));
+            scene.Entities.Add(ghost);
+            var console = Editor.Core.Services.ConsoleService.Instance;
+            int Warnings()
+            {
+                int n = 0;
+                foreach (var en in console.Entries) if (en.Message != null && en.Message.Contains("'GhostCollider'") && en.Message.Contains("no mesh")) n++;
+                return n;
+            }
+            var oldProvider = CollisionService.MeshTriangleProvider;
+            CollisionService.MeshTriangleProvider = _ => null;
+            try
+            {
+                int before = Warnings();
+                CollisionService.Build(scene);
+                t.Equal(before + 1, Warnings(), "a Mesh Collider without any mesh is reported");
+                CollisionService.AddEntityShapes(ghost);
+                CollisionService.UpdateEntityShapes(ghost);
+                t.Equal(before + 1, Warnings(), "… once per play session");
+                CollisionService.Build(scene);
+                t.Equal(before + 2, Warnings(), "… and again in the next one");
+            }
+            finally { CollisionService.Clear(); CollisionService.MeshTriangleProvider = oldProvider; }
+        }
+
         private static float Dist(Vector3 a, Vector3 b)
         {
             float dx = a.X - b.X, dy = a.Y - b.Y, dz = a.Z - b.Z;

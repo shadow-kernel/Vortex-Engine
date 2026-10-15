@@ -38,6 +38,18 @@ namespace Editor.Core.Services.Physics
         private static V3 From(Vector3 v) => new V3(v.X, v.Y, v.Z);
         private static Vector3 To(V3 v) => new Vector3(v.X, v.Y, v.Z);
 
+        // A world rotation as the world directions of the local X / Y / Z axes (unit, orthogonal). #498: collision shapes
+        // turn with the entity's FULL rotation — yaw, pitch and roll — exactly as the renderer, the Jolt bodies and the
+        // navmesh bake place them; a pitched box is a ramp, not a flat slab at the ramp's centre height.
+        private struct Basis
+        {
+            public V3 X, Y, Z;
+            public static Basis Identity => new Basis { X = new V3(1, 0, 0), Y = new V3(0, 1, 0), Z = new V3(0, 0, 1) };
+            public V3 Apply(V3 v) => X * v.X + Y * v.Y + Z * v.Z;                    // local -> world direction
+            public V3 Inverse(V3 v) => new V3(v.Dot(X), v.Dot(Y), v.Dot(Z));       // world -> local
+            public static Basis FromYaw(float deg) => new Basis { X = RotY(new V3(1, 0, 0), deg), Y = new V3(0, 1, 0), Z = RotY(new V3(0, 0, 1), deg) };
+        }
+
         private enum Kind { Box, Sphere, Capsule, Tris }
         private sealed class Shape
         {
@@ -54,21 +66,22 @@ namespace Editor.Core.Services.Physics
             public uint BodyId;           // physics body handle for DYNAMIC shapes (0 for the static world)
             public bool Dynamic;          // published per step by PhysicsService (a Jolt rigid body), not baked
             public bool Trigger;          // in _triggers (reports overlap) rather than _world (blocks)
+            public bool Surface;          // a terrain: triangles that enclose nothing (OverlapPoint)
 
             // #362 part two: a MOVABLE triangle shape — a MeshCollider under a kinematic Rigidbody (cars, lifts,
             // doors) — keeps its scaled local-space triangles and a grid over THEM, built once. A move re-transforms
             // Tris in place (no allocation, the grid stays) and the grid queries map the world-space query into
-            // local space through Origin + Yaw. Static level geometry stays world-space (no second copy).
+            // local space through Origin + Rot. Static level geometry stays world-space (no second copy).
             public V3[] LocalTris;        // scaled, unrotated local triangles (movable shapes only)
             public V3 Origin;             // world position of the local origin (movable shapes)
-            public float Yaw;             // world yaw in degrees (movable shapes)
+            public Basis Rot;             // world rotation (movable shapes; #498: the full rotation — a car on a slope pitches)
             public V3 Scale;              // the world scale LocalTris were scaled with (a scale change rebuilds)
             public bool Movable => LocalTris != null;
 
             public int[] QueryRay(V3 o, V3 dir, float maxDist, out int count)
             {
                 if (LocalTris == null) return Grid.QueryRay(o, dir, maxDist, out count);
-                return Grid.QueryRay(RotY(o - Origin, -Yaw), RotY(dir, -Yaw), maxDist, out count);
+                return Grid.QueryRay(Rot.Inverse(o - Origin), Rot.Inverse(dir), maxDist, out count);
             }
 
             public int[] QueryBox(V3 qmin, V3 qmax, out int count)
@@ -79,7 +92,7 @@ namespace Editor.Core.Services.Physics
                 for (int i = 0; i < 8; i++)
                 {
                     var c = new V3((i & 1) != 0 ? qmax.X : qmin.X, (i & 2) != 0 ? qmax.Y : qmin.Y, (i & 4) != 0 ? qmax.Z : qmin.Z);
-                    var l = RotY(c - Origin, -Yaw);
+                    var l = Rot.Inverse(c - Origin);
                     mn = new V3(Math.Min(mn.X, l.X), Math.Min(mn.Y, l.Y), Math.Min(mn.Z, l.Z));
                     mx = new V3(Math.Max(mx.X, l.X), Math.Max(mx.Y, l.Y), Math.Max(mx.Z, l.Z));
                 }
@@ -277,6 +290,8 @@ namespace Editor.Core.Services.Physics
         // The move currently being resolved (set by MoveCharacter so Depenetrate can stamp it on recorded contacts).
         private static V3 _curMove;
         private static long _curCharId;
+        // #417: the entity the moving character belongs to — its own colliders (and its children's) are no obstacles.
+        private static GameEntity _curOwner;
 
         /// <summary>Replace the set of DYNAMIC shapes (simulated rigid bodies) with their current poses. Called by
         /// PhysicsService after every physics step; pass null/empty when there are no bodies. The static world
@@ -327,23 +342,58 @@ namespace Editor.Core.Services.Physics
 
         // Dynamic character capsules (multiplayer): each character auto-registers when it moves, so OTHER characters
         // collide against it — you can't walk through another player's character. Keyed by a caller id (e.g. entity id).
-        private struct CharCap { public V3 Feet; public float R, H; }
+        // Owner (#417) = the entity the character moves, when the caller knows it (a script passing its own EntityId):
+        // its own colliders never block or touch the character, and it goes with that entity (#407).
+        private struct CharCap { public V3 Feet; public float R, H; public GameEntity Owner; }
         private static readonly Dictionary<long, CharCap> _chars = new Dictionary<long, CharCap>();
-        public static void RemoveCharacter(long id) { _chars.Remove(id); }
+        /// <summary>Drop a character's capsule (#407: PhysicsService.RemoveCharacter also drops its Jolt character). True
+        /// when one was registered under the id; its next MoveCharacter registers it again.</summary>
+        public static bool RemoveCharacter(long id) => _chars.Remove(id);
+        /// <summary>#407: the ids of the registered characters whose owner entity matches — the characters of a destroyed
+        /// or deactivated subtree. Characters whose id names no entity have no owner and never match.</summary>
+        public static void CharacterIdsOwnedBy(Func<GameEntity, bool> match, List<long> into)
+        {
+            foreach (var kv in _chars)
+                if (kv.Value.Owner != null && match(kv.Value.Owner) && !into.Contains(kv.Key)) into.Add(kv.Key);
+        }
+        /// <summary>Is a character capsule registered under the id?</summary>
+        public static bool HasCharacter(long id) => _chars.ContainsKey(id);
+        /// <summary>#406: the owner the character <paramref name="id"/> is registered with (null = none, or anonymous). A move
+        /// that names no owner keeps it — a capsule does not lose its entity because another script's code moved it.</summary>
+        public static GameEntity KnownOwner(long id) => id != 0 && _chars.TryGetValue(id, out var c) ? c.Owner : null;
         /// <summary>#187: record a character's capsule (feet, radius, total height) that something else resolved —
-        /// the Jolt character route — so trigger volumes and the managed characters of other scripts still see it.</summary>
-        public static void RegisterCharacter(long id, Vector3 feet, float radius, float height)
+        /// the Jolt character route — so trigger volumes and the managed characters of other scripts still see it.
+        /// <paramref name="owner"/> = the entity the character moves (null = the owner it is already registered with, or
+        /// anonymous). Nothing is recorded for an owner that may not have a character (<see cref="MayRegister"/>).</summary>
+        public static void RegisterCharacter(long id, Vector3 feet, float radius, float height, GameEntity owner = null)
         {
             if (id == 0) return;
-            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height };
+            owner ??= KnownOwner(id);
+            if (!MayRegister(owner)) return;
+            _chars[id] = new CharCap { Feet = From(feet), R = Math.Max(0.05f, radius), H = height, Owner = owner };
         }
         public static void ClearCharacters() { _chars.Clear(); }
+
+        /// <summary>#407: may a character of <paramref name="owner"/> be registered? Not while the owner is switched off
+        /// (itself or an ancestor) or limp (a ragdoll at or under it) — its behaviour or a Nav Agent still calling
+        /// MoveCharacter must not bring back the capsule that Scene.SetActive(false) / Ragdoll.Activate removed. An
+        /// anonymous character (null) always may.</summary>
+        public static bool MayRegister(GameEntity owner)
+            => owner == null || (ActiveInHierarchy(owner) && !RagdollService.ActiveAtOrUnder(owner));
+
+        /// <summary>True when <paramref name="e"/> is <paramref name="root"/> or one of its descendants.</summary>
+        internal static bool IsUnder(GameEntity e, GameEntity root)
+        {
+            if (root == null) return false;
+            for (var p = e; p != null; p = p.Parent) if (ReferenceEquals(p, root)) return true;
+            return false;
+        }
 
         /// <summary>Optional hook that returns an imported model's local-space triangles (flat float[] x,y,z…) for a
         /// MeshRenderer MeshPath. Set by the runtime (native mesh export). Null → imported models fall back to a box.</summary>
         public static Func<string, float[]> MeshTriangleProvider;
 
-        public static void Clear() { _world.Clear(); _triggers.Clear(); _byOwner.Clear(); _dynamic.Clear(); CharacterContacts.Clear(); _chars.Clear(); ResetEvents(); IsBuilt = false; }
+        public static void Clear() { _world.Clear(); _triggers.Clear(); _byOwner.Clear(); _dynamic.Clear(); CharacterContacts.Clear(); _chars.Clear(); _noShapeWarned.Clear(); ResetEvents(); IsBuilt = false; }
 
         /// <summary>Steam Audio v2 (#21): flatten the SOLID world colliders into a world-space triangle soup
         /// (vertex xyz array + per-triangle vertex indices) for the acoustic occlusion scene. Mesh colliders emit
@@ -409,8 +459,8 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>Cast a ray straight DOWN from <paramref name="origin"/> up to <paramref name="maxDist"/> against the
         /// solid world colliders, and return the closest hit point + the owning entity's Tag (the surface material).
-        /// The standard "what am I standing on?" query — used for material-based footsteps. Box/sphere/capsule use their
-        /// world AABB (exact for the flat, axis-aligned floors this is meant for); mesh colliders use ray-vs-triangle.
+        /// The standard "what am I standing on?" query — used for material-based footsteps. Boxes are tested exactly (a
+        /// ramp too), spheres/capsules as their world AABB; mesh colliders use ray-vs-triangle.
         /// Returns false when nothing is under the point.</summary>
         public static bool RaycastDown(Vector3 origin, float maxDist, out Vector3 hit, out string tag)
         {
@@ -476,13 +526,23 @@ namespace Editor.Core.Services.Physics
                 {
                     if (s == null) continue;
                     float t;
-                    bool got = (s.Kind == Kind.Tris && s.Tris != null)
-                        ? RayDownTris(o, s, bestT, out t)
+                    bool got = (s.Kind == Kind.Tris && s.Tris != null) ? RayDownTris(o, s, bestT, out t)
+                        : s.Kind == Kind.Box ? RayDownBox(o, s, bestT, out t)
                         : RayDownAabb(o, s.Min, s.Max, bestT, out t);
                     if (got && t <= bestT) { bestT = t; best = s; }
                 }
             }
             return best;
+        }
+
+        // Downward ray vs an oriented box (#498: boxes keep their pitch and roll, and a ramp's AABB reaches far above its
+        // surface): its exact surface below the point, 0 when the point is inside it — what the AABB answered for level boxes.
+        private static bool RayDownBox(V3 o, Shape s, float maxDist, out float t)
+        {
+            t = 0f;
+            var d = o - s.Center;
+            if (Math.Abs(d.Dot(s.AxX)) <= s.Half.X && Math.Abs(d.Dot(s.AxY)) <= s.Half.Y && Math.Abs(d.Dot(s.AxZ)) <= s.Half.Z) return true;
+            return RayObb(o, new V3(0f, -1f, 0f), s, maxDist, out t, out _);
         }
 
         // Downward ray (dir = -Y) vs world AABB. Exact for axis-aligned boxes; misses in XZ => no hit; a point below
@@ -533,18 +593,27 @@ namespace Editor.Core.Services.Physics
         }
 
         /// <summary>General raycast (#35): closest SOLID-world hit along an arbitrary direction. Boxes test as
-        /// exact OBBs (ray transformed into box space), spheres analytically, mesh colliders per triangle
-        /// (Möller–Trumbore), capsules as their AABB. <paramref name="layerMask"/> filters by the owning
-        /// entity's Layer bit. Returns hit point, unit normal (facing the ray origin) and the hit entity.</summary>
+        /// exact OBBs (ray transformed into box space), spheres and capsules analytically, mesh colliders per triangle
+        /// (Möller–Trumbore). <paramref name="layerMask"/> filters by the owning entity's Layer bit. Returns hit point,
+        /// unit normal (facing the ray origin) and the hit entity.
+        /// Rays that start inside geometry (#418, the same contract as the Jolt cast): a box, sphere or capsule that
+        /// contains the origin is not hit; a mesh collider is a surface and is hit from either side (normal flipped
+        /// towards the origin). An origin ON a surface (within <see cref="RaySurfaceSkin"/> of it) pointing into it hits it
+        /// at distance 0; pointing away it does not, for meshes too. <paramref name="ignore"/> and everything under it are
+        /// never hit (#406 / #418) — a ray that starts deep inside the caller's own collider passes through it.</summary>
         public static bool Raycast(Vector3 origin, Vector3 direction, float maxDist, int layerMask,
-            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist)
+            out Vector3 hitPoint, out Vector3 hitNormal, out GameEntity hitEntity, out float hitDist, GameEntity ignore = null)
         {
             hitPoint = origin; hitNormal = new Vector3(0, 1, 0); hitEntity = null; hitDist = 0f;
-            V3 o = From(origin);
             V3 d = From(direction).Norm();
             if (d.Len() < 0.5f || maxDist <= 0f) return false;
+            // the cast starts RaySurfaceSkin behind the origin, so a ray that starts on a surface (a probe from a crate's
+            // top, a ledge point) still enters it; distances are measured from the origin itself, clamped at 0
+            V3 o = From(origin) - d * RaySurfaceSkin;
 
-            float bestT = maxDist; Shape best = null; V3 bestN = new V3(0, 1, 0);
+            // a surface exactly maxDist away still counts (Jolt's fraction 1 does): a hair of slack, the distance clamped
+            float reach = maxDist + RaySurfaceSkin;
+            float bestT = reach + reach * 1e-6f + 1e-6f; Shape best = null; V3 bestN = new V3(0, 1, 0);
             for (int list = 0; list < 2; list++)
             {
                 var shapes = list == 0 ? _world : _dynamic;   // static level + the simulated rigid bodies
@@ -558,26 +627,105 @@ namespace Editor.Core.Services.Physics
                     {
                         // the ray must enter the mesh's box before any triangle is worth testing (#362)
                         if (!RayTouchesAabb(o, d, s.Min, s.Max, bestT)) continue;
-                        got = RayTris(o, d, s, bestT, out t, out n);
+                        got = RayTris(o, d, s, bestT, out t, out n, 2f * RaySurfaceSkin);
                     }
                     else if (s.Kind == Kind.Box) got = RayObb(o, d, s, bestT, out t, out n);
                     else if (s.Kind == Kind.Sphere) got = RaySphere(o, d, s.Center, s.Radius, bestT, out t, out n);
-                    else got = RayAabbGeneric(o, d, s.Min, s.Max, bestT, out t, out n);   // capsule: coarse AABB
-                    if (got && t < bestT) { bestT = t; best = s; bestN = n; }
+                    else got = RayCapsule(o, d, s.A, s.B, s.Radius, bestT, out t, out n);
+                    // the ignored subtree is asked only about a hit that would be the closest (#406: after the shape test —
+                    // a parent walk per shape cost a third of the cast)
+                    if (!got || t >= bestT || (ignore != null && IsUnder(s.Owner, ignore))) continue;
+                    bestT = t; best = s; bestN = n;
                 }
             }
             if (best == null) return false;
 
-            hitDist = bestT;
+            hitDist = Math.Min(maxDist, Math.Max(0f, bestT - RaySurfaceSkin));
             hitPoint = To(o + d * bestT);
             hitNormal = To(bestN);
             hitEntity = best.Owner;
             return true;
         }
 
+        /// <summary>How far behind its origin <see cref="Raycast"/> starts (1 mm, the Jolt cast's skin too): a ray that
+        /// starts on a surface still hits it.</summary>
+        public const float RaySurfaceSkin = 0.001f;
+
+        /// <summary>#418: every entity whose solid collider contains <paramref name="point"/> — the collision world's answer
+        /// to Physics.OverlapPoint when no Jolt world runs, with the Jolt query's contract: boxes, spheres and capsules
+        /// (foliage trunks too) contain their inside, a mesh contains a point with an odd number of its triangles straight
+        /// above it and an odd number straight below (what a closed mesh encloses — an open one, a roof or a cave shell,
+        /// contains nothing), a terrain contains nothing; triggers are left out. The static colliders and the simulated
+        /// bodies; one entry per entity. Characters are no part of this world.</summary>
+        public static List<GameEntity> OverlapPoint(Vector3 point)
+        {
+            var result = new List<GameEntity>();
+            if (!IsBuilt) return result;
+            V3 p = From(point);
+            for (int list = 0; list < 2; list++)
+            {
+                var shapes = list == 0 ? _world : _dynamic;
+                for (int i = 0; i < shapes.Count; i++)
+                {
+                    var s = shapes[i];
+                    if (s == null || s.Owner == null) continue;
+                    if (p.X < s.Min.X || p.Y < s.Min.Y || p.Z < s.Min.Z || p.X > s.Max.X || p.Y > s.Max.Y || p.Z > s.Max.Z) continue;
+                    if (!ContainsPoint(s, p) || result.Contains(s.Owner)) continue;
+                    result.Add(s.Owner);
+                }
+            }
+            return result;
+        }
+
+        private static bool ContainsPoint(Shape s, V3 p)
+        {
+            switch (s.Kind)
+            {
+                case Kind.Box:
+                {
+                    var d = p - s.Center;
+                    return Math.Abs(d.Dot(s.AxX)) <= s.Half.X && Math.Abs(d.Dot(s.AxY)) <= s.Half.Y && Math.Abs(d.Dot(s.AxZ)) <= s.Half.Z;
+                }
+                case Kind.Sphere: return (p - s.Center).Len() <= s.Radius;
+                case Kind.Capsule: return (p - ClosestOnSeg(s.A, s.B, p)).Len() <= s.Radius;
+                default:
+                    // enclosed: an odd number of the mesh's triangles straight above the point AND straight below it — one
+                    // direction alone counts any open mesh overhead (a roof, an awning, a cave ceiling) as "inside"
+                    if (s.Surface || s.Tris == null) return false;
+                    return (VerticalCrossings(s, p, true) & 1) == 1 && (VerticalCrossings(s, p, false) & 1) == 1;
+            }
+        }
+
+        // Crossings of the vertical line through p with the shape's triangles above (up) or below it, both faces counted.
+        private static int VerticalCrossings(Shape s, V3 p, bool up)
+        {
+            var dir = new V3(0f, up ? 1f : -1f, 0f);
+            float len = (up ? s.Max.Y - p.Y : p.Y - s.Min.Y) + 0.01f;
+            if (len <= 0f) return 0;
+            var tris = s.Tris; int crossings = 0;
+            if (s.Grid != null)
+            {
+                var buf = s.QueryRay(p, dir, len, out int cnt);
+                for (int j = 0; j < cnt; j++)
+                {
+                    int k = buf[j] * 3; float t = len; V3 n = dir;
+                    if (TriRay(p, dir, tris[k], tris[k + 1], tris[k + 2], ref t, ref n)) crossings++;
+                }
+            }
+            else
+                for (int k = 0; k + 2 < tris.Length; k += 3)
+                {
+                    float t = len; V3 n = dir;
+                    if (TriRay(p, dir, tris[k], tris[k + 1], tris[k + 2], ref t, ref n)) crossings++;
+                }
+            return crossings;
+        }
+
         // Ray vs triangle soup — Möller–Trumbore per triangle, closest hit + geometric normal flipped
-        // to face the ray origin.
-        private static bool RayTris(V3 o, V3 d, Shape s, float maxDist, out float t, out V3 n)
+        // to face the ray origin. A triangle seen from BEHIND closer than backFaceZone is skipped: Raycast starts its ray
+        // a skin behind the caller's origin and passes two skins — such a triangle is the surface the origin lies on, the
+        // ray pointing away from its front (the floor under an upward ray), no hit, as for a box the ray leaves.
+        private static bool RayTris(V3 o, V3 d, Shape s, float maxDist, out float t, out V3 n, float backFaceZone = 0f)
         {
             t = maxDist; n = new V3(0, 1, 0); bool any = false;
             var tris = s.Tris;
@@ -585,17 +733,17 @@ namespace Editor.Core.Services.Physics
             {
                 var buf = s.QueryRay(o, d, maxDist, out int cnt);
                 DebugLastTriTests = cnt;
-                for (int j = 0; j < cnt; j++) { int i = buf[j] * 3; if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n)) any = true; }
+                for (int j = 0; j < cnt; j++) { int i = buf[j] * 3; if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n, backFaceZone)) any = true; }
             }
             else
             {
                 DebugLastTriTests = tris.Length / 3;
-                for (int i = 0; i + 2 < tris.Length; i += 3) if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n)) any = true;
+                for (int i = 0; i + 2 < tris.Length; i += 3) if (TriRay(o, d, tris[i], tris[i + 1], tris[i + 2], ref t, ref n, backFaceZone)) any = true;
             }
             return any;
         }
 
-        private static bool TriRay(V3 o, V3 d, V3 v0, V3 v1, V3 v2, ref float t, ref V3 n)
+        private static bool TriRay(V3 o, V3 d, V3 v0, V3 v1, V3 v2, ref float t, ref V3 n, float backFaceZone = 0f)
         {
             V3 e1 = v1 - v0, e2 = v2 - v0;
             V3 p = Cross(d, e2);
@@ -609,9 +757,11 @@ namespace Editor.Core.Services.Physics
             float hitT = e2.Dot(q) * inv;
             if (hitT >= 0f && hitT < t)
             {
-                t = hitT;
                 var tn = Cross(e1, e2).Norm();
-                n = tn.Dot(d) > 0f ? tn * -1f : tn;
+                bool back = tn.Dot(d) > 0f;
+                if (back && hitT < backFaceZone) return false;
+                t = hitT;
+                n = back ? tn * -1f : tn;
                 return true;
             }
             return false;
@@ -662,7 +812,7 @@ namespace Editor.Core.Services.Physics
         }
 
         /// <summary>Slab test: does the segment o + d·[0, maxDist] touch the box at all? True for an origin inside the box
-        /// (RayAabbGeneric wants an entry face and says no for those).</summary>
+        /// (an entry-face test would say no for those).</summary>
         private static bool RayTouchesAabb(V3 o, V3 d, V3 min, V3 max, float maxDist)
         {
             float tmin = 0f, tmax = maxDist;
@@ -684,28 +834,36 @@ namespace Editor.Core.Services.Physics
             return true;
         }
 
-        private static bool RayAabbGeneric(V3 o, V3 d, V3 min, V3 max, float maxDist, out float t, out V3 n)
+        /// <summary>Ray vs capsule (segment a-b, radius r), exact (#418): the managed cast tested capsules as their AABB, so a
+        /// ray past a capsule's rounded corner "hit" it and a ray starting in the AABB but outside the capsule skipped it —
+        /// the Jolt cast never did either. An origin inside the capsule is no hit (no entry face), like the other convex
+        /// shapes. The entry into the union of the side cylinder and the two end spheres is the earliest single entry.</summary>
+        private static bool RayCapsule(V3 o, V3 d, V3 a, V3 b, float r, float maxDist, out float t, out V3 n)
         {
             t = 0f; n = new V3(0, 1, 0);
-            float tmin = 0f, tmax = maxDist; int axis = -1; float sign = 1f;
-            float[] ov = { o.X, o.Y, o.Z }, dv = { d.X, d.Y, d.Z }, mn = { min.X, min.Y, min.Z }, mx = { max.X, max.Y, max.Z };
-            for (int i = 0; i < 3; i++)
+            if ((o - ClosestOnSeg(a, b, o)).Len() <= r) return false;
+            float best = float.MaxValue;
+            V3 ba = b - a, oa = o - a;
+            float baba = ba.Dot(ba), bard = ba.Dot(d), baoa = ba.Dot(oa);
+            float qa = baba - bard * bard;   // |ba|² · sin² (ray, axis): 0 for a ray along the axis (the caps decide)
+            if (baba > 1e-12f && qa > 1e-12f)
             {
-                if (dv[i] > -1e-8f && dv[i] < 1e-8f)
+                float qb = baba * d.Dot(oa) - baoa * bard;
+                float qc = baba * oa.Dot(oa) - baoa * baoa - r * r * baba;
+                float h = qb * qb - qa * qc;
+                if (h >= 0f)
                 {
-                    if (ov[i] < mn[i] || ov[i] > mx[i]) return false;
-                    continue;
+                    float tc = (-qb - (float)Math.Sqrt(h)) / qa;
+                    float y = baoa + tc * bard;   // position along the axis (0 at a, baba at b)
+                    if (tc >= 0f && y > 0f && y < baba) best = tc;
                 }
-                float inv = 1f / dv[i];
-                float t1 = (mn[i] - ov[i]) * inv, t2 = (mx[i] - ov[i]) * inv;
-                float lo = t1 < t2 ? t1 : t2, hi = t1 < t2 ? t2 : t1;
-                if (lo > tmin) { tmin = lo; axis = i; sign = dv[i] > 0f ? -1f : 1f; }
-                if (hi < tmax) tmax = hi;
-                if (tmin > tmax) return false;
             }
-            if (axis < 0) return false;
-            t = tmin;
-            n = axis == 0 ? new V3(sign, 0, 0) : axis == 1 ? new V3(0, sign, 0) : new V3(0, 0, sign);
+            if (RaySphere(o, d, a, r, maxDist, out float ta, out _) && ta < best) best = ta;
+            if (RaySphere(o, d, b, r, maxDist, out float tb, out _) && tb < best) best = tb;
+            if (best > maxDist) return false;
+            t = best;
+            V3 p = o + d * t;
+            n = (p - ClosestOnSeg(a, b, p)).Norm();
             return true;
         }
 
@@ -713,8 +871,17 @@ namespace Editor.Core.Services.Physics
             => new V3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X);
 
         /// <summary>Incrementally add a (runtime-spawned) entity subtree's colliders to the built world —
-        /// unlike a full Build() this does NOT reset trigger overlap state, so no phantom Enter events.</summary>
-        public static void AddEntityShapes(GameEntity e) { if (IsBuilt && e != null) AddRecursive(e); }
+        /// unlike a full Build() this does NOT reset trigger overlap state, so no phantom Enter events. Nothing is added
+        /// under an inactive ancestor (#443): the subtree joins when that ancestor is activated.</summary>
+        public static void AddEntityShapes(GameEntity e) { if (IsBuilt && e != null && ActiveInHierarchy(e)) AddRecursive(e); }
+
+        /// <summary>The entity and all its ancestors are active (the scene's own active flag is not consulted: the play world
+        /// is built from the scene that is playing).</summary>
+        internal static bool ActiveInHierarchy(GameEntity e)
+        {
+            for (var p = e; p != null; p = p.Parent) if (!p.IsActive) return false;
+            return true;
+        }
 
         /// <summary>Remove every collider shape owned by the given entity subtree (runtime Destroy).
         /// <paramref name="includeChildren"/> false removes only the entity's OWN shapes (PhysicsService takes a
@@ -743,7 +910,7 @@ namespace Editor.Core.Services.Physics
 
         private static void UpdateRecursive(GameEntity e)
         {
-            if (e == null) return;
+            if (e == null || !e.IsActive) return;   // #443: an inactive subtree has no shapes and gets none while it moves
             var col = e.GetComponent<Collider>();
             bool enabled = col != null && col.IsEnabled;
             _byOwner.TryGetValue(e, out var owned);
@@ -768,7 +935,28 @@ namespace Editor.Core.Services.Physics
 
         private static void AddOwnShape(GameEntity e, Collider col)
         {
-            try { var s = BuildShape(e, col); if (s != null) AddShape(e, s, col.IsTrigger); } catch { }
+            Shape s = null;
+            try { s = BuildShape(e, col); } catch { }
+            if (s != null) AddShape(e, s, col.IsTrigger);
+            else WarnNoShape(e, col);
+        }
+
+        private static readonly HashSet<GameEntity> _noShapeWarned = new HashSet<GameEntity>();
+
+        /// <summary>#500: a collider that gives the character world nothing must not fail silently (a Mesh Collider whose own
+        /// Mesh Path was ignored let characters fall through a whole city). Once per entity and play session.</summary>
+        private static void WarnNoShape(GameEntity e, Collider col)
+        {
+            if (e == null || col == null || !_noShapeWarned.Add(e)) return;
+            string mesh = MeshSourceOf(e, col);
+            string why;
+            if (string.IsNullOrEmpty(mesh))
+                why = "it has no mesh — set its Mesh Path or give the entity a Mesh Renderer (a model root uses its parts' meshes, unless a kinematic Rigidbody moves it)";
+            else if (MeshTriangleProvider == null) return;   // no mesh loader wired (tools, tests): nothing could be read anyway
+            else why = "no triangles could be read from '" + mesh + "'";
+            var text = "[Collision] '" + (e.Name ?? "?") + "': " + col.DisplayName + " gives characters and raycasts nothing to collide with — " + why;
+            System.Diagnostics.Debug.WriteLine(text);
+            try { ConsoleService.Instance.LogWarning(text); } catch { }
         }
 
         private static void AddShape(GameEntity e, Shape s, bool trigger)
@@ -793,6 +981,7 @@ namespace Editor.Core.Services.Physics
             _dynamic.Clear();
             CharacterContacts.Clear();
             _chars.Clear();   // characters re-register on their next MoveCharacter — don't leak across scene switches / replays
+            _noShapeWarned.Clear();   // #500: each play session warns again
             ResetEvents();
             CharacterStepHeight = 0.35f;   // #48: back to stock — scripts re-apply their tuning in Start()
             CharacterMaxSlopeDeg = 50f;
@@ -803,7 +992,10 @@ namespace Editor.Core.Services.Physics
 
         private static void AddRecursive(GameEntity e)
         {
-            if (e == null) return;
+            // #443: an entity that is inactive (itself or through an ancestor) takes no part in the character world, like
+            // the Jolt bodies (PhysicsService.AddRecursive) — a level part saved inactive must not hold invisible walls and
+            // floors. SetEntityActive adds the subtree when it is switched on.
+            if (e == null || !e.IsActive) return;
             var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
             if (terrain != null && terrain.IsEnabled && terrain.Collision) AddTerrainShape(e);   // #124
             var foliage = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
@@ -857,34 +1049,40 @@ namespace Editor.Core.Services.Physics
                     mn = new V3(Math.Min(mn.X, v.X), Math.Min(mn.Y, v.Y), Math.Min(mn.Z, v.Z));
                     mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z));
                 }
-                AddShape(e, new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = TriGrid.Build(tris, mn, mx) }, false);
+                AddShape(e, new Shape { Kind = Kind.Tris, Tris = tris, Min = mn, Max = mx, Grid = TriGrid.Build(tris, mn, mx), Surface = true }, false);
             }
             catch { }
         }
 
-        // ---- world transform (walk the parent chain; good enough for level geometry) ----
-        private static void WorldTransform(GameEntity e, out V3 pos, out V3 rotDeg, out V3 scale)
+        // ---- world transform (#498) ----
+        // The entity's world pose exactly as the renderer, the Jolt bodies and the navmesh bake see it. It used to be
+        // accumulated here with the rotation reduced to yaw ("level geometry"), so a pitched box became a flat slab at the
+        // ramp's centre height — a wall at the foot of a gentle ramp, a ghost under a steep one. BoneSocketService.
+        // EntityWorld composes the parent chain (S * Rz*Rx*Ry * T per level); its rows are the world directions of the
+        // local axes times the world scale: pos = the translation, scale = the row lengths, rot = the rows normalised.
+        private static void WorldTransform(GameEntity e, out V3 pos, out Basis rot, out V3 scale)
         {
-            pos = new V3(0, 0, 0); rotDeg = new V3(0, 0, 0); scale = new V3(1, 1, 1);
-            var chain = _chainBuf; chain.Clear();   // single-threaded (physics step / scene build) — one reusable buffer
-            for (var cur = e; cur != null; cur = cur.Parent) chain.Add(cur);
-            // apply from root down: accumulate scale + rotation(Y only, level geometry) + translate
-            var p = new V3(0, 0, 0); var sc = new V3(1, 1, 1); float yaw = 0f, pitch = 0f, roll = 0f;
-            for (int i = chain.Count - 1; i >= 0; i--)
-            {
-                var t = chain[i].GetComponent<Transform>();
-                if (t == null) continue;
-                var lp = t.LocalPosition; var lr = t.LocalRotation; var ls = t.LocalScale;
-                // rotate the child local offset by the current yaw before translating (level geometry is Y-up)
-                var off = RotY(new V3(lp.X * sc.X, lp.Y * sc.Y, lp.Z * sc.Z), yaw);
-                p = p + off;
-                sc = new V3(sc.X * ls.X, sc.Y * ls.Y, sc.Z * ls.Z);
-                yaw += lr.Y; pitch += lr.X; roll += lr.Z;
-            }
-            pos = p; scale = sc; rotDeg = new V3(pitch, yaw, roll);
+            var m = Animation.BoneSocketService.EntityWorld(e);
+            pos = new V3(m.M41, m.M42, m.M43);
+            V3 r0 = new V3(m.M11, m.M12, m.M13), r1 = new V3(m.M21, m.M22, m.M23), r2 = new V3(m.M31, m.M32, m.M33);
+            scale = new V3(r0.Len(), r1.Len(), r2.Len());
+            rot = Orthonormal(r0, r1, r2);
         }
 
-        private static readonly List<GameEntity> _chainBuf = new List<GameEntity>(8);
+        /// <summary>Unit, orthogonal axes from a world matrix's rows: a non-uniform parent scale under a rotated child shears
+        /// them (made orthogonal, the up axis kept), a zero-scale axis has no direction (rebuilt from the other two).</summary>
+        private static Basis Orthonormal(V3 x, V3 y, V3 z)
+        {
+            const float tiny = 1e-12f;
+            bool nx = x.Dot(x) < tiny, ny = y.Dot(y) < tiny, nz = z.Dot(z) < tiny;
+            if ((nx ? 1 : 0) + (ny ? 1 : 0) + (nz ? 1 : 0) > 1) return Basis.Identity;
+            if (nx) x = Cross(y, z); else if (ny) y = Cross(z, x); else if (nz) z = Cross(x, y);
+            var by = y.Norm();
+            var bx = (x - by * x.Dot(by)).Norm();
+            var bz = (z - bx * z.Dot(bx) - by * z.Dot(by)).Norm();
+            if (bx.Len() < 0.5f || by.Len() < 0.5f || bz.Len() < 0.5f) return Basis.Identity;
+            return new Basis { X = bx, Y = by, Z = bz };
+        }
 
         private static V3 RotY(V3 v, float deg)
         {
@@ -900,13 +1098,13 @@ namespace Editor.Core.Services.Physics
         private static Shape BuildShape(GameEntity e, Collider col, Shape reuse)
         {
             WorldTransform(e, out var wpos, out var wrot, out var wscale);
-            var center = wpos + RotY(new V3(col.Center.X * wscale.X, col.Center.Y * wscale.Y, col.Center.Z * wscale.Z), wrot.Y);
+            var center = wpos + wrot.Apply(new V3(col.Center.X * wscale.X, col.Center.Y * wscale.Y, col.Center.Z * wscale.Z));
 
             if (col is BoxCollider box)
             {
                 var s = Reuse(reuse, Kind.Box); s.Center = center;
                 s.Half = new V3(Math.Abs(box.Size.X * 0.5f * wscale.X), Math.Abs(box.Size.Y * 0.5f * wscale.Y), Math.Abs(box.Size.Z * 0.5f * wscale.Z));
-                s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y);
+                s.AxX = wrot.X; s.AxY = wrot.Y; s.AxZ = wrot.Z;   // #498: pitched / rolled boxes are ramps and slanted walls
                 Aabb(s); return s;
             }
             if (col is SphereCollider sph)
@@ -917,9 +1115,12 @@ namespace Editor.Core.Services.Physics
             }
             if (col is CapsuleCollider cap)
             {
-                float r = cap.Radius * Math.Max(Math.Abs(wscale.X), Math.Abs(wscale.Z));
-                float half = Math.Max(0f, cap.Height * 0.5f * Math.Abs(wscale.Y) - r);
-                V3 axis = cap.Direction == 0 ? new V3(1, 0, 0) : (cap.Direction == 2 ? new V3(0, 0, 1) : new V3(0, 1, 0));
+                // #498: the axis (Direction 0/1/2 = the entity's local X/Y/Z) turns with the entity; the radius scales with
+                // the two other axes, the length with its own (as the Jolt capsule is built)
+                float r, half; V3 axis;
+                if (cap.Direction == 0) { axis = wrot.X; r = cap.Radius * Math.Max(wscale.Y, wscale.Z); half = Math.Max(0f, cap.Height * 0.5f * wscale.X - r); }
+                else if (cap.Direction == 2) { axis = wrot.Z; r = cap.Radius * Math.Max(wscale.X, wscale.Y); half = Math.Max(0f, cap.Height * 0.5f * wscale.Z - r); }
+                else { axis = wrot.Y; r = cap.Radius * Math.Max(wscale.X, wscale.Z); half = Math.Max(0f, cap.Height * 0.5f * wscale.Y - r); }
                 var s = Reuse(reuse, Kind.Capsule); s.Radius = r; s.A = center - axis * half; s.B = center + axis * half;
                 s.Min = new V3(Math.Min(s.A.X, s.B.X) - r, Math.Min(s.A.Y, s.B.Y) - r, Math.Min(s.A.Z, s.B.Z) - r);
                 s.Max = new V3(Math.Max(s.A.X, s.B.X) + r, Math.Max(s.A.Y, s.B.Y) + r, Math.Max(s.A.Z, s.B.Z) + r);
@@ -927,28 +1128,36 @@ namespace Editor.Core.Services.Physics
             }
             // Mesh collider (or a base Collider): primitives collide as exact analytic shapes; imported models as
             // real triangles; anything else falls back to the mesh's bounding box.
-            return BuildMeshShape(e, center, wrot, wscale, reuse);
+            return BuildMeshShape(e, col, center, wrot, wscale, reuse);
         }
 
         private static Shape Reuse(Shape reuse, Kind kind)
             => reuse != null && reuse.Kind == kind && reuse.Tris == null ? reuse : new Shape { Kind = kind };
 
-        private static Shape BuildMeshShape(GameEntity e, V3 center, V3 wrot, V3 wscale, Shape reuse)
+        /// <summary>#500: the mesh a mesh-type collider collides as — the Mesh Collider's own Mesh Path first (a collision
+        /// mesh that is not rendered), else the entity's renderer mesh. The same choice the Jolt bodies (PhysicsService)
+        /// and the navmesh bake make; empty when neither has one (a model root then uses its parts' meshes).</summary>
+        internal static string MeshSourceOf(GameEntity e, Collider col)
         {
-            var mr = e.GetComponent<MeshRenderer>();
-            string mp = mr?.MeshPath;
+            if (col is MeshCollider mc && !string.IsNullOrEmpty(mc.MeshPath)) return mc.MeshPath;
+            return e?.GetComponent<MeshRenderer>()?.MeshPath;
+        }
+
+        private static Shape BuildMeshShape(GameEntity e, Collider col, V3 center, Basis wrot, V3 wscale, Shape reuse)
+        {
+            string mp = MeshSourceOf(e, col);
             if (!string.IsNullOrEmpty(mp) && mp.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase))
             {
                 var prim = mp.Substring("Primitive:".Length).ToLowerInvariant();
                 if (prim == "cube")
                 {
                     var s = Reuse(reuse, Kind.Box); s.Center = center; s.Half = new V3(0.5f * Math.Abs(wscale.X), 0.5f * Math.Abs(wscale.Y), 0.5f * Math.Abs(wscale.Z));
-                    s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y); Aabb(s); return s;
+                    s.AxX = wrot.X; s.AxY = wrot.Y; s.AxZ = wrot.Z; Aabb(s); return s;
                 }
                 if (prim == "plane" || prim == "quad")
                 {
                     var s = Reuse(reuse, Kind.Box); s.Center = center; s.Half = new V3(0.5f * Math.Abs(wscale.X), 0.05f, 0.5f * Math.Abs(wscale.Z));
-                    s.AxX = RotY(new V3(1, 0, 0), wrot.Y); s.AxY = new V3(0, 1, 0); s.AxZ = RotY(new V3(0, 0, 1), wrot.Y); Aabb(s); return s;
+                    s.AxX = wrot.X; s.AxY = wrot.Y; s.AxZ = wrot.Z; Aabb(s); return s;
                 }
                 if (prim == "sphere")
                 {
@@ -959,8 +1168,9 @@ namespace Editor.Core.Services.Physics
                 {
                     float r = 0.5f * Math.Max(Math.Abs(wscale.X), Math.Abs(wscale.Z));
                     float half = Math.Max(0f, 0.5f * Math.Abs(wscale.Y) - r);
-                    var s = Reuse(reuse, Kind.Capsule); s.Radius = r; s.A = center - new V3(0, half, 0); s.B = center + new V3(0, half, 0);
-                    s.Min = new V3(center.X - r, center.Y - r - half, center.Z - r); s.Max = new V3(center.X + r, center.Y + r + half, center.Z + r); return s;
+                    var s = Reuse(reuse, Kind.Capsule); s.Radius = r; s.A = center - wrot.Y * half; s.B = center + wrot.Y * half;
+                    s.Min = new V3(Math.Min(s.A.X, s.B.X) - r, Math.Min(s.A.Y, s.B.Y) - r, Math.Min(s.A.Z, s.B.Z) - r);
+                    s.Max = new V3(Math.Max(s.A.X, s.B.X) + r, Math.Max(s.A.Y, s.B.Y) + r, Math.Max(s.A.Z, s.B.Z) + r); return s;
                 }
             }
             // imported model -> real triangles if a provider is wired
@@ -969,7 +1179,7 @@ namespace Editor.Core.Services.Physics
                 // a moved movable shape: same mesh, same scale — re-place the local triangles, nothing is rebuilt
                 if (reuse != null && reuse.Kind == Kind.Tris && reuse.LocalTris != null && SameScale(reuse.Scale, wscale))
                 {
-                    PlaceMovable(reuse, center, wrot.Y);
+                    PlaceMovable(reuse, center, wrot);
                     return reuse;
                 }
                 var raw = MeshTriangleProvider(mp);
@@ -990,14 +1200,14 @@ namespace Editor.Core.Services.Physics
                             lmx = new V3(Math.Max(lmx.X, lv.X), Math.Max(lmx.Y, lv.Y), Math.Max(lmx.Z, lv.Z));
                         }
                         var ms = new Shape { Kind = Kind.Tris, Tris = tris, LocalTris = local, Scale = wscale, Grid = TriGrid.Build(local, lmn, lmx) };
-                        PlaceMovable(ms, center, wrot.Y);
+                        PlaceMovable(ms, center, wrot);
                         return ms;
                     }
                     var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
                     for (int i = 0; i < triCount * 3; i++)
                     {
                         var lv = new V3(raw[i * 3] * wscale.X, raw[i * 3 + 1] * wscale.Y, raw[i * 3 + 2] * wscale.Z);
-                        var wv = center + RotY(lv, wrot.Y);
+                        var wv = center + wrot.Apply(lv);
                         tris[i] = wv;
                         mn = new V3(Math.Min(mn.X, wv.X), Math.Min(mn.Y, wv.Y), Math.Min(mn.Z, wv.Z));
                         mx = new V3(Math.Max(mx.X, wv.X), Math.Max(mx.Y, wv.Y), Math.Max(mx.Z, wv.Z));
@@ -1044,7 +1254,7 @@ namespace Editor.Core.Services.Physics
                     {
                         WorldTransform(ch, out var cpos, out var crot, out var cscale);
                         for (int i = 0; i + 2 < raw.Length; i += 3)
-                            into.Add(cpos + RotY(new V3(raw[i] * cscale.X, raw[i + 1] * cscale.Y, raw[i + 2] * cscale.Z), crot.Y));
+                            into.Add(cpos + crot.Apply(new V3(raw[i] * cscale.X, raw[i + 1] * cscale.Y, raw[i + 2] * cscale.Z)));
                     }
                 }
                 CollectChildTris(ch, into);
@@ -1067,16 +1277,14 @@ namespace Editor.Core.Services.Physics
             => Math.Abs(a.X - b.X) < 1e-5f && Math.Abs(a.Y - b.Y) < 1e-5f && Math.Abs(a.Z - b.Z) < 1e-5f;
 
         /// <summary>Transform a movable shape's local triangles into Tris (in place) for a new pose + world AABB.</summary>
-        private static void PlaceMovable(Shape s, V3 origin, float yawDeg)
+        private static void PlaceMovable(Shape s, V3 origin, Basis rot)
         {
-            s.Origin = origin; s.Yaw = yawDeg;
+            s.Origin = origin; s.Rot = rot;
             var local = s.LocalTris; var tris = s.Tris;
-            double r = yawDeg * Math.PI / 180.0; float c = (float)Math.Cos(r), sn = (float)Math.Sin(r);
             var mn = new V3(1e30f, 1e30f, 1e30f); var mx = new V3(-1e30f, -1e30f, -1e30f);
             for (int i = 0; i < local.Length; i++)
             {
-                var lv = local[i];
-                var wv = new V3(origin.X + lv.X * c + lv.Z * sn, origin.Y + lv.Y, origin.Z - lv.X * sn + lv.Z * c);
+                var wv = origin + rot.Apply(local[i]);
                 tris[i] = wv;
                 if (wv.X < mn.X) mn.X = wv.X; if (wv.Y < mn.Y) mn.Y = wv.Y; if (wv.Z < mn.Z) mn.Z = wv.Z;
                 if (wv.X > mx.X) mx.X = wv.X; if (wv.Y > mx.Y) mx.Y = wv.Y; if (wv.Z > mx.Z) mx.Z = wv.Z;
@@ -1101,6 +1309,11 @@ namespace Editor.Core.Services.Physics
 
         /// <summary>Same, but <paramref name="selfId"/> registers this character's capsule so OTHER characters can't
         /// walk through it (multiplayer). Pass a stable id (e.g. the entity id); 0 = anonymous (no registration).
+        /// <paramref name="owner"/> (#417) = the entity the character moves, when the caller knows it: that entity's own
+        /// colliders and its children's are no obstacles for it — a character can carry a solid collider to be hit by
+        /// rays — and the registration goes with the entity (#407; none while the owner is switched off or limp, see
+        /// <see cref="MayRegister"/>). Null = the owner the id is already registered with (<see cref="KnownOwner"/>, #406),
+        /// else an anonymous character, as before.
         /// Stair-step + slope handling (#48): <paramref name="stepHeight"/> is the tallest ledge auto-climbed
         /// (0 disables); <paramref name="maxSlopeDeg"/> is the steepest walkable slope — steeper surfaces act
         /// like walls (slide, no climb, never grounded).</summary>
@@ -1111,23 +1324,26 @@ namespace Editor.Core.Services.Physics
         public static float CharacterMaxSlopeDeg = 50f;
 
         public static Vector3 MoveCharacter(Vector3 feet, float radius, float height, Vector3 displacement, out bool grounded, long selfId,
-            float stepHeight = -1f, float maxSlopeDeg = -1f)
+            float stepHeight = -1f, float maxSlopeDeg = -1f, GameEntity owner = null)
         {
             if (stepHeight < 0f) stepHeight = CharacterStepHeight;
             if (maxSlopeDeg < 0f) maxSlopeDeg = CharacterMaxSlopeDeg;
             grounded = false;
             radius = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * radius);
+            owner ??= KnownOwner(selfId);   // #406: moved by another script's code, the capsule keeps its entity
+            bool register = selfId != 0 && MayRegister(owner);
             if (!IsBuilt || (_world.Count == 0 && _chars.Count == 0 && _dynamic.Count == 0))
             {
                 var np = new Vector3(feet.X + displacement.X, feet.Y + displacement.Y, feet.Z + displacement.Z);
-                if (selfId != 0) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height };
+                if (register) _chars[selfId] = new CharCap { Feet = From(np), R = radius, H = height, Owner = owner };
                 return np;
             }
             if (maxSlopeDeg < 10f) maxSlopeDeg = 10f; else if (maxSlopeDeg > 85f) maxSlopeDeg = 85f;
             float slopeCos = (float)Math.Cos(maxSlopeDeg * Math.PI / 180.0);
             V3 p = From(feet); V3 disp = From(displacement);
             _curMove = disp; _curCharId = selfId;   // stamped onto pushes against rigid bodies (see DynamicContact)
+            _curOwner = owner;                      // #417: the mover's own colliders are skipped by Depenetrate
 
             float dlen = disp.Len();
             int steps = Math.Max(1, (int)Math.Ceiling(dlen / (radius * 0.5f)));
@@ -1182,7 +1398,7 @@ namespace Editor.Core.Services.Physics
                             if (gSet)
                             {
                                 if (Raycast(To(new V3(settle.X, settle.Y + radius, settle.Z)), new Vector3(0f, -1f, 0f),
-                                        stepHeight + radius + 0.2f, ~0, out _, out Vector3 gn, out _, out _))
+                                        stepHeight + radius + 0.2f, ~0, out _, out Vector3 gn, out _, out _, owner))
                                     walkable = gn.Y >= slopeCos;
                             }
                             // Accept only a REAL step-up: the settle must end higher than the plain (blocked) move
@@ -1221,17 +1437,20 @@ namespace Editor.Core.Services.Physics
             }
 
             grounded = g;
-            if (selfId != 0) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height };
+            _curOwner = null;
+            if (register) _chars[selfId] = new CharCap { Feet = p, R = radius, H = height, Owner = owner };
             return To(p);
         }
 
         /// <summary>#105: does a character capsule (feet, radius, total height) overlap anything solid — level
         /// colliders, simulated rigid bodies, OTHER characters — by more than <paramref name="skin"/>? A probe only:
         /// nothing is moved, no contact is recorded. <c>Physics.CanStand</c> asks this with the standing height before
-        /// a crouched character rises; <paramref name="selfId"/> excludes the asking character's own capsule.</summary>
-        public static bool CapsuleOverlaps(Vector3 feet, float radius, float height, long selfId = 0, float skin = 0.01f)
+        /// a crouched character rises; <paramref name="selfId"/> excludes the asking character's own capsule, and
+        /// <paramref name="owner"/> (or the owner the character was registered with) its own colliders (#417).</summary>
+        public static bool CapsuleOverlaps(Vector3 feet, float radius, float height, long selfId = 0, float skin = 0.01f, GameEntity owner = null)
         {
             if (!IsBuilt) return false;
+            owner ??= KnownOwner(selfId);
             float r = Math.Max(0.05f, radius);
             float segLen = Math.Max(0f, height - 2f * r);
             V3 f = From(feet);
@@ -1247,6 +1466,7 @@ namespace Editor.Core.Services.Physics
                 {
                     var s = shapes[si];
                     if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                    if (owner != null && IsUnder(s.Owner, owner)) continue;   // #417: never in its own way
                     float sr = ShapeRadius(s);
                     for (int k = 0; k < samples; k++)
                     {
@@ -1302,6 +1522,9 @@ namespace Editor.Core.Services.Physics
                 {
                     var s = shapes[si];
                     if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                    // #417: the mover's own colliders (a capsule that makes it shootable, a hitbox child) would shove it
+                    // out of its own body — "dead centre: push straight up" put guards on top of their own capsule
+                    if (_curOwner != null && IsUnder(s.Owner, _curOwner)) continue;
                     for (int k = 0; k < samples; k++)
                     {
                         float t = samples == 1 ? 0f : (float)k / (samples - 1);
@@ -1362,7 +1585,7 @@ namespace Editor.Core.Services.Physics
                 // A contact on a box's TOP face — including its top edge, which the round capsule bottom hits
                 // with an almost horizontal normal when only a sliver of the step is under it (high frame rates
                 // move a centimetre per call) — counts as "landing on it" during the settle.
-                bool onTopFace = bestShape != null && bestShape.Kind == Kind.Box && bestPoint.Y >= bestShape.Max.Y - 0.002f;
+                bool onTopFace = bestShape != null && bestShape.Kind == Kind.Box && OnTopFace(bestShape, bestPoint);
                 if (settleVertical && (bestNormal.Y > 0.15f || onTopFace))
                 {
                     // Landing phase of a step-up: resolve the contact straight up so the capsule comes
@@ -1425,6 +1648,7 @@ namespace Editor.Core.Services.Physics
                     {
                         var s = _world[wi];
                         if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                        if (cc.Owner != null && IsUnder(s.Owner, cc.Owner)) continue;   // #417: no collision with itself
                         if (!CapsuleOverlapsShape(cc, s)) continue;
                         var key = (cid, wi);
                         _curSolid.Add(key);
@@ -1439,6 +1663,7 @@ namespace Editor.Core.Services.Physics
                         var s = _dynamic[di];
                         if (s.Owner == null) continue;
                         if (!AabbOverlap(capMin, capMax, s.Min, s.Max)) continue;
+                        if (cc.Owner != null && IsUnder(s.Owner, cc.Owner)) continue;   // #417 (after the cheap box test)
                         if (!CapsuleOverlapsShape(cc, s)) continue;
                         var key = (cid, -1 - (int)(s.BodyId & 0x7FFFFFFF));
                         _curSolid.Add(key);
@@ -1489,6 +1714,17 @@ namespace Editor.Core.Services.Physics
         }
 
         private static float ShapeRadius(Shape s) => s.Kind == Kind.Sphere || s.Kind == Kind.Capsule ? s.Radius : 0f;
+
+        /// <summary>Does <paramref name="p"/> (a point on the box) lie on the box face that points most upward — the top of
+        /// a level box (y = Max.Y), the walking surface of a pitched one (#498)?</summary>
+        private static bool OnTopFace(Shape s, V3 p)
+        {
+            V3 ax = s.AxX; float h = s.Half.X;
+            if (Math.Abs(s.AxY.Y) > Math.Abs(ax.Y)) { ax = s.AxY; h = s.Half.Y; }
+            if (Math.Abs(s.AxZ.Y) > Math.Abs(ax.Y)) { ax = s.AxZ; h = s.Half.Z; }
+            float up = ax.Y >= 0f ? 1f : -1f;
+            return (p - s.Center).Dot(ax) * up >= h - 0.002f;
+        }
 
         // maxDist bounds the search for a MeshCollider: the character only cares about triangles within the capsule
         // radius, so the grid can skip everything else (a triangle whose closest point is within maxDist of c has its
@@ -1621,8 +1857,8 @@ namespace Editor.Core.Services.Physics
                 mx = new V3(Math.Max(mx.X, v.X), Math.Max(mx.Y, v.Y), Math.Max(mx.Z, v.Z));
             }
             var s = new Shape { Kind = Kind.Tris, Tris = new V3[n], LocalTris = local, Scale = new V3(1, 1, 1), Grid = TriGrid.Build(local, mn, mx) };
-            PlaceMovable(s, org + new V3(7f, 1f, -3f), yawDeg + 137f);   // somewhere else first
-            PlaceMovable(s, org, yawDeg);                                  // then the pose under test (in place)
+            PlaceMovable(s, org + new V3(7f, 1f, -3f), Basis.FromYaw(yawDeg + 137f));   // somewhere else first
+            PlaceMovable(s, org, Basis.FromYaw(yawDeg));                                  // then the pose under test (in place)
             return RayTris(From(o), From(dir), s, maxDist, out tMovable, out _);
         }
 

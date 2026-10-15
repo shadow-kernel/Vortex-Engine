@@ -594,7 +594,9 @@ namespace Editor.Core.Animation
                 float radius = 0.35f, height = 1.8f;
                 var cap = entity.GetComponent<ECS.Components.Physics.CapsuleCollider>();
                 if (cap != null) { radius = Math.Max(0.05f, cap.Radius); height = Math.Max(2f * radius, cap.Height); }
-                var res = Services.Physics.CollisionService.MoveCharacter(new ECS.Vector3(feet.X, feet.Y, feet.Z), radius, height, new ECS.Vector3(dw.X, 0f, dw.Z), out _, 0);
+                // owner = the moved entity (#417): its own colliders (a hitbox capsule, a child's) never stop its root motion
+                var res = Services.Physics.CollisionService.MoveCharacter(new ECS.Vector3(feet.X, feet.Y, feet.Z), radius, height, new ECS.Vector3(dw.X, 0f, dw.Z), out _, 0,
+                    owner: entity);
                 moved = new Vector3(res.X, feet.Y, res.Z);   // horizontal only: gravity / ground stay the script's or the agent's
             }
             else moved = feet + dw;
