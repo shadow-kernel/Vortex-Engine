@@ -70,6 +70,13 @@ namespace Editor.ECS
         /// bumps <see cref="Components.Transform.StaticVersion"/> so the static set is re-sent. Not serialized.</summary>
         [IgnoreDataMember]
         public bool RenderDynamic { get; set; }
+
+        /// <summary>The scene renderer's state of this entity (#361): its retained render instances and what they were made
+        /// from. Not serialized.</summary>
+        [IgnoreDataMember]
+        internal Core.Services.SceneRenderService.RenderNode RenderNode;
+        /// <summary><see cref="RenderChanges"/> lists an entity once per generation.</summary>
+        internal int RenderMovedGeneration, RenderRestyledGeneration;
         private bool _isStatic;
         private int _layer;
         private string _tag = "Untagged";
@@ -105,7 +112,10 @@ namespace Editor.ECS
 
         /// <summary>Set the active flag without touching the engine — for a caller that syncs the whole scene
         /// right after (Scene.EnsureAuthoredActiveFlags).</summary>
-        internal void SetActiveFlagOnly(bool active) => SetProperty(ref _isActive, active, nameof(IsActive));
+        internal void SetActiveFlagOnly(bool active)
+        {
+            if (SetProperty(ref _isActive, active, nameof(IsActive))) RenderChanges.StructureChanged();
+        }
 
         [DataMember(Name = "isActive", Order = 2)]
         public bool IsActive
@@ -113,7 +123,7 @@ namespace Editor.ECS
             get => _isActive;
             set
             {
-                SetProperty(ref _isActive, value, nameof(IsActive));
+                if (SetProperty(ref _isActive, value, nameof(IsActive))) RenderChanges.StructureChanged();
 
                 // W�hrend der Deserialisierung keine Engine-Registrierung
                 if (_isDeserializing)
@@ -175,7 +185,7 @@ namespace Editor.ECS
         public bool IsHiddenInEditor
         {
             get => _isHiddenInEditor;
-            set => SetProperty(ref _isHiddenInEditor, value, nameof(IsHiddenInEditor));
+            set { if (SetProperty(ref _isHiddenInEditor, value, nameof(IsHiddenInEditor))) RenderChanges.StructureChanged(); }
         }
 
         /// <summary>True when this entity (or any child — imported models carry their MeshRenderers on
@@ -223,7 +233,7 @@ namespace Editor.ECS
                 if (_children == null) { _children = new ObservableCollection<GameEntity>(); HookLayerChipWatch(); }
                 return _children;
             }
-            set { _children = value ?? new ObservableCollection<GameEntity>(); HookLayerChipWatch(); }
+            set { _children = value ?? new ObservableCollection<GameEntity>(); HookLayerChipWatch(); RenderChanges.StructureChanged(); }
         }
 
         [DataMember(Name = "components", Order = 7)]
@@ -234,7 +244,7 @@ namespace Editor.ECS
                 if (_components == null) { _components = new ObservableCollection<Component>(); HookLayerChipWatch(); }
                 return _components;
             }
-            set { _components = value ?? new ObservableCollection<Component>(); HookLayerChipWatch(); }
+            set { _components = value ?? new ObservableCollection<Component>(); HookLayerChipWatch(); RenderChanges.StructureChanged(); }
         }
 
         #endregion
@@ -264,7 +274,7 @@ namespace Editor.ECS
         public GameEntity Parent
         {
             get => _parent;
-            set => SetProperty(ref _parent, value, nameof(Parent));
+            set { if (SetProperty(ref _parent, value, nameof(Parent))) RenderChanges.StructureChanged(); }   // world matrices + visibility (#361)
         }
 
         /// <summary>
@@ -462,7 +472,9 @@ namespace Editor.ECS
 
         private void OnStructureChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
-            if (!_isDeserializing) NotifyRenderLayerChanged();
+            if (_isDeserializing) return;
+            NotifyRenderLayerChanged();
+            RenderChanges.StructureChanged();   // a child or a component came or went: the scene renderer walks the scene once (#361)
         }
 
         public GameEntity(string name) : this()
@@ -536,7 +548,11 @@ namespace Editor.ECS
         /// </summary>
         public T GetComponent<T>() where T : Component
         {
-            return Components.OfType<T>().FirstOrDefault();
+            // a plain loop: the LINQ form allocated an iterator per call, thousands of times per frame in the scene walks (#361)
+            var comps = Components;
+            for (int i = 0; i < comps.Count; i++)
+                if (comps[i] is T t) return t;
+            return null;
         }
 
         /// <summary>

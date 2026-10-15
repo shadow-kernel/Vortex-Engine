@@ -62,6 +62,7 @@ namespace Editor.ECS.Components.Rendering
                 {
                     ReloadMeshHandle();
                     SyncToEngine();
+                    RenderChanged();
                 }
             }
         }
@@ -79,6 +80,7 @@ namespace Editor.ECS.Components.Rendering
                 {
                     ReloadMaterialHandle();
                     SyncToEngine();
+                    RenderChanged();
                 }
             }
         }
@@ -116,7 +118,10 @@ namespace Editor.ECS.Components.Rendering
             {
                 if (value < 0 || value > 2) value = 0;    // only 0/1/2 exist — sanitize stray values (incl. loaded scenes)
                 if (SetProperty(ref _renderLayer, value, nameof(RenderLayer)))
+                {
                     Entity?.NotifyRenderLayerChanged();   // hierarchy FP/3P chips; Entity is null during deserialization
+                    RenderChanged();
+                }
             }
         }
 
@@ -127,7 +132,7 @@ namespace Editor.ECS.Components.Rendering
         public float ColorR
         {
             get => _colorR;
-            set => SetProperty(ref _colorR, Clamp01(value), nameof(ColorR));
+            set { if (SetProperty(ref _colorR, Clamp01(value), nameof(ColorR))) RenderChanged(); }
         }
 
         /// <summary>
@@ -137,7 +142,7 @@ namespace Editor.ECS.Components.Rendering
         public float ColorG
         {
             get => _colorG;
-            set => SetProperty(ref _colorG, Clamp01(value), nameof(ColorG));
+            set { if (SetProperty(ref _colorG, Clamp01(value), nameof(ColorG))) RenderChanged(); }
         }
 
         /// <summary>
@@ -147,7 +152,7 @@ namespace Editor.ECS.Components.Rendering
         public float ColorB
         {
             get => _colorB;
-            set => SetProperty(ref _colorB, Clamp01(value), nameof(ColorB));
+            set { if (SetProperty(ref _colorB, Clamp01(value), nameof(ColorB))) RenderChanged(); }
         }
 
         /// <summary>
@@ -157,7 +162,7 @@ namespace Editor.ECS.Components.Rendering
         public float ColorA
         {
             get => _colorA;
-            set => SetProperty(ref _colorA, Clamp01(value), nameof(ColorA));
+            set { if (SetProperty(ref _colorA, Clamp01(value), nameof(ColorA))) RenderChanged(); }
         }
 
         /// <summary>
@@ -167,7 +172,7 @@ namespace Editor.ECS.Components.Rendering
         public float Metallic
         {
             get => _metallic;
-            set => SetProperty(ref _metallic, Clamp01(value), nameof(Metallic));
+            set { if (SetProperty(ref _metallic, Clamp01(value), nameof(Metallic))) RenderChanged(); }
         }
 
         /// <summary>
@@ -177,7 +182,7 @@ namespace Editor.ECS.Components.Rendering
         public float Roughness
         {
             get => _roughness;
-            set => SetProperty(ref _roughness, Clamp01(value), nameof(Roughness));
+            set { if (SetProperty(ref _roughness, Clamp01(value), nameof(Roughness))) RenderChanged(); }
         }
 
         /// <summary>
@@ -202,6 +207,7 @@ namespace Editor.ECS.Components.Rendering
                 if (SetProperty(ref _texturePath, value, nameof(TexturePath)))
                 {
                     ReloadTextureAndMaterial();
+                    RenderChanged();
                 }
             }
         }
@@ -229,7 +235,18 @@ namespace Editor.ECS.Components.Rendering
         public long MaterialHandle
         {
             get => _materialHandle;
-            set => _materialHandle = value;
+            set { if (_materialHandle == value) return; _materialHandle = value; RenderChanged(); }
+        }
+
+        /// <summary>Counts up with every change the scene renderer draws from (mesh, material, texture, colour, PBR values,
+        /// layer, enabled): its retained instances are made again only when this moved on (#361).</summary>
+        [IgnoreDataMember]
+        internal int RenderVersion;
+
+        private void RenderChanged()
+        {
+            RenderVersion++;
+            RenderChanges.RendererChanged(Entity);
         }
 
         /// <summary>

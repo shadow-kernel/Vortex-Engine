@@ -69,6 +69,7 @@ namespace VortexEditor.Shell
         private sealed class Sample
         {
             public int Submits, Frames;
+            public long Walks;
             public double Seconds, SubmitMs, SubmitMax, MeshMs, Swap, Sort, Cull, Shadow;
             public long Alloc;
             public readonly double[] Phases = new double[6];
@@ -168,6 +169,7 @@ namespace VortexEditor.Shell
             var s = new Sample();
             var cpu = new float[7];
             long lastSubmit = SceneRenderService.SubmitCount;
+            long walks0 = SceneRenderService.SceneWalks;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             float lastFrame = VortexAPI.TryGetRenderCpuStats(cpu) ? cpu[6] : -1f;
             while (sw.Elapsed.TotalSeconds < seconds)
@@ -193,6 +195,7 @@ namespace VortexEditor.Shell
                 }
             }
             s.Seconds = sw.Elapsed.TotalSeconds;
+            s.Walks = SceneRenderService.SceneWalks - walks0;
             return s;
         }
 
@@ -204,7 +207,7 @@ namespace VortexEditor.Shell
             var cpu = new float[6]; VortexAPI.TryGetRenderCpuStats(cpu);
             VortexAPI.TryGetResourceCounts(out int meshes, out int materials, out int textures);
             ConsoleService.Instance.Log("BENCH scene=" + scene + " phase=" + phase + " fps=" + (s.Frames / Math.Max(0.001, s.Seconds)).ToString("0.0", ci)
-                + " frames=" + s.Frames + " submits=" + s.Submits
+                + " frames=" + s.Frames + " submits=" + s.Submits + " walks=" + s.Walks + " ops=" + SceneRenderService.LastInstanceOps + " retained=" + SceneRenderService.LastRetainedInstances
                 + " submit_ms=" + (s.SubmitMs / sub).ToString("0.000", ci) + " submit_max=" + s.SubmitMax.ToString("0.000", ci)
                 + " meshes_ms=" + (s.MeshMs / sub).ToString("0.000", ci)
                 + " phases_ms=" + string.Join("/", s.Phases.Select(p => (p / sub).ToString("0.000", ci)))

@@ -43,11 +43,15 @@ namespace Editor.Core.Services.Decals
 
         // ---------------------------------------------------------------------------------------------- submit
         /// <summary>Refill the renderer's decal list for this scene (called from SceneRenderService.SubmitScene, like the lights).</summary>
-        public static void Submit(Scene scene, bool playLike)
+        /// <param name="found">The scene index's entities with a Decal (SceneRenderService, #361) — visible, in walk order; null
+        /// walks the scene.</param>
+        public static void Submit(Scene scene, bool playLike, IReadOnlyList<GameEntity> found = null)
         {
             VortexAPI.ClearAllDecals();
             int count = 0;
-            if (scene?.Entities != null)
+            if (found != null)
+                for (int i = 0; i < found.Count; i++) SubmitComponents(found[i], ref count);
+            else if (scene?.Entities != null)
                 foreach (var e in scene.Entities) Visit(e, playLike, ref count, 0);
             SceneDecalCount = count;
             for (int i = 0; i < _spawned.Count; i++)
@@ -61,6 +65,13 @@ namespace Editor.Core.Services.Decals
         {
             if (e == null || depth > 64 || !e.IsActive) return;
             if (e.IsHiddenInEditor && !playLike) return;
+            SubmitComponents(e, ref count);
+            var children = e.Children;
+            if (children != null) for (int i = 0; i < children.Count; i++) Visit(children[i], playLike, ref count, depth + 1);
+        }
+
+        private static void SubmitComponents(GameEntity e, ref int count)
+        {
             var comps = e.Components;
             for (int i = 0; i < comps.Count; i++)
             {
@@ -68,8 +79,6 @@ namespace Editor.Core.Services.Decals
                 VortexAPI.SubmitDecal(BoxWorld(e, d), ResolveMaterial(d.MaterialPath), d.ColorR, d.ColorG, d.ColorB, d.Opacity, d.AngleFade, d.FadeDistance, d.Blend, d.SortOrder);
                 count++;
             }
-            var children = e.Children;
-            if (children != null) for (int i = 0; i < children.Count; i++) Visit(children[i], playLike, ref count, depth + 1);
         }
 
         /// <summary>The world matrix of a component's box: Size scales the unit box, then the entity's world transform.</summary>

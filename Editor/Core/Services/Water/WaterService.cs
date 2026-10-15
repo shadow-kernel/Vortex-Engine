@@ -103,14 +103,17 @@ namespace Editor.Core.Services.Water
 
         // ---------------------------------------------------------------- per frame
 
-        public static void Submit(Scene scene, bool playLike)
+        /// <param name="found">The scene index's entities with a Water (SceneRenderService, #361) — visible, in walk order; null
+        /// walks the scene.</param>
+        public static void Submit(Scene scene, bool playLike, IReadOnlyList<GameEntity> found = null)
         {
             _frame++;
             if (!ReferenceEquals(scene, _scene)) { Clear(); _scene = scene; }
             Hook();
             LastSubmitted = 0;
             if (scene?.Entities == null || !VortexAPI.TerrainApiAvailable) return;
-            foreach (var e in scene.Entities) SubmitRecursive(e, playLike);
+            if (found != null) for (int i = 0; i < found.Count; i++) SubmitFound(found[i]);
+            else foreach (var e in scene.Entities) SubmitRecursive(e, playLike);
             UnderwaterLook(scene, playLike);
             for (int i = _graveyard.Count - 1; i >= 0; i--)
             {
@@ -127,13 +130,18 @@ namespace Editor.Core.Services.Water
         {
             if (e == null || !e.IsActive) return;
             if (e.IsHiddenInEditor && !playLike) return;
+            SubmitFound(e);
+            if (e.Children != null) foreach (var c in e.Children) SubmitRecursive(c, playLike);
+        }
+
+        private static void SubmitFound(GameEntity e)
+        {
             var w = e.GetComponent<Editor.ECS.Components.Rendering.Water>();
             if (w != null && w.IsEnabled)
             {
                 try { SubmitOne(e, w); }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Water] submit failed for '" + e.Name + "': " + ex.Message); }
             }
-            if (e.Children != null) foreach (var c in e.Children) SubmitRecursive(c, playLike);
         }
 
         private static void SubmitOne(GameEntity e, Editor.ECS.Components.Rendering.Water w)

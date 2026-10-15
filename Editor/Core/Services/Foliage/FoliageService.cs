@@ -66,7 +66,9 @@ namespace Editor.Core.Services.Foliage
 
         // ---------------------------------------------------------------- per frame
 
-        public static void Submit(Scene scene, bool playLike)
+        /// <param name="found">The scene index's entities with a Foliage (SceneRenderService, #361) — visible, in walk order; null
+        /// walks the scene.</param>
+        public static void Submit(Scene scene, bool playLike, IReadOnlyList<GameEntity> found = null)
         {
             _frame++;
             if (!ReferenceEquals(scene, _scene)) { Clear(); _scene = scene; Hook(); }
@@ -74,7 +76,8 @@ namespace Editor.Core.Services.Foliage
             if (scene?.Entities == null) return;
             Vector3 cam = TerrainService.CameraPosition(scene, playLike);
             float time = Time;
-            foreach (var e in scene.Entities) SubmitRecursive(e, cam, time, playLike);
+            if (found != null) for (int i = 0; i < found.Count; i++) SubmitFound(found[i], cam, time);
+            else foreach (var e in scene.Entities) SubmitRecursive(e, cam, time, playLike);
 
             List<GameEntity> gone = null;
             foreach (var kv in _runtimes)
@@ -86,13 +89,18 @@ namespace Editor.Core.Services.Foliage
         {
             if (e == null || !e.IsActive) return;
             if (e.IsHiddenInEditor && !playLike) return;
+            SubmitFound(e, cam, time);
+            if (e.Children != null) foreach (var c in e.Children) SubmitRecursive(c, cam, time, playLike);
+        }
+
+        private static void SubmitFound(GameEntity e, Vector3 cam, float time)
+        {
             var f = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
             if (f != null && f.IsEnabled)
             {
                 try { SubmitOne(e, f, cam, time); }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Foliage] submit failed for '" + e.Name + "': " + ex.Message); }
             }
-            if (e.Children != null) foreach (var c in e.Children) SubmitRecursive(c, cam, time, playLike);
         }
 
         private static void SubmitOne(GameEntity e, Editor.ECS.Components.Rendering.Foliage f, Vector3 cam, float time)

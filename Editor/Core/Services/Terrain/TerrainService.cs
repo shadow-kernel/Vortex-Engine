@@ -113,7 +113,9 @@ namespace Editor.Core.Services.Terrain
         // ---------------------------------------------------------------- per frame
 
         /// <summary>Submit every terrain of the scene for this frame (called from SceneRenderService.SubmitScene).</summary>
-        public static void Submit(Scene scene, bool playLike)
+        /// <param name="found">The scene index's entities with a Terrain (SceneRenderService, #361) — visible, in walk order; null
+        /// walks the scene.</param>
+        public static void Submit(Scene scene, bool playLike, IReadOnlyList<GameEntity> found = null)
         {
             _frame++;
             if (!ReferenceEquals(scene, _scene)) { Clear(); _scene = scene; Hook(); }
@@ -121,7 +123,8 @@ namespace Editor.Core.Services.Terrain
             if (scene?.Entities == null || !VortexAPI.TerrainApiAvailable) return;
 
             Vector3 cam = CameraPosition(scene, playLike);
-            foreach (var e in scene.Entities) SubmitRecursive(e, cam, playLike);
+            if (found != null) for (int i = 0; i < found.Count; i++) SubmitFound(found[i], cam);
+            else foreach (var e in scene.Entities) SubmitRecursive(e, cam, playLike);
 
             // the editor view's far plane follows the largest terrain: a 4 km backdrop is drawn to its edge, not clipped at 1 km
             float needed = 1000f;
@@ -152,13 +155,18 @@ namespace Editor.Core.Services.Terrain
         {
             if (e == null || !e.IsActive) return;
             if (e.IsHiddenInEditor && !playLike) return;
+            SubmitFound(e, cam);
+            if (e.Children != null) foreach (var c in e.Children) SubmitRecursive(c, cam, playLike);
+        }
+
+        private static void SubmitFound(GameEntity e, Vector3 cam)
+        {
             var t = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
             if (t != null && t.IsEnabled)
             {
                 try { SubmitOne(e, t, cam); }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Terrain] submit failed for '" + e.Name + "': " + ex.Message); }
             }
-            if (e.Children != null) foreach (var c in e.Children) SubmitRecursive(c, cam, playLike);
         }
 
         private static void SubmitOne(GameEntity e, Editor.ECS.Components.Rendering.Terrain t, Vector3 cam)
