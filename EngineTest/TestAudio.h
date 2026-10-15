@@ -379,13 +379,14 @@ private:
 
 		// seek: the target reads back at once (before the mixer applied it) and playback continues from there
 		voice_seek(v, 1.25);
+		const auto sought_at = std::chrono::steady_clock::now();
 		u64 sought = 0;
 		voice_get_position(v, &sought, nullptr, nullptr);
 		tick_seconds(0.2f);
 		u64 after = 0;
 		voice_get_position(v, &after, nullptr, nullptr);
 		check("seek reads back its target", sought == (u64)(1.25 * rate + 0.5));
-		check("playback continues from the seek target", after > sought && after < sought + rate / 2);
+		check("playback continues from the seek target", after > sought && cursor_after(after, 1.25, seconds_since(sought_at), rate, length));
 		voice_seek(v, 4.0);   // looping: wraps to ~1 s
 		voice_get_position(v, &sought, nullptr, nullptr);
 		check("seeking a looping voice past its end wraps", sought == (u64)(4.0 * rate + 0.5) % length);
@@ -402,19 +403,20 @@ private:
 		voice_stop(d);
 		from.stream = true;
 		voice_handle s = voice_play(clip.c_str(), from);
+		const auto s_at = std::chrono::steady_clock::now();
 		tick_seconds(0.1f);
 		voice_get_position(s, &cursor, &length, &voice_rate);
-		check("a streamed voice starts at its start position",
-			voice_rate > 0 && cursor >= (u64)(2.0 * voice_rate) && cursor < (u64)(2.4 * voice_rate));
+		check("a streamed voice starts at its start position", cursor_after(cursor, 2.0, seconds_since(s_at), voice_rate, 0));
 		// seeking a stream: the stream refills from the new spot
 		from.start_position = 0.0;
 		from.loop = true;
 		voice_handle s2 = voice_play(clip.c_str(), from);
 		tick_seconds(0.1f);
 		voice_seek(s2, 2.5);
+		const auto s2_at = std::chrono::steady_clock::now();
 		tick_seconds(0.25f);
-		voice_get_position(s2, &cursor, nullptr, &voice_rate);
-		check("seeking a streamed voice", voice_rate > 0 && cursor >= (u64)(2.5 * voice_rate) && cursor < (u64)(2.9 * voice_rate));
+		voice_get_position(s2, &cursor, &length, &voice_rate);
+		check("seeking a streamed voice", cursor_after(cursor, 2.5, seconds_since(s2_at), voice_rate, length));
 		voice_stop(s);
 		voice_stop(s2);
 
@@ -452,10 +454,15 @@ private:
 			voice_handle m = voice_play("vpak://music.mp3", mp);
 			tick_seconds(0.3f);
 			voice_seek(m, 150.0);
+			const auto sought_at = std::chrono::steady_clock::now();
 			tick_seconds(0.3f);
+			// The cursor follows the device clock, and a tick lasts as long as the machine makes it (16 ms here, ~45 ms on a
+			// loaded CI runner): every bound is the wall time measured around the reads plus the mixer's read-ahead, never
+			// an assumed tick. A read that moved the decoder (the #465 review bug) jumps by seconds, far past any of them.
 			double worst_ms = 0.0;
-			u64 prev = 0, len = 0;
+			u64 first = 0, prev = 0, len = 0;
 			u32 r = 0, backwards = 0, jumps = 0;
+			auto prev_at = sought_at;
 			for (int i = 0; i < 60; ++i)
 			{
 				u64 cur = 0;
@@ -463,17 +470,23 @@ private:
 				voice_get_position(m, &cur, &len, &r);
 				const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 				if (ms > worst_ms) worst_ms = ms;
+				if (i == 0) first = cur;
 				if (i > 0 && cur < prev) ++backwards;
-				if (i > 0 && r && cur > prev + r / 5) ++jumps;   // more than 200 ms ahead between two reads ~16 ms apart
+				// further than the wall time since the last read allows (plus the read-ahead slack): a jump
+				if (i > 0 && r && cur > prev && (double)(cur - prev) / r > std::chrono::duration<double>(t0 - prev_at).count() + k_read_ahead) ++jumps;
 				prev = cur;
+				prev_at = t0;
 				tick_seconds(0.016f);
 			}
+			const double since_seek = std::chrono::duration<double>(prev_at - sought_at).count();   // the seek -> the last read
 			const double at = r ? (double)prev / r : -1.0, length_s = r ? (double)len / r : -1.0;
-			std::printf("[info] pak MP3 (%s): worst position read %.3f ms, cursor %.2f s after a seek to 150 s, length %.2f s, backwards %u, jumps %u\n",
-				stream ? "streamed" : "not streamed", worst_ms, at, length_s, backwards, jumps);
+			std::printf("[info] pak MP3 (%s): worst position read %.3f ms, cursor %.2f s %.2f s after a seek to 150 s, length %.2f s, backwards %u, jumps %u\n",
+				stream ? "streamed" : "not streamed", worst_ms, at, since_seek, length_s, backwards, jumps);
+			// the seek lands: from 150 s on, at most the wall time since the seek (+ read-ahead) further, and still playing
 			check(stream ? "a streamed pak MP3: position reads are free and leave playback alone; the seek lands"
 			             : "a pak MP3 played decoded: position reads are free and leave playback alone; the seek lands",
-				m != invalid_voice && worst_ms < 0.5 && backwards == 0 && jumps == 0 && std::fabs(length_s - 180.0) < 0.1 && at > 150.2 && at < 153.0);
+				m != invalid_voice && worst_ms < 0.5 && backwards == 0 && jumps == 0 && std::fabs(length_s - 180.0) < 0.1
+				&& prev > first && cursor_after(prev, 150.0, since_seek, r, 0));
 			voice_stop(m);
 		}
 	}
@@ -1044,6 +1057,28 @@ private:
 	// (or the silent-mode pump) actually advances playback.
 	// Advance by WALL-CLOCK time: a loaded CI machine oversleeps the 16 ms naps, and a fixed tick count would then
 	// measure meters and tails at a later moment than the test intends.
+	// A device mixes ahead of what it plays (its buffer: a period or a few — more on a VM's virtual device), so a cursor
+	// may lead the wall clock by that much: the slack of every cursor bound that is measured in wall time.
+	static constexpr double k_read_ahead = 0.25;
+
+	static double seconds_since(std::chrono::steady_clock::time_point t)
+	{
+		return std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
+	}
+
+	// A cursor (frames at `rate`) read `since` seconds of wall time after playback was put at `target` seconds: at the
+	// target, or past it by at most that wall time plus the read-ahead — a slow machine's long ticks never count against
+	// the engine (#465 CI: 60 ticks of 16 ms took 2.9 s on the macOS runner). A looping clip of `length` frames (0 = not
+	// looping) may have wrapped once.
+	static bool cursor_after(u64 cursor, double target, double since, u32 rate, u64 length)
+	{
+		if (rate == 0) return false;
+		const u64 at = (u64)(target * rate + 0.5);
+		u64 c = cursor;
+		if (length > 0 && c < at) c += length;
+		return c >= at && (double)(c - at) / rate <= since + k_read_ahead;
+	}
+
 	void tick_seconds(float seconds)
 	{
 		using clock = std::chrono::steady_clock;

@@ -217,6 +217,49 @@ namespace VortexTests
             t.True(before < -0.02, "the last tick's length delivered the 1.5 s beat early (" + (before * 1000).ToString("0.0") + " ms) — what this guards");
         }
 
+        /// <summary>What the "audio music states" smoke check relies on, at any frame rate (#437, CI on WARP runs the editor at
+        /// 10-15 fps): a beat is delivered at most half a predicted tick before its line, and a late one within the music its
+        /// tick played since the tick before — one frame, however long that frame was. Beats come in order; a stall of more
+        /// than MaxCatchUp beats is skipped whole, never a beat lost in between.</summary>
+        [Test]
+        public static void EveryBeatLandsOnItsNearestTickAtAnyFrameRate(TestContext t)
+        {
+            var m = new MusicTiming(240, 4, 4, 0, Rate);   // a beat every 250 ms, as in the smoke check
+            var tracker = new BeatTracker(m);
+            var beats = new List<long>();
+            var rng = new Random(437);
+            double wall = 0, prev = double.NaN, avg = 0, earliest = 0, latestPastFrame = double.NegativeInfinity;
+            long last = long.MinValue;
+            int delivered = 0, outside = 0, lost = 0, skips = 0;
+            for (int i = 0; i < 4000; i++)
+            {
+                // 5-150 ms frames, now and then a 0.4 s hitch (caught up), twice a 1.6 s stall (skipped)
+                double dt = i == 1500 || i == 3000 ? 1.6 : rng.NextDouble() < 0.02 ? 0.4 : 0.005 + rng.NextDouble() * 0.145;
+                wall += dt;
+                avg = AdaptiveMusicPlayer.NextAverageTick(avg, dt);
+                double now = wall * Rate;
+                beats.Clear();
+                tracker.Advance(now, avg * Rate, beats);
+                double window = double.IsNaN(prev) ? double.PositiveInfinity : (now - prev) / Rate;
+                prev = now;
+                foreach (long b in beats)
+                {
+                    double error = (now - m.FrameOfBeat(b)) / Rate;
+                    if (error < -avg / 2 - 1e-9 || error > window + 1e-9) outside++;
+                    earliest = Math.Min(earliest, error + avg / 2);
+                    if (!double.IsInfinity(window)) latestPastFrame = Math.Max(latestPastFrame, error - window);
+                    if (last != long.MinValue && b - last != 1) { if (b - last > BeatTracker.MaxCatchUp) skips++; else lost++; }
+                    last = b;
+                    delivered++;
+                }
+            }
+            t.True(delivered > 1000, "beats delivered over " + wall.ToString("0") + " s (" + delivered + ")");
+            t.Equal(0, outside, "every beat between half a predicted tick early and its own frame late (closest: " +
+                (earliest * 1000).ToString("0.0") + " ms from the early bound, " + (latestPastFrame * 1000).ToString("0.0") + " ms past the frame)");
+            t.Equal(0, lost, "no beat lost between two delivered ones");
+            t.Equal(2, skips, "the two stalls skipped whole, not fired in a burst");
+        }
+
         /// <summary>#465 review: Time set while the source is stopped reads back where the next Play starts.</summary>
         [Test]
         public static void TimeSetWhileStoppedLandsInTheClip(TestContext t)

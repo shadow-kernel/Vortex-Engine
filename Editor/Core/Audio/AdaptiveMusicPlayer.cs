@@ -41,11 +41,18 @@ namespace Editor.Core.Audio
         internal double LastSwitchMusicalFrame { get; private set; } = double.NaN;
         internal MusicSync LastSwitchSync { get; private set; }
 
-        /// <summary>Diagnostics: how far from its bar line each of the last bars was delivered (seconds of the music clock;
-        /// negative = up to half a frame early).</summary>
-        internal readonly List<double> BarErrors = new List<double>();
-        /// <summary>Diagnostics: the average time between two ticks (seconds) — half of it bounds the delivery error.</summary>
+        /// <summary>Diagnostics: how one bar line was delivered. <see cref="Error"/>: seconds of the music clock from the line
+        /// to the delivering tick (negative = early). <see cref="Window"/>: how much music that tick had played since the tick
+        /// before — a bar delivered late was crossed within it, so Error ≤ Window whatever the frame rate.
+        /// <see cref="Predicted"/>: the next tick that tick expected (an early bar is at most half of it ahead).
+        /// <see cref="TickSeconds"/>: the wall time of that tick.</summary>
+        internal struct BarDelivery { public double Error, Window, Predicted, TickSeconds; }
+
+        /// <summary>Diagnostics: the last 32 bars delivered (smoke check: each on its nearest tick).</summary>
+        internal readonly List<BarDelivery> BarDeliveries = new List<BarDelivery>();
+        /// <summary>Diagnostics: the average time between two ticks (seconds) — the next tick predicted.</summary>
         internal double AverageTickSeconds { get; private set; }
+        private double _lastMusical = double.NaN;   // the musical frame of the previous tick
 
         private AdaptiveMusicPlayer(AdaptiveMusic music, ulong handle, MusicTiming timing, string state, Dictionary<string, float> pars, Func<string, string> resolveClip)
         {
@@ -220,14 +227,20 @@ namespace Editor.Core.Audio
             // the next tick is predicted from the average, not from this tick's dt: after a hitch or the first tick after a
             // pause (#437 review: 50 / 125 ms) the beats up to half that far ahead were delivered early
             _tracker.Advance(now, AverageTickSeconds * Timing.SampleRate, _beats);
+            double window = double.IsNaN(_lastMusical) ? double.PositiveInfinity : (now - _lastMusical) / Timing.SampleRate;
+            _lastMusical = now;
             foreach (long b in _beats)
             {
                 bool isBar = b % Timing.BeatsPerBar == 0;
                 long bar = b / Timing.BeatsPerBar;
                 if (isBar)
                 {
-                    BarErrors.Add((now - Timing.FrameOfBar(bar)) / Timing.SampleRate);
-                    if (BarErrors.Count > 32) BarErrors.RemoveAt(0);
+                    BarDeliveries.Add(new BarDelivery
+                    {
+                        Error = (now - Timing.FrameOfBar(bar)) / Timing.SampleRate, Window = window,
+                        Predicted = AverageTickSeconds, TickSeconds = dtSeconds,
+                    });
+                    if (BarDeliveries.Count > 32) BarDeliveries.RemoveAt(0);
                 }
                 onBeat?.Invoke((int)Math.Min(int.MaxValue, b), (int)Math.Min(int.MaxValue, bar), isBar);
             }

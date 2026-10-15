@@ -53,7 +53,8 @@ namespace VortexEditor.Shell.Audio
             try
             {
                 WriteStems(folder);
-                var def = new AdaptiveMusic { Bpm = 240, BeatsPerBar = 4, LoopBars = 4, InitialState = "calm" };
+                // a 1 s parameter glide: sampled at any frame rate (WARP's 10-15 fps included) it shows values in between
+                var def = new AdaptiveMusic { Bpm = 240, BeatsPerBar = 4, LoopBars = 4, InitialState = "calm", ParameterFadeSeconds = 1f };
                 def.Stems.Add(new AdaptiveMusic.Stem { Name = "pads", ClipPath = Folder + "/pads.wav" });
                 def.Stems.Add(new AdaptiveMusic.Stem { Name = "drums", ClipPath = Folder + "/drums.wav" });
                 def.Stems.Add(new AdaptiveMusic.Stem { Name = "strings", ClipPath = Folder + "/strings.wav", Parameter = "intensity", From = 0f, To = 1f });
@@ -65,8 +66,9 @@ namespace VortexEditor.Shell.Audio
                 def.Save(Path.Combine(root, Music.Replace('/', Path.DirectorySeparatorChar)));
 
                 Directory.CreateDirectory(Path.GetDirectoryName(script));
-                File.WriteAllText(script, "using Vortex;\npublic class SmokeConductor : VortexBehaviour\n{\n    public static int Bars, Beats, LastBar = -1;\n" +
-                                          "    public override void OnBar(int bar) { Bars++; LastBar = bar; }\n    public override void OnBeat(int beat) { Beats++; }\n}\n");
+                File.WriteAllText(script, "using System.Collections.Generic;\nusing Vortex;\npublic class SmokeConductor : VortexBehaviour\n{\n" +
+                                          "    public static List<int> BarList = new List<int>(), BeatList = new List<int>();\n" +
+                                          "    public override void OnBar(int bar) { BarList.Add(bar); }\n    public override void OnBeat(int beat) { BeatList.Add(beat); }\n}\n");
                 conductor = scene.CreateEntity("SmokeConductor");
                 conductor.AddComponentDirect(new Script(conductor, Script));
 
@@ -91,7 +93,8 @@ namespace VortexEditor.Shell.Audio
                 Expect(Math.Abs(bars - Math.Round(bars)) < 1e-9, "the switch is scheduled on a bar line (bar " + bars + ")");
                 Expect(Vortex.Audio.Music.SetState("alert") && player.LastSwitchPlayedFrame == at, "asking again for the same state changes nothing");
                 VortexAudio.MusicClock c = default;
-                for (int i = 0; i < 40; i++)
+                var waited = System.Diagnostics.Stopwatch.StartNew();   // a deadline, not a count of delays: frames may be slow
+                while (waited.Elapsed.TotalSeconds < 5)
                 {
                     await Task.Delay(50);
                     if (VortexAudio.GetMusicClock(player.Handle, out c) && c.Played > at + (ulong)(0.1 * c.SampleRate)) break;
@@ -102,34 +105,42 @@ namespace VortexEditor.Shell.Audio
                 // a stinger on the next beat, and a parameter crossfade
                 Expect(Vortex.Audio.Music.PlayStinger("hit"), "PlayStinger(hit) is taken");
                 Expect(!Vortex.Audio.Music.PlayStinger("nope") && !Vortex.Audio.Music.SetState("nope"), "unknown names are refused");
-                // a 0.5 s glide: sampled through it (whatever the frame rate), some value lies between silent and full
+                // the 1 s glide: sampled until it settles (whatever the frame rate), some value lies between silent and full
                 float stringsBefore = VortexAudio.GetMusicStemGain(player.Handle, 2);
                 Vortex.Audio.Music.SetParameter("intensity", 1f);
                 var glide = new List<float>();
-                for (int i = 0; i < 30; i++) { await Task.Delay(30); glide.Add(VortexAudio.GetMusicStemGain(player.Handle, 2)); }
+                var gliding = System.Diagnostics.Stopwatch.StartNew();
+                do { await Task.Delay(30); glide.Add(VortexAudio.GetMusicStemGain(player.Handle, 2)); }
+                while (Math.Abs(glide[glide.Count - 1] - 1f) >= 1e-4f && gliding.Elapsed.TotalSeconds < 5);
                 float stringsAfter = VortexAudio.GetMusicStemGain(player.Handle, 2);
                 bool between = glide.Exists(g => g > 0.02f && g < 0.98f);
                 Expect(stringsBefore == 0f && between && Math.Abs(stringsAfter - 1f) < 1e-4f,
                     "SetParameter crossfades the mapped stem (" + stringsBefore + " → " + string.Join(" ", glide.Distinct().Take(8).Select(g => g.ToString("0.00"))) + " → " + stringsAfter + ")");
                 Expect(Vortex.Audio.Music.Time > 0f && Math.Abs(Vortex.Audio.Music.Length - 4.0f) < 0.05f, "Music.Time runs, Length is the stems' (" + Vortex.Audio.Music.Time + " / " + Vortex.Audio.Music.Length + ")");
 
-                // OnBar / OnBeat reached the script, on the tick nearest each bar line
+                // OnBar / OnBeat reached the script: every beat once and in order — a stall longer than BeatTracker.MaxCatchUp
+                // beats is skipped as a whole, never a beat lost in between — and OnBar on exactly the bar lines among them
                 await Task.Delay(2200);
                 var type = Editor.Scripting.ScriptRuntime.Instance.ScriptAssembly?.GetType("SmokeConductor");
-                int barsSeen = type != null ? (int)type.GetField("Bars").GetValue(null) : -1;
-                int beatsSeen = type != null ? (int)type.GetField("Beats").GetValue(null) : -1;
-                var errors = player.BarErrors.Skip(1).ToList();   // the first bar was history when the music started
-                double worst = errors.Count > 0 ? errors.Max(e => Math.Abs(e)) : double.NaN;
-                double median = errors.Count > 0 ? errors.Select(Math.Abs).OrderBy(e => e).ElementAt(errors.Count / 2) : double.NaN;
-                Expect(barsSeen >= 3 && beatsSeen >= 4 * barsSeen - 4, "OnBar / OnBeat reached the script (" + barsSeen + " bars, " + beatsSeen + " beats)");
-                // nearest tick: within half a frame on a steady frame rate — a slow or jittery machine (CI) gets a whole frame
-                double bound = Math.Max(0.020, player.AverageTickSeconds + 0.005);
-                Expect(errors.Count >= 2 && worst < bound, "bars are delivered near their line (worst " + (worst * 1000).ToString("0.0") + " ms, bound " + (bound * 1000).ToString("0") + " ms)");
+                var barList = type?.GetField("BarList")?.GetValue(null) as List<int> ?? new List<int>();
+                var beatList = type?.GetField("BeatList")?.GetValue(null) as List<int> ?? new List<int>();
+                bool inOrder = beatList.Zip(beatList.Skip(1), (a, b) => b - a).All(gap => gap == 1 || gap > BeatTracker.MaxCatchUp);
+                bool barLines = barList.SequenceEqual(beatList.Where(b => b % 4 == 0).Select(b => b / 4));
+                Expect(barList.Count >= 3 && inOrder && barLines, "OnBar / OnBeat reached the script, every beat in order, OnBar on each bar line (" +
+                    barList.Count + " bars, " + beatList.Count + " beats: " + string.Join(",", beatList) + ")");
+                // each bar on its nearest tick, whatever the frame rate: never more than half a predicted tick early, and a late
+                // one within the music its tick played since the tick before — one frame, however long that frame was
+                var bars1 = player.BarDeliveries.Skip(1).ToList();   // the first bar may be the music's own start
+                bool nearest = bars1.Count >= 2 && bars1.All(d => d.Error >= -d.Predicted / 2 - 0.002 && d.Error <= d.Window + 0.002);
+                double worst = bars1.Count > 0 ? bars1.Max(d => Math.Abs(d.Error)) : double.NaN;
+                double median = bars1.Count > 0 ? bars1.Select(d => Math.Abs(d.Error)).OrderBy(e => e).ElementAt(bars1.Count / 2) : double.NaN;
+                string perBar = string.Join(" ", bars1.Select(d => (d.Error * 1000).ToString("+0.0;-0.0") + "/" + (d.Window * 1000).ToString("0")));
+                Expect(nearest, "every bar is delivered on its nearest tick (error/frame ms: " + perBar + ")");
 
                 log.Log("audio music states: device=" + VortexAudio.HasDevice() + ", switch on bar " + Math.Round(bars) + " began on its frame " + (c.LastStateFrame == at) +
-                        ", bars delivered " + barsSeen + " / beats " + beatsSeen + ", OnBar error median " + (median * 1000).ToString("0.0") + " ms, worst " +
-                        (worst * 1000).ToString("0.0") + " ms over " + errors.Count + " bars (" + string.Join(" ", errors.Select(e => (e * 1000).ToString("+0.0;-0.0"))) +
-                        " ms; a tick every " + (player.AverageTickSeconds * 1000).ToString("0.0") + " ms)" + (fails.Count == 0 ? ", all as expected" : ", FAILED: " + string.Join("; ", fails)));
+                        ", bars delivered " + barList.Count + " / beats " + beatList.Count + ", OnBar error median " + (median * 1000).ToString("0.0") + " ms, worst " +
+                        (worst * 1000).ToString("0.0") + " ms over " + bars1.Count + " bars (error/frame ms: " + perBar + "; a tick every " +
+                        (player.AverageTickSeconds * 1000).ToString("0.0") + " ms)" + (fails.Count == 0 ? ", all as expected" : ", FAILED: " + string.Join("; ", fails)));
                 return fails.Count == 0;
             }
             catch (Exception ex) { log.LogError("audio music states: " + ex); return false; }
