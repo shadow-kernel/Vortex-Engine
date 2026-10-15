@@ -61,6 +61,15 @@ EDITOR_INTERFACE void SetSkyboxTextureHdr(id::id_type texture_id, float exposure
 	graphics::Renderer::instance().set_skybox_texture(texture_id, exposure, rotation_degrees * 0.01745329252f, hdr < 0 ? 0 : (hdr > 2 ? 2 : hdr));
 }
 
+// The sun's disc in the sky (#499), at the scene's directional light on the gradient and the texture sky: mode 0 = auto (a
+// gradient sky and an 8-bit picture draw it, a float .hdr picture — which carries its own sun — and a solid colour do not),
+// 1 = always, 2 = never; size = the angular diameter in degrees (the real sun: 0.53); intensity scales the disc, glow its
+// corona and aureole. Persistent like the rest of the sky state.
+EDITOR_INTERFACE void SetSkySun(int32_t mode, float size_degrees, float intensity, float glow)
+{
+	graphics::Renderer::instance().set_sky_sun(mode, size_degrees, intensity, glow);
+}
+
 // Sky light (image-based lighting, step 1): SH9 irradiance per channel (27 floats, coefficient-major) baked by the
 // managed SkyLight from the sky's HDR or gradient; enabled = 0 returns the shaders to their neutral hemisphere ambient.
 EDITOR_INTERFACE void SetSkyLight(const float* sh27, int enabled)

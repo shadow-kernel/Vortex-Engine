@@ -10,12 +10,13 @@ cbuffer SkyboxConstants : register(b0)
     float3 SkyColor;       float Padding1;
     float3 HorizonColor;   float Padding2;
     float3 GroundColor;    float Padding3;
-    float3 SunDirection;   float SunIntensity;
+    float3 SunDirection;   float SunIntensity;   // unused since #499: the disc follows the scene's light (GlowDir / GlowColor)
     float3 SunColor;       float Tonemapper;   // the HDR path's curve: 0 = ACES fit, 1 = PBR Neutral
     float4 Params;         // x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians), w: > 0 = HDR, tonemap with this scene exposure
     float4 Haze;           // aerial perspective on the HDR sky: rgb the scene fog colour, w its density (0 = off)
-    float4 GlowDir;        // xyz the direction the sun's light travels, w the fog's sun glow
-    float4 GlowColor;      // rgb the sun's colour
+    float4 GlowDir;        // xyz the direction the scene's sun light travels (normalised), w the fog's sun glow
+    float4 GlowColor;      // rgb the sun's colour, w its intensity (0 = no sun)
+    float4 SunDisc;        // the sun's disc (#499): x angular radius (radians), y intensity, z glow, w 1 = drawn
 };
 
 Texture2D SkyTexture : register(t0);
@@ -26,6 +27,24 @@ struct VS_OUT
     float4 pos      : SV_POSITION;
     float3 worldDir : TEXCOORD0;
 };
+
+// The sun's disc at the scene's directional light (#499) — see skybox.metal: hdr = linear radiance before the tonemapper,
+// else display values; the disc is the light's (the picture's rotation / exposure do not move or dim it).
+float3 SunDiscColor(float3 dir, bool hdr)
+{
+    float3 toSun = -GlowDir.xyz;
+    float d = length(dir - toSun);
+    float t = d / max(SunDisc.x, 1e-5);
+    float aa = clamp(fwidth(t), 0.02, 0.5);   // before the branch below
+    if (d > max(0.3, 9.0 * SunDisc.x)) return float3(0.0, 0.0, 0.0);   // the aureole is gone 17° out, the corona 9 radii out
+    float disc = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, t);
+    float limb = 0.6 + 0.4 * sqrt(saturate(1.0 - t * t));
+    float corona = exp(-max(t - 1.0, 0.0) * 0.8);
+    float aureole = pow(saturate(1.0 - 0.5 * d * d), 256.0);
+    float3 col = GlowColor.rgb;
+    return hdr ? col * (disc * limb * 40.0 * SunDisc.y + SunDisc.z * (1.5 * corona + 0.35 * aureole))
+               : col * (disc * limb * 10.0 * SunDisc.y + SunDisc.z * (0.5 * corona + 0.5 * aureole));
+}
 
 VS_OUT SkyVS(uint vertexID : SV_VertexID)
 {
@@ -57,6 +76,7 @@ float4 SkyPS(VS_OUT input) : SV_TARGET
         float u = atan2(dir.x, dir.z) / (2.0 * PI) + 0.5 + Params.z / (2.0 * PI);
         float v = acos(clamp(y, -1.0, 1.0)) / PI;
         float3 sky = SkyTexture.SampleLevel(SkySampler, float2(u, v), 0).rgb * Params.y;
+        bool sun = SunDisc.w > 0.5 && GlowColor.w > 0.001;
         if (Params.w > 0.0 && Haze.w > 0.0)
         {
             // aerial perspective on the sky: the horizon whitens into the scene's haze (the path through the air grows as
@@ -68,6 +88,7 @@ float4 SkyPS(VS_OUT input) : SV_TARGET
             float3 hz = Haze.rgb + GlowColor.rgb * (GlowDir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
             sky = lerp(sky, hz, f);
         }
+        if (sun && Params.w > 0.0) sky += SunDiscColor(dir, true);   // on top of the haze: a setting sun stays a disc
         if (Params.w < 0.0) sky = pow(saturate(sky), 1.0 / 2.2);   // a float picture the classic way: gamma-encoded, clamped
         else if (Params.w > 0.0)
         {
@@ -95,6 +116,7 @@ float4 SkyPS(VS_OUT input) : SV_TARGET
                 sky = pow(max(saturate(a / b), 0.0), 1.0 / 2.2);
             }
         }
+        if (sun && Params.w <= 0.0) sky += SunDiscColor(dir, false);   // an 8-bit picture / the classic float one: display values
         return float4(sky, 1.0);
     }
 
@@ -111,20 +133,12 @@ float4 SkyPS(VS_OUT input) : SV_TARGET
         color = lerp(HorizonColor, GroundColor, t);
     }
 
-    // Sun disc + glow + horizon scattering
-    if (SunIntensity > 0.001)
+    // Sun disc + glow + horizon scattering at the scene's directional light (#499 — it used to sit at a fixed direction)
+    if (SunDisc.w > 0.5 && GlowColor.w > 0.001)
     {
-        float3 sunDir = normalize(-SunDirection);
-        float sunDot = dot(dir, sunDir);
-
-        float sunDisc = smoothstep(0.9995, 0.9999, sunDot);
-        color += SunColor * sunDisc * SunIntensity * 10.0;
-
-        float sunGlow = pow(max(sunDot, 0.0), 256.0);
-        color += SunColor * sunGlow * SunIntensity * 0.5;
-
-        float horizonGlow = pow(1.0 - abs(y), 4.0) * pow(max(sunDot, 0.0), 2.0);
-        color += SunColor * horizonGlow * SunIntensity * 0.3;
+        color += SunDiscColor(dir, false);
+        float horizonGlow = pow(1.0 - abs(y), 4.0) * pow(max(dot(dir, normalize(-GlowDir.xyz)), 0.0), 2.0);
+        color += GlowColor.rgb * horizonGlow * 0.3 * SunDisc.z;
     }
 
     // Subtle noise for texture

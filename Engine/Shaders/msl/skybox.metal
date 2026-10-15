@@ -1,4 +1,5 @@
-// Procedural gradient skybox — Metal port of skybox.hlsl (sky/horizon/ground gradient + sun disc + glow).
+// Procedural gradient skybox — Metal port of skybox.hlsl (sky/horizon/ground gradient + sun disc + glow), and the equirect
+// texture sky (#326) with the sun's disc at the scene's directional light (#499).
 #include <metal_stdlib>
 using namespace metal;
 
@@ -9,13 +10,35 @@ struct SkyboxConstants
     packed_float3 sky_color;       float padding1;
     packed_float3 horizon_color;   float padding2;
     packed_float3 ground_color;    float padding3;
-    packed_float3 sun_direction;   float sun_intensity;
+    packed_float3 sun_direction;   float sun_intensity;   // unused since #499: the disc follows the scene's light (glow_dir / glow_color)
     packed_float3 sun_color;       float tonemapper;   // the HDR path's curve: 0 = ACES fit, 1 = PBR Neutral
-    float4 params;
+    float4 params;        // @160  x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians), w: the HDR mode
     float4 haze;          // @176  aerial perspective on the HDR sky: rgb fog colour, w density (0 = off)
-    float4 glow_dir;      // @192  xyz the direction the sun's light travels, w the fog's sun glow
-    float4 glow_color;    // @208  rgb the sun's colour   // x: 1 = sample the equirect texture (#326), y: exposure, z: yaw offset (radians)
+    float4 glow_dir;      // @192  xyz the direction the scene's sun light travels (normalised), w the fog's sun glow
+    float4 glow_color;    // @208  rgb the sun's colour, w its intensity (0 = no sun)
+    float4 sun_disc;      // @224  the sun's disc (#499): x angular radius (radians), y intensity, z glow, w 1 = drawn
 };
+
+// The sun's disc at the scene's directional light (#499), with a corona hugging it and the wide aureole of the gradient
+// sky. `hdr`: linear radiance before the scene exposure + tonemapper (it blooms through them like a lamp); else the display
+// values of the gradient / an 8-bit picture. The disc is the light's: rotating the picture or changing its exposure does
+// not move or dim it. Occlusion is free — the sky pass runs first, the world covers it.
+static inline float3 sun_disc(float3 dir, constant SkyboxConstants& c, bool hdr)
+{
+    float3 to_sun = -c.glow_dir.xyz;
+    float d = length(dir - to_sun);                              // the chord to the sun ~ the angle (radians)
+    float t = d / max(c.sun_disc.x, 1e-5);                       // 0 at the centre, 1 at the rim
+    float aa = clamp(fwidth(t), 0.02, 0.5);                      // ~1 pixel of edge, before the branch below
+    // the aureole is gone 17° from the sun, the corona 9 radii out: the rest of the sky pays a length and a compare
+    if (d > max(0.3, 9.0 * c.sun_disc.x)) return float3(0.0);
+    float disc = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, t);
+    float limb = 0.6 + 0.4 * sqrt(saturate(1.0 - t * t));       // limb darkening
+    float corona = exp(-max(t - 1.0, 0.0) * 0.8);
+    float aureole = pow(saturate(1.0 - 0.5 * d * d), 256.0);    // cos of the angle, from the chord
+    float3 col = float3(c.glow_color.rgb);
+    return hdr ? col * (disc * limb * 40.0 * c.sun_disc.y + c.sun_disc.z * (1.5 * corona + 0.35 * aureole))
+               : col * (disc * limb * 10.0 * c.sun_disc.y + c.sun_disc.z * (0.5 * corona + 0.5 * aureole));
+}
 
 struct SkyOut
 {
@@ -50,6 +73,7 @@ fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buff
         float u = atan2(dir.x, dir.z) / two_pi + 0.5 + c.params.z / two_pi;
         float v = acos(clamp(y, -1.0, 1.0)) / 3.14159265359;
         float3 sky = sky_tex.sample(sky_smp, float2(u, v), level(0)).rgb * c.params.y;
+        const bool sun = c.sun_disc.w > 0.5 && c.glow_color.w > 0.001;
         if (c.params.w > 0.0 && c.haze.w > 0.0)
         {
             // aerial perspective on the sky: the horizon whitens into the scene's haze (the path through the air grows as
@@ -63,6 +87,7 @@ fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buff
             float3 hz = c.haze.rgb + c.glow_color.rgb * (c.glow_dir.w * (0.12 * mu * mu + 0.88 * pow(mu, 10.0)));
             sky = mix(sky, hz, f);
         }
+        if (sun && c.params.w > 0.0) sky += sun_disc(dir, c, true);   // on top of the haze: a setting sun stays a disc
         if (c.params.w < 0.0) sky = pow(saturate(sky), 1.0 / 2.2);   // a float picture the classic way: gamma-encoded, clamped
         else if (c.params.w > 0.0)
         {
@@ -90,6 +115,7 @@ fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buff
                 sky = pow(max(saturate(a / b), 0.0), 1.0 / 2.2);
             }
         }
+        if (sun && c.params.w <= 0.0) sky += sun_disc(dir, c, false);   // an 8-bit picture / the classic float one: display values
         return float4(sky, 1.0);
     }
     float3 color;
@@ -104,16 +130,12 @@ fragment float4 SkyPS(SkyOut in [[stage_in]], constant SkyboxConstants& c [[buff
         color = mix(float3(c.horizon_color), float3(c.ground_color), t);
     }
 
-    if (c.sun_intensity > 0.001)
+    // the sun at the scene's directional light (#499 — it used to sit at a fixed direction whatever the light did)
+    if (c.sun_disc.w > 0.5 && c.glow_color.w > 0.001)
     {
-        float3 sun_dir = normalize(-float3(c.sun_direction));
-        float sun_dot = dot(dir, sun_dir);
-        float sun_disc = smoothstep(0.9995, 0.9999, sun_dot);
-        color += float3(c.sun_color) * sun_disc * c.sun_intensity * 10.0;
-        float sun_glow = pow(max(sun_dot, 0.0), 256.0);
-        color += float3(c.sun_color) * sun_glow * c.sun_intensity * 0.5;
-        float horizon_glow = pow(1.0 - abs(y), 4.0) * pow(max(sun_dot, 0.0), 2.0);
-        color += float3(c.sun_color) * horizon_glow * c.sun_intensity * 0.3;
+        color += sun_disc(dir, c, false);
+        float horizon_glow = pow(1.0 - abs(y), 4.0) * pow(max(dot(dir, normalize(-c.glow_dir.xyz)), 0.0), 2.0);
+        color += c.glow_color.rgb * horizon_glow * 0.3 * c.sun_disc.z;
     }
 
     float noise = fract(sin(dot(dir.xz, float2(12.9898, 78.233))) * 43758.5453);

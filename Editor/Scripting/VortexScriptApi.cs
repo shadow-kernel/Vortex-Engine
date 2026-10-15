@@ -2167,10 +2167,26 @@ namespace Vortex
         /// <summary>Global ambient strength — the same as <see cref="Lighting.SetAmbient"/>, here for symmetry.</summary>
         public static void SetAmbient(float strength) => Lighting.SetAmbient(strength);
 
-        /// <summary>Back to the scene's own Skybox component.</summary>
+        /// <summary>The sun's disc in the sky (#499), at the scene's Directional Light on a gradient and a texture sky alike: it
+        /// sits where the light comes from whatever the picture's rotation, blooms like a lamp, and geometry in front hides it.
+        /// <paramref name="draw"/> switches it on or off (the Skybox's Auto draws it on gradients and 8-bit pictures, not on .hdr
+        /// pictures, which carry their own sun); <paramref name="sizeDeg"/> is its angular diameter (the real sun: 0.53°),
+        /// <paramref name="intensity"/> its brightness (below ~0.1 it keeps the light's colour), <paramref name="glow"/> the
+        /// corona and aureole around it. Wins over the Skybox's Sun settings until <see cref="Clear"/> or the end of play.
+        /// <c>Sky.SetSun(true, 1.2f);</c></summary>
+        public static void SetSun(bool draw, float sizeDeg = 0.53f, float intensity = 1f, float glow = 1f)
+        {
+            Editor.Core.Services.SceneRenderService.ScriptSkySun = new Editor.Core.Services.SceneRenderService.SkySunOverride
+                { Draw = draw, SizeDegrees = sizeDeg, Intensity = intensity, Glow = glow };
+            Editor.DllWrapper.VortexAPI.ApplySkySun(draw ? 1 : 2, sizeDeg, intensity, glow);
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
+        }
+
+        /// <summary>Back to the scene's own Skybox component — its picture or gradient and its sun.</summary>
         public static void Clear()
         {
             Editor.Core.Services.SceneRenderService.ScriptSky = null;
+            Editor.Core.Services.SceneRenderService.ScriptSkySun = null;
             Editor.Core.Services.SceneRenderService.RuntimeDirty = true;
         }
     }

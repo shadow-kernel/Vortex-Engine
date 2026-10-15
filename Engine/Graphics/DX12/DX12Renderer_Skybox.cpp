@@ -49,7 +49,11 @@ namespace vortex::graphics::dx12
 				(sky && m_sky_hdr == 2) ? (m_frame_constants.scene_exposure > 0.0f ? m_frame_constants.scene_exposure : 0.5f) : ((sky && m_sky_hdr == 1) ? -1.0f : 0.0f),
 				(float)m_frame_constants.tonemapper);
 			m_skybox_pipeline.set_haze(m_frame_constants.fog_color, m_frame_constants.fog_density, m_frame_constants.light_direction,
-				m_frame_constants.light_color, m_frame_constants.fog_sun_glow);
+				m_frame_constants.light_color, m_frame_constants.fog_sun_glow, m_frame_constants.directional_intensity);
+			// the sun's disc (#499): auto draws it on a gradient and an 8-bit picture, not on a float picture (its own sun is in
+			// it) nor on a solid colour
+			const bool sun_auto = sky ? m_sky_hdr == 0 : m_skybox_mode != SkyboxMode::SolidColor;
+			m_skybox_pipeline.set_sun_disc(m_sky_sun_radius, m_sky_sun_intensity, m_sky_sun_glow, m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && sun_auto));
 			if (!sky) sky = reg.get_texture(reg.default_white_texture());
 			if (auto* heap = reg.srv_heap()) { ID3D12DescriptorHeap* heaps[] = { heap }; m_command_list->SetDescriptorHeaps(1, heaps); }
 			if (sky && sky->srv_gpu().ptr != 0) m_command_list->SetGraphicsRootDescriptorTable(1, sky->srv_gpu());

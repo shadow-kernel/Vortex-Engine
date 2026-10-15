@@ -15,6 +15,20 @@ namespace Editor.ECS.Components.Rendering
     }
 
     /// <summary>
+    /// Whether the sky draws the sun's disc at the scene's Directional Light (#499).
+    /// </summary>
+    public enum SkySunDisc
+    {
+        /// <summary>A gradient sky and an 8-bit picture (.png / .jpg) draw it; a float picture (.hdr) carries its own sun and
+        /// does not, nor does a solid colour.</summary>
+        Auto,
+        /// <summary>Always — e.g. on an .hdr without a sun in it (an overcast or night panorama).</summary>
+        On,
+        /// <summary>Never.</summary>
+        Off
+    }
+
+    /// <summary>
     /// Skybox-Komponente für Umgebungsbeleuchtung und Hintergrund.
     /// Simuliert Image-Based Lighting (IBL) durch Ambient/Environment Light.
     /// </summary>
@@ -212,6 +226,60 @@ namespace Editor.ECS.Components.Rendering
         {
             get => _skyboxMeshPath;
             set => SetProperty(ref _skyboxMeshPath, value, nameof(SkyboxMeshPath));
+        }
+
+        private SkySunDisc _sunDisc = SkySunDisc.Auto;
+        private float _sunSize = 0.53f;
+        private float _sunIntensity = 1f;
+        private float _sunGlow = 1f;
+
+        /// <summary>
+        /// The sun's disc at the scene's Directional Light (#499): Auto draws it on a gradient and an 8-bit picture, not on an
+        /// .hdr (which carries its own sun) nor on a solid colour. It sits where the light comes from, whatever the picture's
+        /// rotation, and blooms like a lamp; geometry in front of it hides it.
+        /// </summary>
+        [DataMember(Name = "sunDisc", Order = 70)]
+        public SkySunDisc SunDisc
+        {
+            get => _sunDisc;
+            set => SetProperty(ref _sunDisc, value, nameof(SunDisc));
+        }
+
+        /// <summary>
+        /// The disc's angular diameter in degrees (the real sun: 0.53; games often use 1–2 for a readable sun).
+        /// </summary>
+        [DataMember(Name = "sunSize", Order = 71)]
+        public float SunSize
+        {
+            get => _sunSize;
+            set => SetProperty(ref _sunSize, float.IsNaN(value) ? 0.53f : (value < 0.05f ? 0.05f : (value > 20f ? 20f : value)), nameof(SunSize));
+        }
+
+        /// <summary>
+        /// The disc's brightness (1 = a white-hot disc that blooms; below ~0.1 it keeps the light's colour).
+        /// </summary>
+        [DataMember(Name = "sunIntensity", Order = 72)]
+        public float SunIntensity
+        {
+            get => _sunIntensity;
+            set => SetProperty(ref _sunIntensity, float.IsNaN(value) || value < 0f ? 0f : (value > 100f ? 100f : value), nameof(SunIntensity));
+        }
+
+        /// <summary>
+        /// The glow around the disc: the corona hugging it and the wide aureole (0 = a bare disc).
+        /// </summary>
+        [DataMember(Name = "sunGlow", Order = 73)]
+        public float SunGlow
+        {
+            get => _sunGlow;
+            set => SetProperty(ref _sunGlow, float.IsNaN(value) || value < 0f ? 0f : (value > 10f ? 10f : value), nameof(SunGlow));
+        }
+
+        [OnDeserializing]
+        private void OnDeserializingSkybox(StreamingContext context)
+        {
+            // DataContract skips constructors: a sky saved before #499 gets the defaults
+            _sunDisc = SkySunDisc.Auto; _sunSize = 0.53f; _sunIntensity = 1f; _sunGlow = 1f;
         }
 
         /// <summary>

@@ -23,6 +23,9 @@ namespace VortexEditor.Claude.Tools
         [Description("Sets the scene's sky: a gradient (top / horizon / bottom colours) or an equirectangular HDR / image texture, its exposure and ambient " +
                      "strength. With a texture the gradient colours stay the ENVIRONMENT (what water and glossy surfaces reflect) — give them the picture's " +
                      "zenith / horizon / ground colours. align_sun turns the scene's directional light to the brightest pixel of the HDR (its sun). " +
+                     "sun_disc draws the sun's disc where the directional light comes from (\"auto\": on a gradient and a .png / .jpg, off on an .hdr " +
+                     "that carries its own sun; \"on\" / \"off\"), sun_size is its angular diameter in degrees (the real sun 0.53), " +
+                     "sun_disc_intensity its brightness, sun_glow the glow around it. " +
                      "Creates a Sky entity with a Skybox component when the scene has none. Colours are linear rgb 0..1. One undo step.")]
         public static object SetSky(
             [Description("\"gradient\", \"texture\" or \"solid\" (default: keep)")] string type = null,
@@ -34,12 +37,27 @@ namespace VortexEditor.Claude.Tools
             [Description("Ground / bottom colour [r, g, b]")] float[] bottom_color = null,
             [Description("Turn the directional light to the HDR texture's sun (default false)")] bool align_sun = false,
             [Description("Sun intensity when aligning (default: keep)")] float sun_intensity = -1f,
+            [Description("The sun's disc in the sky: \"auto\", \"on\" or \"off\" (default: keep)")] string sun_disc = null,
+            [Description("The disc's angular diameter in degrees, 0.05–20 (default: keep; the real sun 0.53)")] float sun_size = -1f,
+            [Description("The disc's brightness, 0–100 (default: keep; 1 blooms white, below ~0.1 keeps the light's colour)")] float sun_disc_intensity = -1f,
+            [Description("The glow around the disc, 0–10 (default: keep; 0 = a bare disc)")] float sun_glow = -1f,
             [Description("Only report")] bool dry_run = false)
         {
             var scene = Scene();
             Skybox sky = null; GameEntity skyEntity = null;
             foreach (var e in SceneModel.All(scene)) { var s = e.GetComponent<Skybox>(); if (s != null) { sky = s; skyEntity = e; break; } }
-            if (dry_run) return new { sky = sky != null ? skyEntity.Name : "(would create)", type, texture, exposure, ambient, align_sun };
+            SkySunDisc? disc = null;
+            if (!string.IsNullOrEmpty(sun_disc))
+            {
+                switch (sun_disc.ToLowerInvariant())
+                {
+                    case "auto": disc = SkySunDisc.Auto; break;
+                    case "on": case "true": disc = SkySunDisc.On; break;
+                    case "off": case "false": disc = SkySunDisc.Off; break;
+                    default: throw new ToolError("sun_disc must be auto, on or off.");
+                }
+            }
+            if (dry_run) return new { sky = sky != null ? skyEntity.Name : "(would create)", type, texture, exposure, ambient, align_sun, sun_disc = disc?.ToString() };
             if (sky == null)
             {
                 skyEntity = new GameEntity(scene, "Sky");
@@ -69,6 +87,10 @@ namespace VortexEditor.Claude.Tools
             if (top_color != null && top_color.Length >= 3) { sky.TopColorR = top_color[0]; sky.TopColorG = top_color[1]; sky.TopColorB = top_color[2]; }
             if (horizon_color != null && horizon_color.Length >= 3) { sky.HorizonColorR = horizon_color[0]; sky.HorizonColorG = horizon_color[1]; sky.HorizonColorB = horizon_color[2]; }
             if (bottom_color != null && bottom_color.Length >= 3) { sky.BottomColorR = bottom_color[0]; sky.BottomColorG = bottom_color[1]; sky.BottomColorB = bottom_color[2]; }
+            if (disc.HasValue) sky.SunDisc = disc.Value;
+            if (sun_size >= 0f) sky.SunSize = sun_size;
+            if (sun_disc_intensity >= 0f) sky.SunIntensity = sun_disc_intensity;
+            if (sun_glow >= 0f) sky.SunGlow = sun_glow;
             sky.IsEnabled = true;
 
             object sun = null;
@@ -96,7 +118,8 @@ namespace VortexEditor.Claude.Tools
             ToolContext.UndoLabel = "sky";
             Editor.Core.Viewport.EditorViewportSession.RequestResubmit();
             return new { entity = skyEntity.Name, type = sky.SkyboxType.ToString(), texture = sky.TexturePath, exposure = sky.Exposure, ambient = sky.AmbientIntensity,
-                         top = new[] { sky.TopColorR, sky.TopColorG, sky.TopColorB }, horizon = new[] { sky.HorizonColorR, sky.HorizonColorG, sky.HorizonColorB }, bottom = new[] { sky.BottomColorR, sky.BottomColorG, sky.BottomColorB }, sun };
+                         top = new[] { sky.TopColorR, sky.TopColorG, sky.TopColorB }, horizon = new[] { sky.HorizonColorR, sky.HorizonColorG, sky.HorizonColorB }, bottom = new[] { sky.BottomColorR, sky.BottomColorG, sky.BottomColorB },
+                         sun_disc = new { mode = sky.SunDisc.ToString().ToLowerInvariant(), size = sky.SunSize, intensity = sky.SunIntensity, glow = sky.SunGlow }, sun };
         }
 
         [McpServerTool(Name = "set_environment", Idempotent = true)]
@@ -290,7 +313,8 @@ namespace VortexEditor.Claude.Tools
             foreach (var e in SceneModel.All(scene))
             {
                 var s = e.GetComponent<Skybox>();
-                if (s != null && sky == null) sky = new { entity = e.Name, type = s.SkyboxType.ToString(), texture = s.TexturePath, exposure = s.Exposure, ambient = s.AmbientIntensity };
+                if (s != null && sky == null) sky = new { entity = e.Name, type = s.SkyboxType.ToString(), texture = s.TexturePath, exposure = s.Exposure, ambient = s.AmbientIntensity,
+                                                          sun_disc = new { mode = s.SunDisc.ToString().ToLowerInvariant(), size = s.SunSize, intensity = s.SunIntensity, glow = s.SunGlow } };
                 var l = e.GetComponent<Light>();
                 if (l != null && l.LightType == LightType.Directional && sun == null)
                     sun = new { entity = e.Name, rotation = e.Transform != null ? new[] { e.Transform.LocalRotation.X, e.Transform.LocalRotation.Y, e.Transform.LocalRotation.Z } : null, intensity = l.Intensity, color = new[] { l.ColorR, l.ColorG, l.ColorB }, shadows = l.ShadowType.ToString(), shadow_distance = l.ShadowDistance };

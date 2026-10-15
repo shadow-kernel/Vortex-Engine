@@ -4,6 +4,8 @@
 #include <d3d12.h>
 #include <wrl/client.h>
 #include <DirectXMath.h>
+#include <cmath>
+#include <cstddef>
 
 namespace vortex::graphics::dx12
 {
@@ -39,12 +41,21 @@ namespace vortex::graphics::dx12
 			m_constants.params = { mode, exposure, rotation_radians, tonemap_exposure };
 		}
 		
-		// Aerial perspective for the HDR sky path: the scene fog and the sun's glow (texture mode only reads them).
-		void set_haze(const DirectX::XMFLOAT3& fog_color, float density, const DirectX::XMFLOAT3& light_dir, const DirectX::XMFLOAT3& light_color, float glow)
+		// Aerial perspective for the HDR sky path: the scene fog and the sun's glow (texture mode only reads them). The light's
+		// direction, colour and intensity also place and tint the sun's disc (#499) on both sky paths.
+		void set_haze(const DirectX::XMFLOAT3& fog_color, float density, const DirectX::XMFLOAT3& light_dir, const DirectX::XMFLOAT3& light_color, float glow, float light_intensity = 0.0f)
 		{
 			m_constants.haze = { fog_color.x, fog_color.y, fog_color.z, density };
-			m_constants.glow_dir = { light_dir.x, light_dir.y, light_dir.z, glow };
-			m_constants.glow_color = { light_color.x, light_color.y, light_color.z, 0.0f };
+			// normalised here, once, instead of per sky pixel (the sun's disc and the haze glow read it)
+			const float n = std::sqrt(light_dir.x * light_dir.x + light_dir.y * light_dir.y + light_dir.z * light_dir.z);
+			m_constants.glow_dir = n > 1e-6f ? DirectX::XMFLOAT4{ light_dir.x / n, light_dir.y / n, light_dir.z / n, glow } : DirectX::XMFLOAT4{ 0.0f, -1.0f, 0.0f, glow };
+			m_constants.glow_color = { light_color.x, light_color.y, light_color.z, light_intensity };
+		}
+
+		// The sun's disc (#499): its angular radius (radians), intensity, glow, and whether this frame's sky draws it.
+		void set_sun_disc(float radius, float intensity, float glow, bool drawn)
+		{
+			m_constants.sun_disc = { radius, intensity, glow, drawn ? 1.0f : 0.0f };
 		}
 
 		// Get constant buffer data
@@ -80,8 +91,10 @@ namespace vortex::graphics::dx12
 			// aerial perspective on the HDR sky (@176): the scene fog's colour + density, the sun's direction, colour and glow
 			DirectX::XMFLOAT4 haze;        // rgb fog colour, w density (0 = off)
 			DirectX::XMFLOAT4 glow_dir;    // xyz the direction the light travels, w the fog's sun glow
-			DirectX::XMFLOAT4 glow_color;  // rgb the light's colour
+			DirectX::XMFLOAT4 glow_color;  // rgb the light's colour, w its intensity (0 = no sun)
+			DirectX::XMFLOAT4 sun_disc;    // @224 the sun's disc (#499): angular radius (radians), intensity, glow, 1 = drawn
 		};
+		static_assert(offsetof(SkyboxConstants, sun_disc) == 224, "SkyboxConstants must byte-match skybox.hlsl");
 
 		SkyboxConstants m_constants{};
 	};

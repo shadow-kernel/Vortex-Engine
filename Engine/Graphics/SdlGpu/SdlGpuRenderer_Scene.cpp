@@ -857,13 +857,23 @@ namespace vortex::graphics::sdlgpu
 		c.sun_direction = m_sun_direction; c.sun_intensity = m_sun_intensity; c.sun_color = m_sun_color;
 		c.tonemapper = (float)m_frame_constants.tonemapper;
 		c.haze = { m_frame_constants.fog_color.x, m_frame_constants.fog_color.y, m_frame_constants.fog_color.z, m_frame_constants.fog_density };
-		c.glow_dir = { m_frame_constants.light_direction.x, m_frame_constants.light_direction.y, m_frame_constants.light_direction.z, m_frame_constants.fog_sun_glow };
-		c.glow_color = { m_frame_constants.light_color.x, m_frame_constants.light_color.y, m_frame_constants.light_color.z, 0.0f };
+		{
+			// normalised here, once, instead of per sky pixel (the sun's disc and the haze glow read it)
+			const DirectX::XMFLOAT3& ld = m_frame_constants.light_direction;
+			const float n = sqrtf(ld.x * ld.x + ld.y * ld.y + ld.z * ld.z);
+			c.glow_dir = n > 1e-6f ? DirectX::XMFLOAT4{ ld.x / n, ld.y / n, ld.z / n, m_frame_constants.fog_sun_glow } : DirectX::XMFLOAT4{ 0.0f, -1.0f, 0.0f, m_frame_constants.fog_sun_glow };
+		}
+		c.glow_color = { m_frame_constants.light_color.x, m_frame_constants.light_color.y, m_frame_constants.light_color.z, m_frame_constants.directional_intensity };
 		// the equirect map (#326) — or the white texture, so sampler slot 0 is always bound
 		auto& reg = ResourceRegistry::instance();
 		Texture* sky = (m_skybox_mode == SkyboxMode::Texture && m_sky_texture != id::invalid_id) ? reg.get_texture(m_sky_texture) : nullptr;
 		c.params = { sky ? 1.0f : 0.0f, m_sky_exposure, m_sky_rotation,
 			(sky && m_sky_hdr == 2) ? (m_frame_constants.scene_exposure > 0.0f ? m_frame_constants.scene_exposure : 0.5f) : ((sky && m_sky_hdr == 1) ? -1.0f : 0.0f) };   // w > 0: HDR sky tonemapped, w < 0: HDR sky the classic way
+		// the sun's disc (#499): auto draws it on a gradient and an 8-bit picture, not on a float picture (its own sun is in it)
+		// nor on a solid colour
+		const bool sun_auto = sky ? m_sky_hdr == 0 : m_skybox_mode != SkyboxMode::SolidColor;
+		const bool sun_drawn = m_sky_sun_mode == 1 || (m_sky_sun_mode == 0 && sun_auto);
+		c.sun_disc = { m_sky_sun_radius, m_sky_sun_intensity, m_sky_sun_glow, sun_drawn ? 1.0f : 0.0f };
 		if (!sky) sky = reg.white_texture();
 		SDL_BindGPUGraphicsPipeline(pass, m_pipeline_skybox);
 		SDL_PushGPUVertexUniformData(cmd, 0, &c, sizeof(c));

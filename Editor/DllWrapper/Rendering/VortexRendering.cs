@@ -1302,6 +1302,17 @@ namespace Editor.DllWrapper
             catch (System.EntryPointNotFoundException) { ApplySkyboxTexture(textureId, exposure, rotationDegrees); }
         }
 
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetSkySun")]
+        private static extern void SetSkySunNative(int mode, float sizeDegrees, float intensity, float glow);
+
+        /// <summary>The sun's disc in the sky (#499) at the scene's directional light: mode 0 = auto (a gradient sky and an 8-bit
+        /// picture draw it, a float .hdr picture — it carries its own sun — and a solid colour do not), 1 = always, 2 = never;
+        /// the angular diameter in degrees, the disc's intensity and its glow.</summary>
+        public static void ApplySkySun(int mode, float sizeDegrees, float intensity, float glow)
+        {
+            try { SetSkySunNative(mode, sizeDegrees, intensity, glow); } catch { }
+        }
+
         private static bool _skyboxEnabled = false;
         public static bool IsSkyboxOn => _skyboxEnabled;
 

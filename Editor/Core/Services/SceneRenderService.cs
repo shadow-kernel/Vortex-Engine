@@ -2500,6 +2500,25 @@ namespace Editor.Core.Services
         }
         public static SkyOverride ScriptSky;
 
+        /// <summary>The sun's disc a script set with Vortex.Sky.SetSun (#499) — wins over the Skybox component's Sun settings until
+        /// Sky.Clear or the end of play.</summary>
+        public sealed class SkySunOverride
+        {
+            public bool Draw = true;
+            public float SizeDegrees = 0.53f, Intensity = 1f, Glow = 1f;
+        }
+        public static SkySunOverride ScriptSkySun;
+
+        /// <summary>The sun's disc (#499) the renderer gets: a script's (on / off), else the Skybox component's (auto / on / off),
+        /// else auto with the real sun's 0.53°.</summary>
+        internal static void PushSkySun(Skybox skybox)
+        {
+            var o = ScriptSkySun;
+            if (o != null) VortexAPI.ApplySkySun(o.Draw ? 1 : 2, o.SizeDegrees, o.Intensity, o.Glow);
+            else if (skybox != null) VortexAPI.ApplySkySun((int)skybox.SunDisc, skybox.SunSize, skybox.SunIntensity, skybox.SunGlow);
+            else VortexAPI.ApplySkySun(0, 0.53f, 1f, 1f);
+        }
+
         /// <summary>The sun a game script set with Vortex.Lighting.SetDirectional (#466) — wins over the scene's Directional Light
         /// (and over the default sun) until Lighting.ClearDirectional or the end of play, so the next scene-light submit no longer
         /// resets it. Shadow values the script left out (null) are the scene's Directional Light's, else the classic defaults.</summary>
@@ -2592,7 +2611,7 @@ namespace Editor.Core.Services
             // the ambient right now (horror scenes crush it to ~0.01; the default would flood the dark).
             if (!_hasSkybox)
             {
-                if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); }   // a scripted sky needs no Skybox component (#349)
+                if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); PushSkySun(null); }   // a scripted sky needs no Skybox component (#349)
                 else { VortexAPI.EnableSkybox(false); VortexAPI.SetSkyLight(null, false); PushEnvironmentMap(null); SkyHaze.SetHorizon(false, 0f, 0f, 0f); }
                 _lastAmbientStrength = ScriptAmbientOverride ?? 0.35f;
                 VortexAPI.SetAmbientLightStrength(_lastAmbientStrength);  // 0.35 matches the engine header default
@@ -2779,6 +2798,8 @@ namespace Editor.Core.Services
                 // Enable skybox rendering
                 VortexAPI.EnableSkybox(true);
                 
+                // the sun's disc at the scene's light (#499): the component's settings, or a script's
+                PushSkySun(skybox);
                 // a script's sky (#349) wins over the component while it is set
                 if (ScriptSky != null) ApplyScriptSky(ScriptSky);
                 else switch (skybox.SkyboxType)
