@@ -177,6 +177,40 @@ namespace VortexEditor.Shell
             return ReadBmp(path, fx, fy);
         }
 
+        /// <summary>Where pixels of a colour are in a captured frame (<paramref name="file"/> in the capture folder, as
+        /// <see cref="Sample"/> wrote it): how many (every 2nd pixel of every 2nd row), their centre in 0..1, and the frame's
+        /// size — a check's diagnostics when the colour is not at the spot it expected (drawn elsewhere, or not at all).
+        /// <paramref name="x0"/>..<paramref name="y1"/> (0..1) limit the search, e.g. away from the play view's overlay text.</summary>
+        internal static (int count, double fx, double fy, int w, int h) Find(string file, Func<(int r, int g, int b), bool> match,
+            double x0 = 0, double y0 = 0, double x1 = 1, double y1 = 1)
+        {
+            string dir = SmokeRegistry.CaptureDir;
+            if (string.IsNullOrEmpty(dir)) dir = Path.Combine(Path.GetTempPath(), "vortex-smoke-capture");
+            try
+            {
+                var d = File.ReadAllBytes(Path.Combine(dir, file));
+                if (d.Length < 54 || d[0] != (byte)'B' || d[1] != (byte)'M') return (0, -1, -1, 0, 0);
+                int off = BitConverter.ToInt32(d, 10), w = BitConverter.ToInt32(d, 18), h = BitConverter.ToInt32(d, 22);
+                int bytes = BitConverter.ToInt16(d, 28) / 8;
+                bool bottomUp = h > 0; h = Math.Abs(h);
+                if (bytes < 3) return (0, -1, -1, w, h);
+                int stride = ((w * bytes + 3) / 4) * 4;
+                long sx = 0, sy = 0; int n = 0;
+                int ya = Math.Max(0, (int)(h * y0)), yb = Math.Min(h, (int)Math.Ceiling(h * y1));
+                int xa = Math.Max(0, (int)(w * x0)), xb = Math.Min(w, (int)Math.Ceiling(w * x1));
+                for (int y = ya; y < yb; y += 2)
+                    for (int x = xa; x < xb; x += 2)
+                    {
+                        int i = off + (bottomUp ? h - 1 - y : y) * stride + x * bytes;
+                        if (i + 2 >= d.Length) continue;
+                        if (!match((d[i + 2], d[i + 1], d[i]))) continue;
+                        sx += x; sy += y; n++;
+                    }
+                return n == 0 ? (0, -1, -1, w, h) : (n, (double)sx / n / w, (double)sy / n / h, w, h);
+            }
+            catch { return (0, -1, -1, 0, 0); }
+        }
+
         private static (int r, int g, int b) ReadBmp(string path, double fx, double fy)
         {
             try

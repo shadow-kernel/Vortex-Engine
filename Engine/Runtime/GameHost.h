@@ -32,8 +32,8 @@ namespace vortex::runtime
         static int  client_width();
         static int  client_height();
         // Device pixels per client unit — how many pixels of the drawn image one unit of client_width()/mouse_x() covers:
-        // 2 on a Retina window (SDL measures the window in points), 1 on Win32 (the client size is the swapchain size).
-        // The managed UI works in client units and converts with it (#454).
+        // 2 on a Retina window (SDL measures the window in points), the window's DPI / 96 on Win32 (the window is per-monitor
+        // DPI aware: 1.5 at 150 %, #462). The managed UI works in client units and converts with it (#454).
         static float pixel_density();
         static bool key_down(int vk);  // virtual-key currently held
 
@@ -64,5 +64,13 @@ namespace vortex::runtime
         // Resize the window so its CLIENT area is exactly w x h (a settings-menu "Resolution" change). No-op while
         // borderless-fullscreen. The WM_SIZE it triggers drives the existing deferred swapchain resize.
         static void set_resolution(uint32_t w, uint32_t h);
+
+        // The display modes of the game window's display — the main display without a window (the editor) — for an options
+        // menu (#462): width and height in PIXELS, the refresh rate in Hz and the pixel density (pixels per point: 2 for a
+        // Retina mode, 1 on Win32). Fills up to max entries and returns how many modes there are (possibly more than max;
+        // 0 when the video subsystem is not up).
+        static int display_modes(int* widths, int* heights, float* refresh_hz, float* densities, int max);
+        // That display's current (desktop) mode in pixels. False when it cannot be read.
+        static bool current_display_mode(int& width, int& height, float& refresh_hz, float& density);
     };
 }

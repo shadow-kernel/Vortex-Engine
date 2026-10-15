@@ -116,33 +116,276 @@ namespace Editor.Scripting
         }
 
         // ---- entity queries (#39) ----
+        // #361: Scene.Find / FindByTag answer from an index instead of walking the whole scene (with an enumerator per child list)
+        // on every call: name -> its entities and tag -> its entities, each list in hierarchy order (the walk's order: Find still
+        // returns the first). It is built at the session's first query and kept up to date entry by entry — a rename or retag
+        // moves that entity, Scene.Instantiate adds the spawn (last in hierarchy order), Scene.Destroy takes the subtree out.
+        // Any other change of the hierarchy (the editor, a tool) leaves it stale: the queries then walk the scene as before the
+        // index (without its allocations), and the time the walks take is added up from the moment it went stale — further
+        // changes and spawns do not reset it — until it reaches what the last build took; then it is rebuilt (rent-or-buy: the
+        // walks never cost more than about one rebuild per rebuild). A hierarchy changing before every query pays at most about
+        // twice its walks instead of a rebuild per change; one that settles, or keeps spawning through Scene.Instantiate (which
+        // the rebuilt index follows), gets its index back after a bounded number of walks, whatever the scene's size.
+
+        /// <summary>Renames / retags remembered between two queries; beyond that the index goes stale (a rebuild reads every name).</summary>
+        internal const int MaxPendingRenames = 256;
+
+        private readonly Dictionary<string, List<GameEntity>> _byName = new Dictionary<string, List<GameEntity>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<GameEntity>> _byTag = new Dictionary<string, List<GameEntity>>(StringComparer.Ordinal);
+        private readonly Dictionary<GameEntity, (int Order, string Name, string Tag)> _indexed = new Dictionary<GameEntity, (int, string, string)>(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<GameEntity> _renamed = new HashSet<GameEntity>(ReferenceEqualityComparer.Instance);   // since the last query; locked (the editor renames on its thread)
+        private bool _renamesLost;   // more renames than remembered (under the _renamed lock): stale until the rebuild
+        private readonly List<GameEntity> _walkHits = new List<GameEntity>();
+        private Scene _indexScene;
+        private int _indexHierarchy = -1, _nextOrder;
+        private long _buildTicks, _staleWalkTicks;   // Stopwatch ticks: the last (re)build; the walks since the index went stale
+        private bool _indexWatching;
+
+        /// <summary>How often the name / tag index was built from scratch (the tests count with it).</summary>
+        internal int IndexBuilds { get; private set; }
+        /// <summary>Queries answered by walking the scene while the index was stale (the tests count with it).</summary>
+        internal int IndexWalks { get; private set; }
+        /// <summary>Names and tags the index keeps lists for (the tests check they do not pile up over a session).</summary>
+        internal int IndexKeys => _byName.Count + _byTag.Count;
+
+        private void OnEntityNamingChanged(GameEntity e)
+        {
+            lock (_renamed)
+            {
+                if (_renamesLost) return;
+                if (_renamed.Count < MaxPendingRenames) _renamed.Add(e);
+                else { _renamed.Clear(); _renamesLost = true; }   // too many to move one by one: the rebuild reads them all
+            }
+        }
+
+        /// <summary>Is the index the running scene as it is at hierarchy version <paramref name="hierarchy"/> — no change it did
+        /// not follow, no renames it lost?</summary>
+        private bool IndexCurrent(int hierarchy)
+        {
+            if (!ReferenceEquals(_indexScene, _currentScene) || _indexHierarchy != hierarchy) return false;
+            bool lost;
+            lock (_renamed) lost = _renamesLost;
+            if (lost) _indexHierarchy = -1;   // stale from here on, until the rebuild
+            return !lost;
+        }
+
+        /// <summary>Ready the index for a query. True: answer from it (the renames since the last query applied). False: walk the
+        /// scene for this one (and time it, <see cref="Walked"/>) — the index is stale and its walks have not yet cost a rebuild
+        /// (see above). The session's first query builds it.</summary>
+        private bool IndexReady()
+        {
+            if (!_indexWatching) { GameEntity.NamingChanged += OnEntityNamingChanged; _indexWatching = true; }
+            int h = GameEntity.HierarchyVersion;
+            if (IndexCurrent(h)) { ApplyPendingRenames(); return true; }
+            if (ReferenceEquals(_indexScene, _currentScene) && _staleWalkTicks < _buildTicks) return false;
+            RebuildIndex(h);
+            return true;
+        }
+
+        /// <summary>A walk for a stale index ended (it began at Stopwatch timestamp <paramref name="started"/>): its time counts
+        /// towards the next rebuild.</summary>
+        private void Walked(long started)
+        {
+            _staleWalkTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
+            IndexWalks++;
+        }
+
+        private void RebuildIndex(int hierarchy)
+        {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var scene = _currentScene;
+            lock (_renamed) { _renamed.Clear(); _renamesLost = false; }   // a rename during the walk below is pending again
+            foreach (var list in _byName.Values) list.Clear();   // the lists are reused: rebuilding the same names allocates nothing
+            foreach (var list in _byTag.Values) list.Clear();
+            _indexed.Clear();
+            _nextOrder = 0;
+            if (scene?.Entities != null)
+                for (int i = 0; i < scene.Entities.Count; i++) IndexRecursive(scene.Entities[i]);
+            DropEmpty(_byName); DropEmpty(_byTag);   // names nobody carries any more do not pile up over a session
+            _indexScene = scene; _indexHierarchy = hierarchy;
+            _buildTicks = Math.Max(1, System.Diagnostics.Stopwatch.GetTimestamp() - started);
+            _staleWalkTicks = 0;
+            IndexBuilds++;
+        }
+
+        private static void DropEmpty(Dictionary<string, List<GameEntity>> map)
+        {
+            foreach (var kv in map) if (kv.Value.Count == 0) map.Remove(kv.Key);   // removing while enumerating: allowed since .NET Core 3
+        }
+
+        private void IndexRecursive(GameEntity e)
+        {
+            if (e == null) return;
+            string name = e.Name, tag = e.Tag;   // read once: a rename on the editor's thread meanwhile is pending, not half-applied
+            if (!_indexed.TryAdd(e, (_nextOrder, name, tag))) return;
+            _nextOrder++;
+            if (name != null) ListFor(_byName, name).Add(e);   // visited in hierarchy order: the lists stay sorted
+            if (tag != null) ListFor(_byTag, tag).Add(e);
+            var children = e.Children;
+            for (int i = 0; i < children.Count; i++) IndexRecursive(children[i]);
+        }
+
+        private static List<GameEntity> ListFor(Dictionary<string, List<GameEntity>> map, string key)
+        {
+            if (!map.TryGetValue(key, out var list)) map[key] = list = new List<GameEntity>();
+            return list;
+        }
+
+        /// <summary>A renamed / retagged entity moves to its new lists, at its place in hierarchy order.</summary>
+        private void Reindex(GameEntity e)
+        {
+            if (e == null || !_indexed.TryGetValue(e, out var rec)) return;   // not in the scene's index: nothing to move
+            string name = e.Name, tag = e.Tag;
+            if (rec.Name != name)
+            {
+                RemoveFrom(_byName, rec.Name, e, rec.Order);
+                if (name != null) InsertSorted(ListFor(_byName, name), e, rec.Order);
+            }
+            if (rec.Tag != tag)
+            {
+                RemoveFrom(_byTag, rec.Tag, e, rec.Order);
+                if (tag != null) InsertSorted(ListFor(_byTag, tag), e, rec.Order);
+            }
+            _indexed[e] = (rec.Order, name, tag);
+        }
+
+        private int OrderOf(GameEntity e) => _indexed.TryGetValue(e, out var r) ? r.Order : int.MaxValue;
+
+        private int SortedIndex(List<GameEntity> list, int order)
+        {
+            int lo = 0, hi = list.Count;
+            while (lo < hi) { int mid = (lo + hi) >> 1; if (OrderOf(list[mid]) < order) lo = mid + 1; else hi = mid; }
+            return lo;
+        }
+
+        private void InsertSorted(List<GameEntity> list, GameEntity e, int order) => list.Insert(SortedIndex(list, order), e);
+
+        /// <summary>Take <paramref name="e"/> out of <paramref name="key"/>'s list, and the key out of the map once nobody has it.</summary>
+        private void RemoveFrom(Dictionary<string, List<GameEntity>> map, string key, GameEntity e, int order)
+        {
+            if (key == null || !map.TryGetValue(key, out var list)) return;
+            int i = SortedIndex(list, order);
+            if (i < list.Count && ReferenceEquals(list[i], e)) list.RemoveAt(i); else list.Remove(e);
+            if (list.Count == 0) map.Remove(key);
+        }
+
+        /// <summary>Scene.Instantiate put a subtree at the end of the scene (#361): it joins the index after everything else, when
+        /// the index was current right before the spawn (<paramref name="hierarchyBefore"/>); otherwise it stays stale.</summary>
+        private void IndexSpawned(GameEntity root, int hierarchyBefore)
+        {
+            if (!IndexCurrent(hierarchyBefore)) return;
+            ApplyPendingRenames();
+            IndexRecursive(root);
+            _indexHierarchy = GameEntity.HierarchyVersion;
+        }
+
+        /// <summary>Scene.Destroy took a subtree out of the scene (#361): its entries go, when the index was current right before.</summary>
+        private void UnindexDestroyed(GameEntity root, int hierarchyBefore)
+        {
+            if (!IndexCurrent(hierarchyBefore)) return;
+            ApplyPendingRenames();
+            void Walk(GameEntity x)
+            {
+                if (x == null || !_indexed.TryGetValue(x, out var rec)) return;
+                RemoveFrom(_byName, rec.Name, x, rec.Order);
+                RemoveFrom(_byTag, rec.Tag, x, rec.Order);
+                _indexed.Remove(x);
+                var children = x.Children;
+                for (int i = 0; i < children.Count; i++) Walk(children[i]);
+            }
+            Walk(root);
+            _indexHierarchy = GameEntity.HierarchyVersion;
+        }
+
+        private void ApplyPendingRenames()
+        {
+            GameEntity[] changed = null;
+            lock (_renamed) { if (_renamed.Count > 0) { changed = new GameEntity[_renamed.Count]; _renamed.CopyTo(changed); _renamed.Clear(); } }
+            if (changed != null) foreach (var e in changed) Reindex(e);
+        }
+
+        private void ClearIndex()
+        {
+            if (_indexWatching) { GameEntity.NamingChanged -= OnEntityNamingChanged; _indexWatching = false; }
+            _byName.Clear(); _byTag.Clear(); _indexed.Clear(); _walkHits.Clear();
+            lock (_renamed) { _renamed.Clear(); _renamesLost = false; }
+            _indexScene = null; _indexHierarchy = -1; _nextOrder = 0; _buildTicks = _staleWalkTicks = 0;
+        }
+
+        // the walk for a stale index: hierarchy order, as the queries walked before the index — by index, no enumerators
+
+        private GameEntity WalkFind(string name)
+        {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            GameEntity hit = null;
+            var roots = _currentScene.Entities;
+            for (int i = 0; i < roots.Count && hit == null; i++) hit = WalkFind(roots[i], name);
+            Walked(started);
+            return hit;
+        }
+
+        private static GameEntity WalkFind(GameEntity e, string name)
+        {
+            if (e == null) return null;
+            if (e.Name == name) return e;
+            var children = e.Children;
+            for (int i = 0; i < children.Count; i++) { var hit = WalkFind(children[i], name); if (hit != null) return hit; }
+            return null;
+        }
+
+        private List<GameEntity> WalkTag(string tag)
+        {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            _walkHits.Clear();
+            var roots = _currentScene.Entities;
+            for (int i = 0; i < roots.Count; i++) WalkTag(roots[i], tag, _walkHits);
+            Walked(started);
+            return _walkHits;
+        }
+
+        private static void WalkTag(GameEntity e, string tag, List<GameEntity> hits)
+        {
+            if (e == null) return;
+            if (e.Tag == tag) hits.Add(e);
+            var children = e.Children;
+            for (int i = 0; i < children.Count; i++) WalkTag(children[i], tag, hits);
+        }
+
+        /// <summary>The entities tagged <paramref name="tag"/> in hierarchy order: the index's list, or the walk's (stale index).</summary>
+        private List<GameEntity> TaggedEntities(string tag)
+        {
+            if (!IndexReady()) return WalkTag(tag);
+            return _byTag.TryGetValue(tag, out var list) ? list : null;
+        }
 
         internal long FindEntityHandle(string name)
         {
             if (string.IsNullOrEmpty(name) || _currentScene?.Entities == null) return 0;
-            GameEntity found = null;
-            void Walk(GameEntity e)
-            {
-                if (found != null || e == null) return;
-                if (e.Name == name) { found = e; return; }
-                if (e.Children != null) foreach (var c in e.Children) Walk(c);
-            }
-            foreach (var e in _currentScene.Entities) { Walk(e); if (found != null) break; }
-            return found != null ? HandleForEntity(found) : 0;
+            if (!IndexReady()) { var hit = WalkFind(name); return hit != null ? HandleForEntity(hit) : 0; }
+            return _byName.TryGetValue(name, out var list) && list.Count > 0 ? HandleForEntity(list[0]) : 0;
         }
 
         internal long[] FindEntityHandlesByTag(string tag)
         {
-            var result = new List<long>();
-            if (string.IsNullOrEmpty(tag) || _currentScene?.Entities == null) return result.ToArray();
-            void Walk(GameEntity e)
-            {
-                if (e == null) return;
-                if (e.Tag == tag) result.Add(HandleForEntity(e));
-                if (e.Children != null) foreach (var c in e.Children) Walk(c);
-            }
-            foreach (var e in _currentScene.Entities) Walk(e);
-            return result.ToArray();
+            if (string.IsNullOrEmpty(tag) || _currentScene?.Entities == null) return Array.Empty<long>();
+            var list = TaggedEntities(tag);
+            var result = list == null || list.Count == 0 ? Array.Empty<long>() : new long[list.Count];
+            for (int i = 0; i < result.Length; i++) result[i] = HandleForEntity(list[i]);
+            _walkHits.Clear();   // no references kept from a walk
+            return result;
+        }
+
+        /// <summary>Scene.FindByTag into the caller's list (#361): cleared, then filled; returns the count. No allocation once the
+        /// list has room.</summary>
+        internal int FindEntityHandlesByTag(string tag, List<long> results)
+        {
+            if (results == null) return 0;
+            results.Clear();
+            if (string.IsNullOrEmpty(tag) || _currentScene?.Entities == null) return 0;
+            var list = TaggedEntities(tag);
+            if (list != null) for (int i = 0; i < list.Count; i++) results.Add(HandleForEntity(list[i]));
+            _walkHits.Clear();
+            return results.Count;
         }
 
         internal long GetParentHandle(long id)
@@ -186,33 +429,167 @@ namespace Editor.Scripting
         {
             var e = FindEntityByHandle(id);
             if (e == null) return false;
+            // an OnEnable / OnDisable of this very switch turning it again, either way (Unity refuses that too, #422)
+            if (_activating.Contains(e)) { WarnReentrantSetActive(e); return false; }
             if (e.IsActive == active) return true;   // no-op guard: a re-add would duplicate collision shapes
-            if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
-            e.IsActive = active;
-            try { e.SyncEngineState(); } catch { }   // under an inactive parent it stays out of the engine
-            // #51: collision + audio follow the active state (previously a documented limitation —
-            // a deactivated door/monster stayed solid and kept emitting).
+            _activating.Add(e);
             try
             {
-                if (active) Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
-                else Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
+                // #422: OnDisable for the subtree's active scripts first — their colliders and bodies are still there. The
+                // entity counts as switched off for the lifecycle from here on: an OnEnable from that pass (a child switched
+                // on, a script's Enabled = true) waits until the entity is switched on again.
+                if (!active && ActiveInHierarchy(e))
+                {
+                    _deactivating.Add(e);
+                    NotifySubtree(e, enable: false);
+                    if (!ReferenceEquals(FindEntityByHandle(id), e) || e.IsActive == active) return true;   // an OnDisable destroyed it
+                }
+                if (!_activeChanged.ContainsKey(e)) _activeChanged[e] = e.IsActive;   // restore on play end
+                if (active && UnderDeactivation(e))
+                {
+                    // switched on from the OnDisable pass of an ancestor that is going off: only its own flag changes now — its
+                    // ancestor takes the subtree out of the world, and it comes back (OnEnable then) with that ancestor
+                    e.SetActiveFlagOnly(true);
+                    return true;
+                }
+                e.IsActive = active;
+                try { e.SyncEngineState(); } catch { }   // under an inactive parent it stays out of the engine
+                // #51: collision + audio follow the active state (previously a documented limitation —
+                // a deactivated door/monster stayed solid and kept emitting).
+                try
+                {
+                    if (active) Editor.Core.Services.Physics.CollisionService.AddEntityShapes(e);
+                    else Editor.Core.Services.Physics.CollisionService.RemoveEntityShapes(e);
+                }
+                catch { }
+                try
+                {
+                    if (active) Editor.Core.Services.Physics.PhysicsService.AddEntity(e);
+                    else Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e);
+                }
+                catch { }
+                if (!active)
+                {
+                    try { StopAudioRecursive(e); } catch { }
+                    // #407: the subtree's characters stop blocking (managed capsule + Jolt character); MoveCharacter after
+                    // re-activation registers them again
+                    try { Editor.Core.Services.Physics.PhysicsService.RemoveCharactersIn(e); } catch { }
+                }
+                Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+                // #422: OnEnable once the colliders, bodies and audio are back — for the scripts whose entity is now active in
+                // the hierarchy (a child switched off on its own stays out)
+                if (active && LiveInHierarchy(e)) NotifySubtree(e, enable: true);
+                return true;
             }
-            catch { }
+            finally { _activating.Remove(e); _deactivating.Remove(e); }
+        }
+
+        // ---- the script lifecycle (#422): OnEnable / Start / OnDisable, each delivered once ----
+
+        private readonly HashSet<GameEntity> _activating = new HashSet<GameEntity>();   // a SetActive in progress
+        private readonly HashSet<GameEntity> _deactivating = new HashSet<GameEntity>();   // a SetActive(false) whose OnDisable pass runs
+        private readonly HashSet<GameEntity> _reentryWarned = new HashSet<GameEntity>();
+        private bool _ending;   // End() runs its OnDisable / OnDestroy passes: nothing comes alive any more
+
+        /// <summary>The entity or an ancestor is being switched off right now — its OnDisable pass runs (#422).</summary>
+        private bool UnderDeactivation(GameEntity e)
+        {
+            if (_deactivating.Count == 0) return false;
+            for (var p = e; p != null; p = p.Parent) if (_deactivating.Contains(p)) return true;
+            return false;
+        }
+
+        /// <summary>Active in the hierarchy as the script lifecycle counts it: the flags say so and nothing above is being switched
+        /// off right now.</summary>
+        private bool LiveInHierarchy(GameEntity e) => ActiveInHierarchy(e) && !UnderDeactivation(e);
+
+        private void WarnReentrantSetActive(GameEntity e)
+        {
+            if (!_reentryWarned.Add(e)) return;
             try
             {
-                if (active) Editor.Core.Services.Physics.PhysicsService.AddEntity(e);
-                else Editor.Core.Services.Physics.PhysicsService.RemoveEntity(e);
+                Editor.Core.Services.ConsoleService.Instance.LogWarning("Scene.SetActive: '" + e.Name + "' is being switched on or off right now — "
+                    + "a SetActive on it from its own OnEnable / OnDisable is ignored. (Shown once per entity.)");
             }
             catch { }
-            if (!active)
-            {
-                try { StopAudioRecursive(e); } catch { }
-                // #407: the subtree's characters stop blocking (managed capsule + Jolt character); MoveCharacter after
-                // re-activation registers them again
-                try { Editor.Core.Services.Physics.PhysicsService.RemoveCharactersIn(e); } catch { }
-            }
-            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+        }
+
+        /// <summary>The entity and every ancestor are active (the play world's rule; the scene's own flag is not consulted).</summary>
+        private static bool ActiveInHierarchy(GameEntity e)
+        {
+            if (e == null) return false;
+            for (var p = e; p != null; p = p.Parent) if (!p.IsActive) return false;
             return true;
+        }
+
+        /// <summary>The scene entity a behaviour runs on — null for a UI action class (EntityId 0) or after its entity left.</summary>
+        private GameEntity EntityOf(Vortex.VortexBehaviour b)
+            => b != null && b.EntityId != 0 && _entitiesById.TryGetValue(b.EntityId, out var e) ? e : null;
+
+        /// <summary>Would the behaviour be active now: live, its Script switched on, its entity active in the hierarchy with no
+        /// ancestor being switched off (a UI action class, which has no entity, always is) — and play is not ending.</summary>
+        private bool ShouldBeEnabled(Vortex.VortexBehaviour b)
+            => !_ending && IsLive(b) && !b.ScriptDisabled && (b.EntityId == 0 || LiveInHierarchy(EntityOf(b)));
+
+        private void CallOnEnable(Vortex.VortexBehaviour b)
+        {
+            if (b.LifecycleEnabled || !ShouldBeEnabled(b)) return;
+            b.LifecycleEnabled = true;   // first: a re-entrant path sees it delivered
+            var prev = _dispatching; _dispatching = b;   // its character moves are its entity's (#406)
+            try { b.OnEnable(); }
+            catch (Exception ex) { LogScriptError("OnEnable", b, ex); }
+            finally { _dispatching = prev; }
+        }
+
+        private void CallOnDisable(Vortex.VortexBehaviour b)
+        {
+            if (b == null || b.Destroyed || !b.LifecycleEnabled) return;
+            b.LifecycleEnabled = false;
+            var prev = _dispatching; _dispatching = b;
+            try { b.OnDisable(); }
+            catch (Exception ex) { LogScriptError("OnDisable", b, ex); }
+            finally { _dispatching = prev; }
+        }
+
+        private void CallStart(Vortex.VortexBehaviour b)
+        {
+            if (_ending || !IsLive(b) || b.Started) return;   // a script made during play's teardown does not start any more
+            b.Started = true;
+            var prev = _dispatching; _dispatching = b;
+            try { b.Start(); }
+            catch (Exception ex) { LogScriptError("Start", b, ex); }
+            finally { _dispatching = prev; }
+        }
+
+        /// <summary>New behaviours come alive: OnEnable for the ones that are active (all of them first), then Start for each —
+        /// the order of play start, a spawn and a script attached while playing (#422). <paramref name="list"/> is a snapshot:
+        /// what a callback spawns is started by its own spawn.</summary>
+        private void EnableAndStart(IReadOnlyList<Vortex.VortexBehaviour> list)
+        {
+            for (int i = 0; i < list.Count && _active; i++) CallOnEnable(list[i]);
+            for (int i = 0; i < list.Count && _active; i++) CallStart(list[i]);
+        }
+
+        /// <summary>OnEnable or OnDisable for the scripts of <paramref name="root"/>'s subtree that are reached through active
+        /// entities (#422) — the ones whose activeInHierarchy follows the root's; a child switched off on its own, and what
+        /// is under it, keeps its state. Each behaviour is asked again right before its call, so one switched off or
+        /// destroyed by an earlier callback of the same pass is skipped.</summary>
+        private void NotifySubtree(GameEntity root, bool enable)
+        {
+            List<Vortex.VortexBehaviour> list = null;
+            void Walk(GameEntity x)
+            {
+                if (x == null || !x.IsActive) return;
+                if (_behavioursByEntity.TryGetValue(x, out var own) && own.Count > 0) (list ??= new List<Vortex.VortexBehaviour>()).AddRange(own);
+                if (x.Children != null) foreach (var c in x.Children) Walk(c);
+            }
+            Walk(root);
+            if (list == null) return;
+            foreach (var b in list)
+            {
+                if (enable) CallOnEnable(b);
+                else CallOnDisable(b);
+            }
         }
 
         private static void StopAudioRecursive(Editor.ECS.GameEntity e)
@@ -221,6 +598,241 @@ namespace Editor.Scripting
             if (src != null) Editor.Core.Services.AudioPlaybackService.Instance.ScriptStop(src);
             if (e.Children != null)
                 foreach (var c in e.Children) StopAudioRecursive(c);
+        }
+
+        // ---- components added / removed while playing (#421) ----
+        // Runtime only, like spawns and SetActive: End takes added components off again and puts removed ones back in their
+        // slot (the editor's play snapshot does too, #508). Each change reaches the engine at once — physics, rendering, audio.
+
+        private readonly List<(GameEntity Entity, Editor.ECS.Component Component)> _componentsAdded = new List<(GameEntity, Editor.ECS.Component)>();
+        private readonly List<(GameEntity Entity, Editor.ECS.Component Component, int Index)> _componentsRemoved = new List<(GameEntity, Editor.ECS.Component, int)>();
+        private static Dictionary<string, Type> _componentTypes;
+
+        /// <summary>Components an entity has at most one of — the engine reads the first (a second Light, Camera, Rigidbody,
+        /// Mesh Renderer, Audio Listener or Audio Source would do nothing).</summary>
+        private static readonly HashSet<Type> OnePerEntity = new HashSet<Type>
+        {
+            typeof(Editor.ECS.Components.Lighting.Light), typeof(Editor.ECS.Components.Rendering.Camera), typeof(Editor.ECS.Components.Physics.Rigidbody),
+            typeof(Editor.ECS.Components.Rendering.MeshRenderer), typeof(Editor.ECS.Components.Audio.AudioListener), typeof(Editor.ECS.Components.Audio.AudioSource),
+        };
+
+        private static string ComponentKey(string name)
+        {
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (char ch in name) if (char.IsLetterOrDigit(ch)) sb.Append(char.ToLowerInvariant(ch));
+            return sb.ToString();
+        }
+
+        /// <summary>A component type by the name the Inspector shows or its class name, any case, spaces ignored ("Rigidbody",
+        /// "box collider", "MeshRenderer", "Mesh Renderer") — base types too ("Collider" = any collider). Null when unknown.</summary>
+        internal static Type ComponentTypeByName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            var map = _componentTypes;
+            if (map == null)
+            {
+                map = new Dictionary<string, Type>(StringComparer.Ordinal);
+                // the class names; the Inspector's names are the same words with spaces ("Mesh Renderer"), which the key drops
+                foreach (var t in typeof(Editor.ECS.Component).Assembly.GetTypes())
+                {
+                    if (!typeof(Editor.ECS.Component).IsAssignableFrom(t) || t == typeof(Editor.ECS.Component)) continue;
+                    map[ComponentKey(t.Name)] = t;
+                }
+                _componentTypes = map;
+            }
+            return map.TryGetValue(ComponentKey(name), out var found) ? found : null;
+        }
+
+        /// <summary>Scene.AddComponent (#421): a new component of <paramref name="typeName"/> on the entity, registered with the
+        /// running engine at once. Null — with a Console warning saying why — for an unknown entity or type, a Transform or
+        /// Script, a second one of a one-per-entity type, or outside play.</summary>
+        internal Editor.ECS.Component AddComponentAtRuntime(long id, string typeName) => AddComponentAtRuntime(id, typeName, null);
+
+        /// <summary>As above; <paramref name="configure"/> sets the new component up before the engine takes it in (one body
+        /// build, with the right mass).</summary>
+        internal Editor.ECS.Component AddComponentAtRuntime(long id, string typeName, Action<Editor.ECS.Component> configure)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || !_active) { WarnComponent("AddComponent", typeName, e, "the entity is unknown (or the game is not running)"); return null; }
+            var t = ComponentTypeByName(typeName);
+            if (t == null) { WarnComponent("AddComponent", typeName, e, "there is no component type of that name"); return null; }
+            if (t == typeof(Editor.ECS.Components.Transform)) { WarnComponent("AddComponent", typeName, e, "every entity has its Transform already"); return null; }
+            if (t == typeof(Script)) { WarnComponent("AddComponent", typeName, e, "scripts come with their entity (a prefab for Scene.Instantiate) — switch one on with Enabled"); return null; }
+            if (t.IsAbstract || t.GetConstructor(new[] { typeof(GameEntity) }) == null || t == typeof(Editor.ECS.Components.Physics.Collider))
+            {
+                WarnComponent("AddComponent", typeName, e, "name a concrete type — BoxCollider, SphereCollider, CapsuleCollider or MeshCollider for a collider");
+                return null;
+            }
+            if (OnePerEntity.Contains(t) && e.Components.Any(c => t.IsInstanceOfType(c)))
+            {
+                WarnComponent("AddComponent", typeName, e, "it has one already (one per entity)");
+                return null;
+            }
+            Editor.ECS.Component comp;
+            try { comp = (Editor.ECS.Component)Activator.CreateInstance(t, e); configure?.Invoke(comp); }
+            catch (Exception ex) { WarnComponent("AddComponent", typeName, e, ex.InnerException?.Message ?? ex.Message); return null; }
+            if (comp is Editor.ECS.Components.Physics.Rigidbody rb && rb.BodyType == Editor.ECS.Components.Physics.RigidbodyType.Dynamic
+                && Editor.Core.Services.Physics.PhysicsService.OwnsCharacter(e))
+            {
+                WarnComponent("AddComponent", typeName, e, CharacterOwnerWhy);
+                return null;
+            }
+            e.AddComponentDirect(comp);   // no undo step: runtime only
+            _componentsAdded.Add((e, comp));
+            RegisterRuntimeComponent(e, comp, added: true);
+            return comp;
+        }
+
+        /// <summary>Scene.RemoveComponent (#421): the entity's first component of <paramref name="typeName"/> (a base type matches
+        /// its subclasses: "Collider" = the first collider) leaves the entity and the running engine. False — with a warning —
+        /// when there is none, for a Transform or Script, or outside play.</summary>
+        internal bool RemoveComponentAtRuntime(long id, string typeName)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || !_active) { WarnComponent("RemoveComponent", typeName, e, "the entity is unknown (or the game is not running)"); return false; }
+            var t = ComponentTypeByName(typeName);
+            if (t == null) { WarnComponent("RemoveComponent", typeName, e, "there is no component type of that name"); return false; }
+            if (t == typeof(Editor.ECS.Components.Transform) || t == typeof(Script))
+            {
+                WarnComponent("RemoveComponent", typeName, e, t == typeof(Script) ? "switch a script off with Enabled = false, or Scene.Destroy its entity" : "the Transform cannot be removed");
+                return false;
+            }
+            int index = -1;
+            for (int i = 0; i < e.Components.Count; i++) if (t.IsInstanceOfType(e.Components[i])) { index = i; break; }
+            if (index < 0) { WarnComponent("RemoveComponent", typeName, e, "it has none"); return false; }
+            var comp = e.Components[index];
+            e.Components.RemoveAt(index);
+            int added = _componentsAdded.FindIndex(x => ReferenceEquals(x.Component, comp));
+            if (added >= 0) _componentsAdded.RemoveAt(added);   // added while playing: simply gone again
+            else _componentsRemoved.Add((e, comp, index));     // authored: back in its slot when play ends
+            RegisterRuntimeComponent(e, comp, added: false);
+            return true;
+        }
+
+        internal bool HasComponentAtRuntime(long id, string typeName)
+        {
+            var e = FindEntityByHandle(id);
+            var t = ComponentTypeByName(typeName);
+            return e != null && t != null && e.Components.Any(c => t.IsInstanceOfType(c));
+        }
+
+        /// <summary>A component joined or left a running entity (#421): the systems that build from components at play start
+        /// take it in or let it go now. Physics rebuilds the entity's OWN bodies (children keep theirs); a Mesh Renderer
+        /// registers with the engine; audio binds or releases it. Lights, particle systems, animators, Nav Agents, areas and
+        /// cameras are read from the scene every frame and need nothing.</summary>
+        private void RegisterRuntimeComponent(GameEntity e, Editor.ECS.Component c, bool added)
+        {
+            try
+            {
+                if (c is Editor.ECS.Components.Physics.Collider || c is Editor.ECS.Components.Physics.Rigidbody || c is Editor.ECS.Components.Physics.PhysicsJoint)
+                    Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e);
+                else if (c is Editor.ECS.Components.Rendering.MeshRenderer mr)
+                {
+                    if (added) mr.SyncToEngine(); else mr.RemoveFromEngine();
+                    // a renderer standing in as the body's shape (a Rigidbody without colliders) changes the body too
+                    if (Editor.Core.Services.Physics.PhysicsService.HasRigidbody(e) || e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>() != null)
+                        Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e);
+                }
+                else if (c is Editor.ECS.Components.Audio.AudioSource || c is Editor.ECS.Components.Audio.ReverbZone || c is Editor.ECS.Components.Audio.AudioListener)
+                {
+                    if (added) Editor.Core.Services.AudioPlaybackService.Instance.AddComponent(e, c);
+                    else Editor.Core.Services.AudioPlaybackService.Instance.RemoveComponent(e, c);
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] runtime component " + c.GetType().Name + ": " + ex.Message); }
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+        }
+
+        /// <summary>Why a dynamic Rigidbody is refused on an entity that moves a character (#421 review, #518).</summary>
+        private const string CharacterOwnerWhy = "it moves a character (Physics.MoveCharacter) — a dynamic body would write the "
+            + "simulated pose over the character's moves every step. Make it kinematic, put the body on a child, or remove the character first "
+            + "(Physics.RemoveCharacter; Ragdoll.Activate does that for a ragdoll)";
+
+        private static void WarnComponent(string what, string typeName, GameEntity e, string why)
+        {
+            try
+            {
+                Editor.Core.Services.ConsoleService.Instance.LogWarning("Scene." + what + "('" + (e?.Name ?? "?") + "', \"" + typeName + "\"): " + why
+                    + (what == "AddComponent" && ComponentTypeByName(typeName) == null
+                        ? ". Types: Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, MeshCollider, Light, AudioSource, MeshRenderer, ParticleSystem, Animator, NavAgent, Decal …"
+                        : "") + ".");
+            }
+            catch { }
+        }
+
+        /// <summary>Physics.AddRigidbody (#421): the entity gets a Rigidbody (or its Rigidbody the mass and kind given) and its
+        /// body is built now — from its enabled colliders, or its mesh when it has no Collider at all. Children keep theirs.
+        /// False, with a warning, when no body can be made (no physics world, no collider and no mesh): the entity is left as
+        /// it was.</summary>
+        internal bool AddRigidbodyAtRuntime(long id, float mass, bool kinematic)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || !_active) { WarnComponent("AddComponent", "Rigidbody", e, "the entity is unknown (or the game is not running)"); return false; }
+            if (!Editor.Core.Services.Physics.PhysicsService.IsBuilt)
+            {
+                WarnComponent("AddComponent", "Rigidbody", e, "rigid-body physics is not running (" + Editor.DllWrapper.PhysicsNative.Reason + ")");
+                return false;
+            }
+            void Setup(Editor.ECS.Component c)
+            {
+                var r = (Editor.ECS.Components.Physics.Rigidbody)c;
+                r.Mass = mass > 0f && float.IsFinite(mass) ? mass : 1f;
+                r.BodyType = kinematic ? Editor.ECS.Components.Physics.RigidbodyType.Kinematic : Editor.ECS.Components.Physics.RigidbodyType.Dynamic;
+                r.IsEnabled = true;
+            }
+            var rb = e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>();
+            bool made = rb == null;
+            if (!kinematic && Editor.Core.Services.Physics.PhysicsService.OwnsCharacter(e)
+                && (made || rb.BodyType != Editor.ECS.Components.Physics.RigidbodyType.Dynamic))
+            {
+                WarnComponent("AddComponent", "Rigidbody", e, CharacterOwnerWhy);
+                return false;
+            }
+            if (made) { if (AddComponentAtRuntime(id, "Rigidbody", Setup) == null) return false; }   // one body build, with the mass
+            else { Setup(rb); Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e); }
+            if (Editor.Core.Services.Physics.PhysicsService.HasRigidbody(e)) return true;
+            if (!ActiveInHierarchy(e)) return true;   // switched off: the body is made when it is switched on (OnEnable sees it)
+            WarnComponent("AddComponent", "Rigidbody", e, "it has no enabled collider and no mesh to make a body from — add a BoxCollider (Scene.AddComponent) first");
+            if (made) RemoveComponentAtRuntime(id, "Rigidbody");   // nothing could come of it: leave the entity as it was
+            return false;
+        }
+
+        /// <summary>Physics.RemoveRigidbody (#421): the Rigidbody goes and the entity is a static body again (or none without
+        /// colliders). False when it has none.</summary>
+        internal bool RemoveRigidbodyAtRuntime(long id)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>() == null) return false;
+            return RemoveComponentAtRuntime(id, "Rigidbody");
+        }
+
+        /// <summary>Put the components back as they were before play (#421): added ones off, removed ones into their slots.</summary>
+        private void RollbackRuntimeComponents()
+        {
+            for (int i = _componentsAdded.Count - 1; i >= 0; i--)
+            {
+                var (e, c) = _componentsAdded[i];
+                try
+                {
+                    if (c is Editor.ECS.Components.Rendering.MeshRenderer mr) mr.RemoveFromEngine();
+                    e.Components.Remove(c);
+                }
+                catch { }
+            }
+            _componentsAdded.Clear();
+            for (int i = _componentsRemoved.Count - 1; i >= 0; i--)
+            {
+                var (e, c, index) = _componentsRemoved[i];
+                try
+                {
+                    if (e.Components.Contains(c)) continue;
+                    c.Entity = e;
+                    e.Components.Insert(Math.Min(Math.Max(index, 0), e.Components.Count), c);
+                    if (c is Editor.ECS.Components.Rendering.MeshRenderer mr) mr.SyncToEngine();
+                }
+                catch { }
+            }
+            _componentsRemoved.Clear();
         }
 
         // ---- component-level enable toggles (#51) ----
@@ -310,6 +922,11 @@ namespace Editor.Scripting
             if (!_compactPending) return;
             _compactPending = false;
             _behaviours.RemoveAll(b => !IsLive(b));
+            if (_fixedBehaviours.Count > 0)
+            {
+                _fixedBehaviours.RemoveAll(b => !IsLive(b));
+                if (_fixedBehaviours.Count == 0) Editor.Core.Services.Physics.PhysicsService.BeforeStep = null;   // #481: no cost again
+            }
         }
 
         // ---- coroutines + timers (#37) ----
@@ -319,6 +936,7 @@ namespace Editor.Scripting
             public Vortex.VortexBehaviour Owner;
             public System.Collections.IEnumerator Routine;
             public float Wait;
+            public bool Realtime;   // the wait counts real seconds (WaitForSecondsRealtime), not game time (#425)
             public Vortex.Coroutine Handle;
         }
         private sealed class Inv
@@ -368,10 +986,15 @@ namespace Editor.Scripting
             catch (Exception ex) { LogScriptError("Coroutine", c.Owner, ex); c.Handle.Done = true; return; }
             finally { _dispatching = prev; }
             if (!more) { c.Handle.Done = true; return; }
-            c.Wait = (c.Routine.Current as Vortex.WaitForSeconds)?.Seconds ?? 0f;   // yield return null = one frame
+            // yield return null = one frame; WaitForSeconds counts game time, WaitForSecondsRealtime real time (#425)
+            var current = c.Routine.Current;
+            if (current is Vortex.WaitForSecondsRealtime real) { c.Wait = real.Seconds; c.Realtime = true; }
+            else { c.Wait = (current as Vortex.WaitForSeconds)?.Seconds ?? 0f; c.Realtime = false; }
         }
 
-        private void TickCoroutinesAndInvokes(float dt)
+        /// <summary>Coroutines and Invoke timers advance by <paramref name="dt"/> (game seconds — slowed or held by the time
+        /// scale, #425); a coroutine waiting on WaitForSecondsRealtime by <paramref name="realDt"/>.</summary>
+        private void TickCoroutinesAndInvokes(float dt, float realDt)
         {
             // Snapshot the counts: coroutines/invokes STARTED during this tick already ran their first
             // step (StartCoroutine) or wait a full delay — they must not double-advance this frame.
@@ -380,7 +1003,7 @@ namespace Editor.Scripting
             {
                 var c = _coroutines[i];
                 if (c.Handle.Stopped || c.Handle.Done) continue;
-                c.Wait -= dt;
+                c.Wait -= c.Realtime ? realDt : dt;
                 if (c.Wait > 0f) continue;
                 AdvanceCoroutine(c);
             }
@@ -543,6 +1166,7 @@ namespace Editor.Scripting
         {
             if (!_active || _currentScene == null || string.IsNullOrEmpty(prefabPath)) return 0;
             GameEntity ent = null;
+            int hierarchyBefore = GameEntity.HierarchyVersion;
             try { ent = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(prefabPath, _currentScene, null, false); }
             catch (Exception ex) { LogScriptError("Scene", "Instantiate", ex); }
             if (ent == null)
@@ -551,6 +1175,7 @@ namespace Editor.Scripting
                 return 0;
             }
             _spawned.Add(ent);
+            IndexSpawned(ent, hierarchyBefore);   // #361: Scene.Find knows it without a rebuild
 
             long handle = HandleForEntity(ent);
             ((Vortex.IScriptHost)this).SetPosition(handle, pos);
@@ -563,21 +1188,15 @@ namespace Editor.Scripting
             try { Editor.Core.Services.Physics.PhysicsService.AddEntity(ent); } catch { }   // spawned crates/barrels simulate at once
             try { Editor.Core.Services.AudioPlaybackService.Instance.AddEntity(ent); } catch { }   // its sounds play (Play On Awake next tick)
 
-            // Its Script components come alive immediately — a spawned monster thinks from THIS frame.
+            // Its Script components come alive immediately — a spawned monster thinks from THIS frame: OnEnable (its colliders
+            // and bodies exist already, #422), then Start.
             if (_scriptAsm != null)
             {
                 int before = _behaviours.Count;
                 InstantiateRecursive(ent, _scriptAsm);
                 // just this spawn's behaviours: one whose Start() spawns again starts its own, and one that destroys an
                 // entity only marks it (the list never shrinks under this loop)
-                foreach (var b in _behaviours.GetRange(before, _behaviours.Count - before))
-                {
-                    if (!IsLive(b)) continue;
-                    var prev = _dispatching; _dispatching = b;
-                    try { b.Start(); }
-                    catch (Exception ex) { LogScriptError("Start", b, ex); }
-                    finally { _dispatching = prev; }
-                }
+                EnableAndStart(_behaviours.GetRange(before, _behaviours.Count - before));
             }
             return handle;
         }
@@ -700,6 +1319,10 @@ namespace Editor.Scripting
                 if (x.Children != null) foreach (var c in x.Children) Collect(c);
             }
             Collect(e);
+            // #422: OnDisable first, for every script of the subtree that is active — the colliders and bodies are still there
+            foreach (var kv in doomed)
+                foreach (var b in kv.Value) CallOnDisable(b);
+            if (!ReferenceEquals(FindEntityByHandle(id), e)) return true;   // an OnDisable destroyed it already
             foreach (var kv in doomed)
             {
                 foreach (var b in kv.Value)
@@ -729,6 +1352,7 @@ namespace Editor.Scripting
 
             // Detach from the live tree. Authored entities are LEDGERED and restored on play end;
             // runtime-spawned ones are gone for good.
+            int hierarchyBefore = GameEntity.HierarchyVersion;
             if (_spawned.Remove(e))
             {
                 if (e.Parent != null) e.Parent.Children.Remove(e); else _currentScene.Entities.Remove(e);
@@ -740,6 +1364,7 @@ namespace Editor.Scripting
                 else { rec.Index = _currentScene.Entities.IndexOf(e); _currentScene.Entities.Remove(e); }
                 _removed.Add(rec);
             }
+            UnindexDestroyed(e, hierarchyBefore);   // #361: Scene.Find forgets the subtree without a rebuild
             // its own render resources go now (#358); a ledgered entity gets them back on its next submit after Stop
             try { Editor.Core.Services.SceneRenderService.Instance.RemoveEntityTree(e); } catch { }
             try { Editor.Core.Services.AI.BehaviorTreeService.RemoveEntity(e); } catch { }   // #111: its tree stops with it
@@ -761,6 +1386,7 @@ namespace Editor.Scripting
         /// restored) — play mode must never alter the authored scene.</summary>
         private void RollbackRuntimeSceneChanges()
         {
+            RollbackRuntimeComponents();   // #421
             foreach (var e in _spawned)
             {
                 try
@@ -833,7 +1459,18 @@ namespace Editor.Scripting
             try { Vortex.Save.BeginSession(); } catch { }   // forgets the last session's cache — the file on disk is the truth
             ResetNonFiniteWarnings();                       // a NaN written again in this session is reported again (#455)
             _duplicateWarned.Clear();
+            // a session starts at time scale 1 with the project's fixed step (#425, #481); a scene load inside it keeps both
+            Editor.Core.Services.GameTime.ResetSession(ProjectFixedDeltaTime());
+            try { Editor.Core.Services.AudioPlaybackService.Instance.SetPitchFollowsTimeScale(false); } catch { }   // #425: off until a script turns it on
             Begin(scene, overrideAsm);
+        }
+
+        /// <summary>The fixed step the open project asks for (Project Settings ▸ Physics ▸ Fixed update rate, #481).</summary>
+        private static float ProjectFixedDeltaTime()
+        {
+            int rate = 0;
+            try { rate = Editor.Core.Data.ProjectData.Current?.Settings?.FixedUpdateRate ?? 0; } catch { }
+            return Editor.Core.Services.GameTime.FixedDeltaTimeForRate(rate);
         }
 
         internal static void ResetNonFiniteWarnings()
@@ -900,7 +1537,12 @@ namespace Editor.Scripting
         /// hot-reload inject a freshly-compiled assembly instead of re-reading disk.</summary>
         public void Begin(Scene scene, System.Reflection.Assembly overrideAsm)
         {
+            // a scene load or a hot reload inside the session keeps its time scale and fixed step (#425, #481); End() alone —
+            // play stopping — puts them back
+            float keepScale = Editor.Core.Services.GameTime.Scale, keepFixed = Editor.Core.Services.GameTime.FixedDeltaTime;
             End();
+            Editor.Core.Services.GameTime.Scale = keepScale;
+            Editor.Core.Services.GameTime.FixedDeltaTime = keepFixed;
             try { Editor.Core.Services.Areas.AreaService.Reset(); Vortex.Areas.ClearHandlers(); } catch { }
             if (scene?.Entities == null) return;
             _currentScene = scene;   // remembered so hot-reload can re-begin the same scene
@@ -981,15 +1623,11 @@ namespace Editor.Scripting
             // A snapshot: a Start() that calls Scene.Instantiate appends new behaviours which are ALREADY Start()ed by
             // InstantiatePrefabAt, and one that destroys an entity (or quits play) must not shift the walk — the old index
             // loop then re-read _behaviours[i] past the end in its catch and the exception escaped Begin.
-            foreach (var b in _behaviours.ToArray())
-            {
-                if (!_active) break;          // a Start() stopped play (Application.Quit in the editor)
-                if (!IsLive(b)) continue;     // destroyed by an earlier Start(): no Start after its OnDestroy
-                var prev = _dispatching; _dispatching = b;
-                try { b.Start(); }
-                catch (Exception ex) { LogScriptError("Start", b, ex); }
-                finally { _dispatching = prev; }
-            }
+            // #422: OnEnable first, for every script whose entity is active (the physics world is built: bodies exist), then
+            // Start for every script — under an inactive entity too, as before; its OnEnable comes when it is switched on.
+            // One destroyed by an earlier callback gets neither (no Start after its OnDestroy); a Start() that stopped play
+            // (Application.Quit in the editor) ends the walk.
+            EnableAndStart(_behaviours.ToArray());
             CompactBehaviours();
         }
 
@@ -1054,43 +1692,43 @@ namespace Editor.Scripting
             try { Editor.Core.Services.ConsoleService.Instance.LogError(msg); } catch { }
         }
 
-        /// <summary>Tick every running behaviour.</summary>
-        public void Update(float dt)
+        /// <summary>Tick every running behaviour. <paramref name="realDt"/> is the host's frame time in real seconds; the game
+        /// runs on it scaled by the time scale (#425): Update / LateUpdate, the AI, the physics accumulator (and with it
+        /// FixedUpdate, #481), coroutines and timers, camera effects and the animators get game seconds — the UI action classes
+        /// and the debug draw clock keep real ones.</summary>
+        public void Update(float realDt)
         {
             // a new input tick: key edges (GetKeyDown / GetKeyUp) and the sub-frame press latch roll over (#337)
             _keyTick++;
             Editor.Core.Input.HostInput.BeginTick();
             if (!_active) return;
+            float dt = Editor.Core.Services.GameTime.BeginTick(realDt);   // game seconds (#425)
+            realDt = Editor.Core.Services.GameTime.UnscaledDeltaTime;     // sanitised (negative / NaN = 0)
             Vortex.Time.DeltaTime = dt;
             Vortex.Input.PollGamepad();   // refresh controller state once per tick (scripts read Input.LeftStickX etc.)
             CompactBehaviours();          // drop what was destroyed since the last tick — never inside the loops below
+            ApplyPendingEnableChanges();  // Script components switched on / off in the Inspector or by a tool (#422)
             if (_startPending.Count > 0)  // scripts attached while paused start before their first Update (#423)
             {
                 var starting = _startPending.ToArray();
                 _startPending.Clear();
-                foreach (var b in starting)
-                {
-                    if (!IsLive(b)) continue;   // destroyed before it ever ran
-                    var prev = _dispatching; _dispatching = b;
-                    try { b.Start(); }
-                    catch (Exception ex) { LogScriptError("Start", b, ex); }
-                    finally { _dispatching = prev; }
-                }
+                EnableAndStart(starting);   // one destroyed before it ever ran gets neither (#422: OnEnable before Start)
             }
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
-                if (!IsLive(b)) continue;   // destroyed earlier this tick: skipped, the others keep their turn
+                if (!IsLive(b) || b.ScriptDisabled) continue;   // destroyed earlier this tick, or switched off (#422)
                 var prev = _dispatching; _dispatching = b;
                 try { b.Update(dt); }
                 catch (Exception ex) { LogScriptError("Update", b, ex); }
                 finally { _dispatching = prev; }
             }
-            // Auto-instantiated UI action controllers tick too, so a screen's class can drive its own widgets.
+            // Auto-instantiated UI action controllers tick too, so a screen's class can drive its own widgets — in real time:
+            // a pause menu (time scale 0) keeps animating (#425).
             foreach (var b in _uiActions.Values)
             {
-                if (b == null) continue;
-                try { b.Update(dt); }
+                if (b == null || b.ScriptDisabled) continue;
+                try { b.Update(realDt); }
                 catch (Exception ex) { LogScriptError("UI Update", b, ex); }
             }
 
@@ -1112,7 +1750,7 @@ namespace Editor.Scripting
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
-                if (!IsLive(b)) continue;
+                if (!IsLive(b) || b.ScriptDisabled) continue;
                 var prev = _dispatching; _dispatching = b;
                 try { b.LateUpdate(dt); }
                 catch (Exception ex) { LogScriptError("LateUpdate", b, ex); }
@@ -1120,17 +1758,18 @@ namespace Editor.Scripting
             }
             foreach (var b in _uiActions.Values)
             {
-                if (b == null) continue;
-                try { b.LateUpdate(dt); }
+                if (b == null || b.ScriptDisabled) continue;
+                try { b.LateUpdate(realDt); }
                 catch (Exception ex) { LogScriptError("UI LateUpdate", b, ex); }
             }
 
             // Coroutines + Invoke timers (#37) advance after behaviours, so a coroutine resumed this
             // frame sees the world the behaviours just built (and PlayAnimation from it applies below).
-            TickCoroutinesAndInvokes(dt);
+            TickCoroutinesAndInvokes(dt, realDt);
 
-            // Debug draw + dev console (#42): re-submit live wire shapes, then the console overlay on top.
-            SubmitDebugShapes(dt);
+            // Debug draw + dev console (#42): re-submit live wire shapes, then the console overlay on top. A shape's duration
+            // is real time — a debug line stays readable while the game is paused.
+            SubmitDebugShapes(realDt);
             try { Editor.Core.Services.Physics.PhysicsService.SubmitDebugDraw(); } catch { }   // View ▸ Physics Debug (#106)
             try { Editor.Core.Services.AI.AiRuntime.SubmitDebugDraw(); } catch { }           // navmesh / agent paths / patrol routes / vision cones
             RenderDebugConsole();
@@ -1144,7 +1783,8 @@ namespace Editor.Scripting
             try
             {
                 Editor.Core.Services.CameraFXService.Instance.Step(dt);   // springs/noise BEFORE sockets read them
-                Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt);
+                // Ignore Time Scale animators: real time (#425); off-screen / far ones skip or thin out their pose (#361)
+                Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt, realDt, LodView());
                 Editor.Core.Animation.BoneSocketService.Instance.Apply(_currentScene);
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Animation step error: " + ex.Message); }
@@ -1153,7 +1793,84 @@ namespace Editor.Scripting
             DispatchCollisionEvents();
         }
 
+        // ---- FixedUpdate (#481): the behaviours whose class overrides it, in _behaviours order. PhysicsService calls
+        // RunFixedUpdate before each fixed step; while the list is empty its hook stays null — no cost per step.
+        private readonly List<Vortex.VortexBehaviour> _fixedBehaviours = new List<Vortex.VortexBehaviour>();
+        private static readonly Dictionary<Type, bool> _overridesFixedUpdate = new Dictionary<Type, bool>();
+        private Action<float> _fixedHook;
+
+        /// <summary>True when the behaviour class (or a base of it) overrides VortexBehaviour.FixedUpdate.</summary>
+        internal static bool OverridesFixedUpdate(Type t)
+        {
+            if (t == null) return false;
+            lock (_overridesFixedUpdate)
+            {
+                if (_overridesFixedUpdate.TryGetValue(t, out bool yes)) return yes;
+                var m = t.GetMethod("FixedUpdate", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(float) }, null);
+                yes = m != null && m.DeclaringType != typeof(Vortex.VortexBehaviour);
+                _overridesFixedUpdate[t] = yes;
+                return yes;
+            }
+        }
+
+        private void TrackFixedUpdate(Vortex.VortexBehaviour b)
+        {
+            if (b == null || !OverridesFixedUpdate(b.GetType())) return;
+            _fixedBehaviours.Add(b);
+            Editor.Core.Services.Physics.PhysicsService.BeforeStep = _fixedHook ??= RunFixedUpdate;
+        }
+
+        /// <summary>One fixed step's FixedUpdate on every live behaviour that has one (#481): Time.DeltaTime reads the step
+        /// and Time.InFixedStep is true meanwhile. A behaviour spawned by a FixedUpdate runs from the next step on.</summary>
+        private void RunFixedUpdate(float step)
+        {
+            if (!_active) return;
+            Editor.Core.Services.GameTime.InFixedStep = true;
+            try
+            {
+                int n = _fixedBehaviours.Count;
+                for (int i = 0; i < n && i < _fixedBehaviours.Count; i++)
+                {
+                    var b = _fixedBehaviours[i];
+                    if (!IsLive(b) || b.ScriptDisabled) continue;   // switched off (#422): no FixedUpdate
+                    var prev = _dispatching; _dispatching = b;   // its character moves are its entity's (#406)
+                    try { b.FixedUpdate(step); }
+                    catch (Exception ex) { LogScriptError("FixedUpdate", b, ex); }
+                    finally { _dispatching = prev; }
+                    if (!_active) break;   // a FixedUpdate stopped play
+                }
+            }
+            finally { Editor.Core.Services.GameTime.InFixedStep = false; }
+        }
+
         private bool _animEventsHooked;
+
+        /// <summary>The camera this frame renders through, for the animators' level of detail (#361): the main camera where the
+        /// scripts left it this tick (the view is applied from it after the tick), the field of view it renders with (a script's
+        /// zoom — the cone takes the wider of that and the component's), and the sun's shadows. Unknown — every animator poses —
+        /// while the debug camera flies (it may look anywhere), another view renders the play world (split / quad views, a
+        /// camera preview, a capture: <see cref="Editor.Core.Animation.AnimationService.FullDetailFor"/>) or the scene has no
+        /// main camera.</summary>
+        private Editor.Core.Animation.AnimationView LodView()
+        {
+            if (Editor.Core.Services.SceneRenderService.DebugThirdPersonView || Editor.Core.Animation.AnimationService.FullDetailRequested)
+                return Editor.Core.Animation.AnimationView.Unknown;
+            var cam = Editor.Core.Services.PlayCameraHelper.FindMainCameraEntity(_currentScene);
+            if (cam?.Transform == null) return Editor.Core.Animation.AnimationView.Unknown;
+            var w = Editor.Core.Animation.BoneSocketService.EntityWorld(cam);
+            var fwd = System.Numerics.Vector3.TransformNormal(System.Numerics.Vector3.UnitZ, w);   // a camera looks along its +Z
+            float fov = 60f;
+            var comps = cam.Components;
+            for (int i = 0; i < comps.Count; i++)
+                if (comps[i] is Editor.ECS.Components.Rendering.Camera c) { fov = c.FieldOfView; break; }
+            float rendered = Editor.DllWrapper.VortexAPI.ViewFov;   // what the view got last: the component's, or a script's zoom
+            if (!(rendered > 0f)) rendered = fov;
+            float aspect = _uiW > 1f && _uiH > 1f ? _uiW / _uiH : 16f / 9f;
+            var sun = Editor.DllWrapper.VortexAPI.LastSun;
+            bool shadows = sun != null && sun.ShadowsVisible;
+            return new Editor.Core.Animation.AnimationView(w.Translation, fwd, Math.Max(fov, rendered), aspect, rendered,
+                shadows, shadows ? new System.Numerics.Vector3(sun.DirX, sun.DirY, sun.DirZ) : default, shadows ? sun.ShadowDistance : 0f);
+        }
 
         /// <summary>Route an AnimEvent marker (footstep, attack hit, ...) to the entity's behaviours (#408: every one).</summary>
         private void OnAnimationServiceEvent(GameEntity entity, string name)
@@ -1478,8 +2195,8 @@ namespace Editor.Scripting
                     {
                         inst = (Vortex.VortexBehaviour)Activator.CreateInstance(type);
                         inst.EntityId = 0; // no scene entity -> Position/Rotation read as zero; UI action classes don't use them
-                        try { inst.Start(); }
-                        catch (Exception ex) { LogScriptError(cls, "Start", ex); }
+                        CallOnEnable(inst);   // #422: OnEnable, then Start (exceptions reach the Console)
+                        CallStart(inst);
                     }
                 }
             }
@@ -1512,18 +2229,29 @@ namespace Editor.Scripting
         public void End()
         {
             try { Editor.Core.Services.Areas.AreaService.Reset(); Vortex.Areas.ClearHandlers(); } catch { }
+            // #422: OnDisable for every active script first (the world is still there), then OnDestroy for every script.
+            // Nothing comes alive in between: an OnEnable or Start from these passes (a SetActive(true), Enabled = true, a
+            // spawn) would run in a world that is going away — and earn a second OnDisable.
+            _ending = true;
+            for (int i = 0; i < _behaviours.Count; i++) CallOnDisable(_behaviours[i]);
+            foreach (var b in _uiActions.Values) if (b != null) CallOnDisable(b);
             // By index over the live list (an OnDestroy may spawn — appended — or destroy — only marked); each behaviour is
             // marked first, so one destroyed by another's OnDestroy gets exactly one OnDestroy and lookups skip it.
             for (int i = 0; i < _behaviours.Count; i++)
             {
                 var b = _behaviours[i];
                 if (!IsLive(b)) continue;
+                CallOnDisable(b);   // spawned by an OnDisable / OnDestroy of this pass
                 b.Destroyed = true;
                 var prev = _dispatching; _dispatching = b;
                 try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); }   // #322
                 finally { _dispatching = prev; }
             }
             foreach (var b in _uiActions.Values) { if (b != null) try { b.OnDestroy(); } catch (Exception ex) { LogScriptError("OnDestroy", b, ex); } }
+            UnwatchScripts();
+            _activating.Clear();
+            _deactivating.Clear();
+            _reentryWarned.Clear();
             // Scripting-wave teardown (#36-#40): undo runtime scene mutations, stop timers/coroutines,
             // drop event subscriptions, persist pending save data.
             try { RollbackRuntimeSceneChanges(); } catch { }
@@ -1541,6 +2269,14 @@ namespace Editor.Scripting
             try { Vortex.Save.Flush(); } catch { }
             _uiActions.Clear();
             _behaviours.Clear();
+            _fixedBehaviours.Clear();
+            lock (_overridesFixedUpdate) _overridesFixedUpdate.Clear();   // holds script types: a hot reload's old assembly must unload
+            Editor.Core.Services.Physics.PhysicsService.BeforeStep = null;   // #481
+            Editor.Core.Services.GameTime.InFixedStep = false;
+            // play stopped: the clock is back at normal speed and the project's step — a script's TimeScale 0 or its own
+            // FixedDeltaTime must not hold the editor's previews or the next run that is not a play session (#425, #481)
+            Editor.Core.Services.GameTime.Scale = 1f;
+            Editor.Core.Services.GameTime.FixedDeltaTime = ProjectFixedDeltaTime();
             _musicCallbacks.Clear();   // #437: keyed by this session's script classes
             _compactPending = false;
             _startPending.Clear();
@@ -1548,6 +2284,7 @@ namespace Editor.Scripting
             _handlesByEntity.Clear();
             _scriptOf.Clear();
             _behavioursByEntity.Clear();
+            ClearIndex();   // #361: no references into the stopped session's scene
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             _dispatching = null; _dispatchingEntity = null;
             try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
@@ -1568,6 +2305,7 @@ namespace Editor.Scripting
             try { _currentScene?.Settings?.Apply(); } catch { }
             _scriptAsm = null;
             _active = false;
+            _ending = false;
         }
 
         private Scene _currentScene;                       // last Begin's scene (for hot-reload)
@@ -1728,32 +2466,107 @@ namespace Editor.Scripting
             foreach (var sc in e.GetComponents<Script>())
             {
                 if (script != null && !ReferenceEquals(sc, script)) continue;
+                WatchScript(sc);                                 // its enable switch counts from now on (#422)
                 if (LiveBehaviourOf(e, sc) != null) continue;   // already running — its fields go through ApplyFieldsToLiveBehaviour
                 var b = InstantiateScript(e, sc, _scriptAsm);
                 if (b != null) started.Add(b);
             }
-            // paused: nothing of the game may run now — Start waits for the next tick that plays (#423)
+            // paused: nothing of the game may run now — OnEnable and Start wait for the next tick that plays (#423)
             bool paused = Editor.Core.Services.PlayModeService.Instance.State == Editor.Core.Services.PlayState.Paused;
-            foreach (var b in started)
-            {
-                if (!IsLive(b)) continue;   // an earlier Start() destroyed the entity
-                if (paused) { _startPending.Add(b); continue; }
-                var prev = _dispatching; _dispatching = b;
-                try { b.Start(); }
-                catch (Exception ex) { LogScriptError("Start", b, ex); }
-                finally { _dispatching = prev; }
-            }
+            if (paused) _startPending.AddRange(started);
+            else EnableAndStart(started);   // one an earlier Start() destroyed gets neither
             return started.Count > 0;
         }
 
         private readonly List<Vortex.VortexBehaviour> _startPending = new List<Vortex.VortexBehaviour>();
 
         /// <summary>Every enabled Script component of the entity gets its own behaviour (#408) — the runtime used to take only
-        /// the first one (GetComponent) and silently drop the rest.</summary>
+        /// the first one (GetComponent) and silently drop the rest. A switched-off one gets its behaviour when it is switched
+        /// on (#422), so every Script component is watched.</summary>
         private void InstantiateOne(GameEntity e, Assembly asm)
         {
             foreach (var script in e.GetComponents<Script>())   // a copy: a constructor can't upset the iteration
+            {
+                WatchScript(script);
                 InstantiateScript(e, script, asm);
+            }
+        }
+
+        // ---- the Script component's enable switch while playing (#422) ----
+        // The Inspector's checkbox, set_component_properties and a script's own Enabled all end in Script.IsEnabled. A change
+        // that does not come through Enabled (another thread, the UI) is queued and applied at the start of the next tick.
+
+        private readonly HashSet<Script> _watched = new HashSet<Script>(ReferenceEqualityComparer.Instance);
+        private readonly List<Script> _enableQueue = new List<Script>();
+
+        private void WatchScript(Script sc)
+        {
+            if (sc == null || !_watched.Add(sc)) return;
+            sc.PropertyChanged += OnScriptPropertyChanged;
+        }
+
+        private void UnwatchScripts()
+        {
+            foreach (var sc in _watched) sc.PropertyChanged -= OnScriptPropertyChanged;
+            _watched.Clear();
+            lock (_enableQueue) _enableQueue.Clear();
+        }
+
+        private void OnScriptPropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(Script.IsEnabled) || !(sender is Script sc)) return;
+            lock (_enableQueue) if (!_enableQueue.Contains(sc)) _enableQueue.Add(sc);
+        }
+
+        private void ApplyPendingEnableChanges()
+        {
+            Script[] pending;
+            lock (_enableQueue)
+            {
+                if (_enableQueue.Count == 0) return;
+                pending = _enableQueue.ToArray();
+                _enableQueue.Clear();
+            }
+            foreach (var sc in pending) ApplyScriptEnabled(sc);
+        }
+
+        /// <summary>Bring the behaviour of <paramref name="sc"/> in line with the component's switch: on — OnEnable (when its
+        /// entity is active), and for a script that never ran its behaviour is made and started now (paused: on the next tick
+        /// that plays, #423); off — OnDisable, no more Update / LateUpdate / FixedUpdate. Nothing happens when it already
+        /// matches, so a queued change that a script's Enabled applied already is a no-op.</summary>
+        private void ApplyScriptEnabled(Script sc)
+        {
+            var e = sc?.Entity;
+            if (e == null || !_active || !e.Components.Contains(sc)) return;
+            var b = LiveBehaviourOf(e, sc);
+            if (sc.IsEnabled)
+            {
+                if (b == null) { if (!_ending) AttachAtRuntime(e, sc); return; }   // switched on for the first time: made, OnEnable, Start
+                b.ScriptDisabled = false;
+                CallOnEnable(b);
+                if (!b.Started && !_startPending.Contains(b)) CallStart(b);
+            }
+            else if (b != null)
+            {
+                b.ScriptDisabled = true;
+                CallOnDisable(b);
+            }
+        }
+
+        /// <summary>VortexBehaviour.Enabled (#422): switch the behaviour's Script component and apply it at once.</summary>
+        internal void SetBehaviourEnabled(Vortex.VortexBehaviour b, bool enabled)
+        {
+            if (b == null || b.Destroyed) return;
+            if (_scriptOf.TryGetValue(b, out var sc) && sc != null)
+            {
+                if (sc.IsEnabled != enabled) sc.IsEnabled = enabled;   // the Inspector shows it; play end puts it back (#318)
+                if (_active) ApplyScriptEnabled(sc);
+                else b.ScriptDisabled = !enabled;
+                return;
+            }
+            // a UI action class has no component: the switch is the behaviour's own
+            b.ScriptDisabled = !enabled;
+            if (enabled) { CallOnEnable(b); CallStart(b); } else CallOnDisable(b);
         }
 
         private Vortex.VortexBehaviour InstantiateScript(GameEntity e, Script script, Assembly asm)
@@ -1797,6 +2610,7 @@ namespace Editor.Scripting
                 _behaviours.Add(behaviour);
                 list.Add(behaviour);
                 _scriptOf[behaviour] = script;
+                TrackFixedUpdate(behaviour);   // #481
                 return behaviour;
             }
             catch (Exception ex) { LogScriptError(script.ScriptClassName, "constructor", ex); return null; }
@@ -2537,6 +3351,20 @@ namespace Editor.Scripting
         public void SetUIFrame(float width, float height, float mouseX, float mouseY, bool mouseDown, bool mousePressed)
             => SetUIFrame(width, height, mouseX, mouseY, mouseDown, mousePressed, _uiScale);
 
+        // The game view's drawable in device pixels (#462), as the host renders it: the editor viewport's swapchain, the player
+        // window's drawable. 0 until a host says — Screen.PixelWidth is then UI size × scale.
+        private int _screenPixelW, _screenPixelH;
+
+        /// <summary>The game view's drawable size in device pixels (#462) — the host feeds it with the UI frame, every frame.</summary>
+        public void SetScreenPixels(int width, int height)
+        {
+            _screenPixelW = width > 0 ? width : 0;
+            _screenPixelH = height > 0 ? height : 0;
+        }
+
+        internal int ScreenPixelWidth => _screenPixelW > 0 ? _screenPixelW : (int)Math.Round(_uiW * _uiScale);
+        internal int ScreenPixelHeight => _screenPixelH > 0 ? _screenPixelH : (int)Math.Round(_uiH * _uiScale);
+
         void Vortex.IScriptHost.UIRect(float x, float y, float w, float h, float r, float g, float b, float a, float radius)
             => Editor.DllWrapper.VortexAPI.UIRect(x, y, w, h, r, g, b, a, radius);
         void Vortex.IScriptHost.UIText(float x, float y, float w, float h, string text, float size, float r, float g, float b, float a, int align, int weight)
@@ -2572,7 +3400,7 @@ namespace Editor.Scripting
 
         void Vortex.IScriptHost.SetCameraFov(float fovDegrees)
         {
-            try { Editor.DllWrapper.VortexAPI.SetViewFOV(fovDegrees); }
+            try { Editor.DllWrapper.VortexAPI.SetViewFOV(fovDegrees); }   // remembered there: the level of detail's zoom (#361)
             catch { }
         }
 

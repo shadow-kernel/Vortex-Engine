@@ -42,8 +42,9 @@ namespace Editor.Core.Services.Physics
     /// enabled Collider becomes a body — static by default, kinematic or dynamic when it also carries a Rigidbody
     /// (mass, drag, gravity, freeze axes, physics material). Box/Sphere/Capsule colliders map to Jolt primitives
     /// (several colliders on one entity form a compound), Mesh colliders to a static triangle mesh or a convex hull,
-    /// Is-Trigger colliders to sensors. <see cref="Step"/> runs a fixed 60 Hz simulation (at most 4 substeps per
-    /// frame), pushes script/animation-moved KINEMATIC bodies, writes every DYNAMIC body's pose back to its entity,
+    /// Is-Trigger colliders to sensors. <see cref="Step"/> runs a fixed-rate simulation (the project's Fixed Update Rate, 60 Hz
+    /// by default, #481; at most 4 steps' worth per frame) with the scripts' FixedUpdate before each step, pushes
+    /// script/animation-moved KINEMATIC bodies, writes every DYNAMIC body's pose back to its entity,
     /// publishes the dynamic bodies to <see cref="CollisionService"/> so the character controller collides with (and
     /// pushes) them, and dispatches contact events through <see cref="ContactHandler"/> (the script runtime routes
     /// them to OnCollisionEnter / OnTriggerEnter/Stay/Exit).
@@ -60,10 +61,17 @@ namespace Editor.Core.Services.Physics
     /// </summary>
     public static class PhysicsService
     {
-        /// <summary>Fixed simulation step (seconds).</summary>
-        public const float FixedStep = 1f / 60f;
-        /// <summary>Upper bound of physics steps per rendered frame (slow frames drop simulation time instead of spiralling).</summary>
-        public const int MaxSubsteps = 4;
+        /// <summary>Fixed simulation step in seconds of game time — <see cref="GameTime.FixedDeltaTime"/>: the project's Fixed
+        /// Update Rate (#481), 1/60 s unless it says otherwise; scripts read and set it as Time.FixedDeltaTime.</summary>
+        public static float FixedStep => GameTime.FixedDeltaTime;
+        /// <summary>Upper bound of physics steps per rendered frame (slow frames drop simulation time instead of spiralling):
+        /// 4 steps' worth of game time at 60 Hz, more steps at a finer rate or while fast-forwarding (<see cref="GameTime.MaxStepsFor"/>).</summary>
+        public static int MaxSubsteps => GameTime.MaxStepsFor(FixedStep, GameTime.EffectiveScale);
+
+        /// <summary>Called right before each fixed step with the step's seconds — the script runtime's FixedUpdate (#481). Null
+        /// while no behaviour overrides FixedUpdate (no cost per step). Runs on a build without Jolt too: the fixed clock then
+        /// ticks without a physics world, so FixedUpdate still comes at its rate.</summary>
+        public static Action<float> BeforeStep;
 
         /// <summary>Render dynamic bodies between the last two fixed steps (one step of latency) instead of at the
         /// last step: with a 120 Hz display and 60 Hz physics they otherwise move in visible 60 Hz jumps.</summary>
@@ -106,6 +114,10 @@ namespace Editor.Core.Services.Physics
             public SysVec PrevPos;        // dynamic bodies: pose after the step before LastPos (render interpolation)
             public SysQuat PrevRot;
             public bool Moving;           // dynamic bodies: Prev != Last, the rendered pose is still interpolating
+            public SysVec ShownPos;       // dynamic bodies: the body pose last written to the entity (WritePose)
+            public SysQuat ShownRot;
+            public bool ShownValid;
+            public bool ShowsBlend;       // … and it was an interpolated one, not where the body is (#481: FixedUpdate syncs it)
         }
 
         private struct ChildShape { public int Type; public SysVec Dims; public SysVec LocalPos; public SysQuat LocalRot; }
@@ -267,6 +279,54 @@ namespace Editor.Core.Services.Physics
             PublishDynamicShapes();
         }
 
+        /// <summary>#421: rebuild ONE entity's bodies from its current components — a Collider or Rigidbody added or removed while
+        /// playing. Its children keep their bodies (the same ids); its own joints are created again and joints of other entities
+        /// that hold it re-attach to the new body. The character world gets the entity's own shapes again (a dynamic body leaves
+        /// it, as at play start). Nothing but the removal while the entity is inactive in the hierarchy.</summary>
+        public static void RebuildEntity(GameEntity e)
+        {
+            if (!IsBuilt || e == null) { if (e != null) { try { CollisionService.RefreshOwnShapes(e); } catch { } } return; }
+            // joints that hold this entity's body: its own go (they are made again below), others' detach until it is back
+            for (int i = _joints.Count - 1; i >= 0; i--)
+            {
+                var rec = _joints[i];
+                bool own = ReferenceEquals(rec.Entity, e);
+                if (!own && !ReferenceEquals(rec.Connected, e)) continue;
+                if (rec.Id != 0) { try { VortexAPI.PhysicsDestroyConstraint(rec.Id); } catch { } _jointById.Remove(rec.Id); rec.Id = 0; }
+                if (own) ForgetRec(rec);
+            }
+            for (int i = _jointComponents.Count - 1; i >= 0; i--)   // a joint component taken off the entity is no joint any more
+            {
+                var j = _jointComponents[i];
+                if (!ReferenceEquals(j.Entity, e) || (e.Components != null && e.Components.Contains(j))) continue;
+                j.PropertyChanged -= OnJointComponentChanged;
+                _jointComponents.RemoveAt(i);
+                _jointComponentSet.Remove(j);
+                _jointWarned.Remove(j);
+            }
+            for (int i = _bodies.Count - 1; i >= 0; i--)
+            {
+                var b = _bodies[i];
+                if (b.Entity != e) continue;
+                try { VortexAPI.PhysicsDestroyBody(b.Id); } catch { }
+                _byId.Remove(b.Id);
+                _bodies.RemoveAt(i);
+            }
+            _byEntity.Remove(e);
+            _solidBodiesOf.Remove(e);
+            try { CollisionService.RefreshOwnShapes(e); } catch { }
+            if (ActiveInHierarchy(e))
+            {
+                try { CreateBodiesFor(e); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Physics] body for '" + e.Name + "' failed: " + ex.Message); }
+                if (e.Components != null)
+                    foreach (var c in e.Components)
+                        if (c is PhysicsJoint j && _jointComponentSet.Add(j)) { _jointComponents.Add(j); j.PropertyChanged += OnJointComponentChanged; }
+                CreatePendingJoints(e);
+            }
+            PublishDynamicShapes();
+        }
+
         /// <summary>Re-sync an entity after a script moved or edited its colliders (Physics.RefreshCollider):
         /// static/kinematic bodies are teleported to the entity's current pose, dynamic entities are removed from the
         /// static collision world again (RefreshCollider re-baked them there).</summary>
@@ -291,21 +351,22 @@ namespace Editor.Core.Services.Physics
 
         // ------------------------------------------------------------------------------------------ per frame
 
-        /// <summary>Advance the simulation by one rendered frame: accumulates <paramref name="frameDt"/> into fixed
-        /// 1/60 s steps (max 4), applies the player's pushes recorded by the character controller, drives kinematic
-        /// bodies from their entity transforms, steps, writes dynamic poses back to the entities, republishes the
-        /// dynamic shapes for the character controller and dispatches contacts. Call after the behaviours' Update
-        /// and before LateUpdate/animation.</summary>
+        /// <summary>Advance the simulation by one rendered frame: accumulates <paramref name="frameDt"/> — game seconds, already
+        /// scaled by the time scale (#425) — into fixed steps of <see cref="FixedStep"/> (at most <see cref="MaxSubsteps"/>),
+        /// applies the player's pushes recorded by the character controller, and per step runs <see cref="BeforeStep"/>
+        /// (FixedUpdate, #481), drives kinematic bodies from their entity transforms and steps; then writes dynamic poses back
+        /// to the entities, republishes the dynamic shapes for the character controller and dispatches contacts. Call after
+        /// the behaviours' Update and before LateUpdate/animation.</summary>
         public static void Step(float frameDt)
         {
             LastStepCount = 0;
-            if (!IsBuilt) return;
-            if (frameDt < 0f) frameDt = 0f;
-            if (frameDt > 0.25f) frameDt = 0.25f;
-            _accumulator += frameDt;
-            if (_accumulator < FixedStep)
+            if (!IsBuilt) { StepClockOnly(frameDt); return; }
+            float step = FixedStep;
+            int due = GameTime.AdvanceFixed(ref _accumulator, frameDt, step, MaxSubsteps, GameTime.EffectiveScale);
+            if (due == 0)
             {
-                // No step this frame (fast frames): keep the pushes for the next step; move the rendered poses on.
+                // No step this frame (fast frames, or the game is paused): keep the pushes for the next step; move the
+                // rendered poses on.
                 if (Interpolate) WriteInterpolatedPoses();
                 return;
             }
@@ -313,21 +374,28 @@ namespace Editor.Core.Services.Physics
             try
             {
                 if (_jointsDirty) SyncJoints();
-                ApplyCharacterPushes(frameDt > 1e-4f ? frameDt : FixedStep);
-                int steps = 0;
+                float frame = Math.Min(frameDt, 0.25f * Math.Max(1f, GameTime.EffectiveScale));   // AdvanceFixed's clamp
+                ApplyCharacterPushes(frame > 1e-4f ? frame : step);
                 bool snapshotted = false;
-                while (_accumulator >= FixedStep && steps < MaxSubsteps)
+                for (int i = 0; i < due; i++)
                 {
+                    // FixedUpdate first (#481): a force it adds acts on exactly this step. It reads the bodies where the
+                    // simulation has them — after the previous step — not the interpolated pose the frame renders (a step
+                    // behind, and the same for every step of a frame): a spring or a hover controller would feed back on
+                    // stale positions and diverge. The rendered blend is written again after the frame's steps.
+                    var before = BeforeStep;
+                    if (before != null)
+                    {
+                        ShowLivePoses();
+                        before(step);
+                        if (!IsBuilt) return;   // a FixedUpdate ended the session (the world is gone)
+                    }
                     // Several steps this frame: interpolate from the pose after the second-to-last one.
-                    bool lastStep = _accumulator - FixedStep < FixedStep || steps + 1 >= MaxSubsteps;
-                    if (lastStep && steps > 0 && Interpolate) { SnapshotPreviousPoses(); RagdollService.SnapshotPrevious(); snapshotted = true; }
-                    PushKinematics();
-                    VortexAPI.PhysicsStep(FixedStep, 1);
-                    _accumulator -= FixedStep;
-                    steps++;
+                    if (i == due - 1 && i > 0 && Interpolate) { SnapshotPreviousPoses(); RagdollService.SnapshotPrevious(); snapshotted = true; }
+                    PushKinematics(step);
+                    VortexAPI.PhysicsStep(step, 1);
+                    LastStepCount = i + 1;
                 }
-                if (_accumulator > FixedStep) _accumulator = FixedStep;   // drop time we can't catch up with
-                LastStepCount = steps;
 
                 ReadbackDynamics(snapshotted);
                 RagdollService.Readback(snapshotted);
@@ -340,6 +408,20 @@ namespace Editor.Core.Services.Physics
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("[Physics] step failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>No physics world (an engine build without Jolt): the fixed clock still runs FixedUpdate at its rate (#481).</summary>
+        private static void StepClockOnly(float frameDt)
+        {
+            var before = BeforeStep;
+            if (before == null) return;
+            float step = FixedStep;
+            int due = GameTime.AdvanceFixed(ref _accumulator, frameDt, step, MaxSubsteps, GameTime.EffectiveScale);
+            for (int i = 0; i < due && BeforeStep != null; i++)
+            {
+                before(step);
+                LastStepCount = i + 1;
             }
         }
 
@@ -1647,6 +1729,10 @@ namespace Editor.Core.Services.Physics
             return 0;
         }
 
+        /// <summary>Does <paramref name="e"/> itself own a character (a capsule moved by Physics.MoveCharacter, managed or Jolt,
+        /// #406 / #518)?</summary>
+        public static bool OwnsCharacter(GameEntity e) => e != null && CharacterIds(o => ReferenceEquals(o, e)).Count > 0;
+
         private static List<long> CharacterIds(Func<GameEntity, bool> ownerMatch)
         {
             var ids = new List<long>();
@@ -1706,7 +1792,7 @@ namespace Editor.Core.Services.Physics
         /// <summary>Drive kinematic bodies to their entity's current world pose (velocity-based, so they push
         /// dynamic bodies). A kinematic entity that moved is also re-baked in the static collision world so the
         /// character controller sees the platform/door where it is now.</summary>
-        private static void PushKinematics()
+        private static void PushKinematics(float step)
         {
             for (int i = 0; i < _bodies.Count; i++)
             {
@@ -1715,7 +1801,7 @@ namespace Editor.Core.Services.Physics
                 if (!TryEntityPose(b.Entity, b.CenterOffset, out var pos, out var rot)) continue;
                 bool moved = (pos - b.LastPos).LengthSquared() > 1e-10f || Math.Abs(SysQuat.Dot(rot, b.LastRot)) < 0.9999999f;
                 Fill(_f3a, pos); Fill(_f4, rot);
-                VortexAPI.PhysicsMoveKinematic(b.Id, _f3a, _f4, FixedStep);   // same pose = velocity 0 (stops the body)
+                VortexAPI.PhysicsMoveKinematic(b.Id, _f3a, _f4, step);   // same pose = velocity 0 (stops the body)
                 if (moved)
                 {
                     b.LastPos = pos; b.LastRot = rot;
@@ -1746,7 +1832,29 @@ namespace Editor.Core.Services.Physics
                 if ((pos - b.LastPos).LengthSquared() < 1e-12f && Math.Abs(SysQuat.Dot(rot, b.LastRot)) > 0.99999999f) continue;
                 b.LastPos = pos; b.LastRot = rot;
                 if (Interpolate) { b.Moving = true; continue; }
-                WritePose(b, pos, rot);
+                WritePose(b, pos, rot, blend: false);
+                any = true;
+            }
+            if (any) SceneRenderService.RuntimeDirty = true;
+        }
+
+        /// <summary>#481: before a FixedUpdate, every dynamic body's entity shows where the body is now — the pose after the
+        /// previous step — instead of the interpolated pose of the last rendered frame. Awake bodies are read from the world;
+        /// a sleeping one only when its entity still shows a blend. Nothing is written for an entity that shows it already.</summary>
+        private static void ShowLivePoses()
+        {
+            bool any = false;
+            for (int i = 0; i < _bodies.Count; i++)
+            {
+                var b = _bodies[i];
+                if (b.Motion != MotionDynamic || b.Secondary || b.IsTrigger) continue;
+                if (!b.ShowsBlend && VortexAPI.PhysicsIsActive(b.Id) == 0) continue;   // asleep where its entity shows it
+                if (VortexAPI.PhysicsGetBodyTransform(b.Id, _f3a, _f4) == 0) continue;
+                var pos = new SysVec(_f3a[0], _f3a[1], _f3a[2]);
+                var rot = new SysQuat(_f4[0], _f4[1], _f4[2], _f4[3]);
+                if (float.IsNaN(pos.X) || float.IsNaN(rot.W)) continue;
+                if (!b.ShowsBlend && b.ShownValid && pos == b.ShownPos && rot == b.ShownRot) continue;
+                WritePose(b, pos, rot, blend: false);
                 any = true;
             }
             if (any) SceneRenderService.RuntimeDirty = true;
@@ -1780,18 +1888,21 @@ namespace Editor.Core.Services.Physics
                 var b = _bodies[i];
                 if (!b.Moving || b.Motion != MotionDynamic || b.Secondary || b.IsTrigger) continue;
                 bool still = (b.LastPos - b.PrevPos).LengthSquared() < 1e-12f && Math.Abs(SysQuat.Dot(b.LastRot, b.PrevRot)) > 0.99999999f;
-                if (still) { WritePose(b, b.LastPos, b.LastRot); b.Moving = false; any = true; continue; }
-                WritePose(b, SysVec.Lerp(b.PrevPos, b.LastPos, alpha), SysQuat.Slerp(b.PrevRot, b.LastRot, alpha));
+                if (still) { WritePose(b, b.LastPos, b.LastRot, blend: false); b.Moving = false; any = true; continue; }
+                WritePose(b, SysVec.Lerp(b.PrevPos, b.LastPos, alpha), SysQuat.Slerp(b.PrevRot, b.LastRot, alpha), blend: true);
                 any = true;
             }
             if (any) SceneRenderService.RuntimeDirty = true;
         }
 
-        private static void WritePose(Body b, SysVec bodyPos, SysQuat rot)
+        /// <summary>Write a body pose to its entity (world → local against the parent chain). <paramref name="blend"/>: an
+        /// interpolated pose, not where the body is (<see cref="ShowLivePoses"/> replaces it before a FixedUpdate).</summary>
+        private static void WritePose(Body b, SysVec bodyPos, SysQuat rot, bool blend)
         {
             var e = b.Entity;
             var t = e?.Transform;
             if (t == null) return;
+            b.ShownPos = bodyPos; b.ShownRot = rot; b.ShownValid = true; b.ShowsBlend = blend;
             var entityPos = bodyPos - SysVec.Transform(b.CenterOffset, rot);
             var world = SysMat.CreateScale(b.Scale) * SysMat.CreateFromQuaternion(rot) * SysMat.CreateTranslation(entityPos);
             var local = world;
