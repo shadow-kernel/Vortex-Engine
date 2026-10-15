@@ -639,6 +639,7 @@ namespace Editor.Core.Animation
                 state.PoseStale = true;
                 PosesSkipped++;
                 if (animator.ApplyRootMotion && baseActive) ApplyRootMotion(entity, state);
+                Services.Physics.RagdollService.PoseSkipped(entity);   // a ragdoll later starts with how it moved meanwhile
                 return;
             }
             EvaluatePose(entity, animator, state, baseActive, layersActive);

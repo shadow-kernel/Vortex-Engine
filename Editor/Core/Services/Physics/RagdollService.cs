@@ -225,18 +225,23 @@ namespace Editor.Core.Services.Physics
             public int[] PartOfNode;            // node -> part index, -1 = follows its parent
             public Matrix4x4[] FrozenLocal;     // node local (model space) at activation
             public float BlendTime;
-            public long StartTicks;
+            public double StartTime;            // game seconds at activation (#425: the blend runs with the simulation)
             public bool CollidersRemoved;
             public bool ClipStopped;            // the animation was frozen once the simulation took over (no more clip events)
             public GameEntity[] Chain;          // the entity and its ancestors at activation (counted in _limpAtOrAbove)
         }
 
-        /// <summary>The last two evaluated poses of an entity that carries a Ragdoll component (velocity at activation).</summary>
+        /// <summary>The last two evaluated poses of an entity that carries a Ragdoll component (velocity at activation), on the
+        /// clock its animation runs on (#425: game seconds, real ones for an Animator with Ignore Time Scale) — and where its
+        /// mesh was on the last two frames, posed or not (#361: the level of detail may have skipped the poses while the
+        /// character moved on).</summary>
         private sealed class History
         {
             public Matrix4x4[] Worlds, PrevWorlds;
             public Matrix4x4 Mesh, PrevMesh;
-            public long Ticks, PrevTicks;
+            public double Time = double.NaN, PrevTime = double.NaN;
+            public Matrix4x4 FrameMesh, PrevFrameMesh;
+            public double FrameTime = double.NaN, PrevFrameTime = double.NaN;
         }
 
         private static readonly Dictionary<GameEntity, Instance> _active = new Dictionary<GameEntity, Instance>();
@@ -369,7 +374,7 @@ namespace Editor.Core.Services.Physics
                 PartOfNode = new int[skel.Nodes.Length],
                 FrozenLocal = new Matrix4x4[skel.Nodes.Length],
                 BlendTime = settings.BlendTime,
-                StartTicks = Stopwatch.GetTimestamp(),
+                StartTime = GameTime.Elapsed,
             };
             for (int i = 0; i < inst.PartOfNode.Length; i++) inst.PartOfNode[i] = -1;
             for (int i = 0; i < skel.Nodes.Length; i++)
@@ -638,17 +643,21 @@ namespace Editor.Core.Services.Physics
             return joint != 0;
         }
 
-        /// <summary>Linear velocity of every part from the last two evaluated poses (world space).</summary>
+        /// <summary>Linear velocity of every part (world space, per second of the animation's clock) from the last two evaluated
+        /// poses — or, when the level of detail skipped the poses in between (#361), from how the mesh moved over the last frame
+        /// with the current pose: the character's travel and turn, without its limbs' own swing.</summary>
         private static void SeedVelocities(Instance inst, Matrix4x4[] worlds, Matrix4x4 mesh, History hist)
         {
-            if (hist == null || hist.PrevWorlds == null || hist.PrevWorlds.Length != worlds.Length || hist.Ticks <= hist.PrevTicks) return;
-            float dt = (float)((hist.Ticks - hist.PrevTicks) / (double)Stopwatch.Frequency);
-            if (dt < 0.002f || dt > 0.25f) return;
+            if (hist == null) return;
+            int source = SeedSource(ClockOf(inst.Entity), hist.Time, hist.PrevTime, hist.PrevWorlds != null && hist.PrevWorlds.Length == worlds.Length,
+                                    hist.FrameTime, hist.PrevFrameTime, out float dt);
+            if (source == 0) return;
+            bool poses = source == 1;
             foreach (var p in inst.Parts)
             {
                 if (p.Body == 0) continue;
-                var now = (worlds[p.Def.Node] * mesh).Translation;
-                var before = (hist.PrevWorlds[p.Def.Node] * hist.PrevMesh).Translation;
+                var now = (worlds[p.Def.Node] * (poses ? mesh : hist.FrameMesh)).Translation;
+                var before = poses ? (hist.PrevWorlds[p.Def.Node] * hist.PrevMesh).Translation : (worlds[p.Def.Node] * hist.PrevFrameMesh).Translation;
                 var v = (now - before) / dt;
                 float sp = v.Length();
                 if (!(sp > 0.01f)) continue;
@@ -724,9 +733,59 @@ namespace Editor.Core.Services.Physics
         {
             if (!_history.TryGetValue(entity, out var h)) _history[entity] = h = new History();
             var meshEntity = AnimationService.Instance.FindSkinnedMeshEntity(entity) ?? entity;
-            h.PrevWorlds = h.Worlds; h.PrevMesh = h.Mesh; h.PrevTicks = h.Ticks;
-            h.Worlds = worlds; h.Mesh = BoneSocketService.EntityWorld(meshEntity); h.Ticks = Stopwatch.GetTimestamp();
+            var mesh = BoneSocketService.EntityWorld(meshEntity);
+            double now = ClockOf(entity);
+            if (now != h.Time) { h.PrevWorlds = h.Worlds; h.PrevMesh = h.Mesh; h.PrevTime = h.Time; }   // the same instant again (paused): replaced
+            h.Worlds = worlds; h.Mesh = mesh; h.Time = now;
+            NoteFrame(h, mesh, now);
         }
+
+        private static void NoteFrame(History h, Matrix4x4 mesh, double now)
+        {
+            if (now != h.FrameTime) { h.PrevFrameMesh = h.FrameMesh; h.PrevFrameTime = h.FrameTime; }
+            h.FrameMesh = mesh; h.FrameTime = now;
+        }
+
+        /// <summary>#361: the level of detail skipped this character's pose this frame. A ragdoll-capable one still notes where
+        /// its mesh is, so an activation later seeds the bodies with how it moved.</summary>
+        public static void PoseSkipped(GameEntity entity)
+        {
+            if (entity == null || !PhysicsService.IsBuilt || _active.ContainsKey(entity)) return;
+            var comp = entity.GetComponent<RagdollComponent>();
+            if (comp == null || !comp.IsEnabled) return;
+            if (!_history.TryGetValue(entity, out var h)) _history[entity] = h = new History();
+            var meshEntity = AnimationService.Instance.FindSkinnedMeshEntity(entity) ?? entity;
+            NoteFrame(h, BoneSocketService.EntityWorld(meshEntity), ClockOf(entity));
+        }
+
+        /// <summary>The clock an entity's animation runs on (#425): game seconds — real ones for an Animator with Ignore Time Scale.</summary>
+        private static double ClockOf(GameEntity entity)
+        {
+            var an = entity?.GetComponent<Editor.ECS.Components.Animation.Animator>();
+            return an != null && an.IgnoreTimeScale ? GameTime.UnscaledElapsed : GameTime.Elapsed;
+        }
+
+        /// <summary>Seconds between two poses (or frames) a velocity can be taken from — on the animation's clock, so a slow
+        /// motion's short game-time frames count — and the most the newer one may be old.</summary>
+        private const double MinSeedSpan = 0.0001, MaxSeedAge = 0.25;
+        private static bool Fresh(double span) => span >= MinSeedSpan && span <= MaxSeedAge;
+
+        /// <summary>Where the bodies' velocity at activation comes from (#361, #425): 1 = the last two poses (every part's own
+        /// motion), 2 = where the mesh was on the last two frames, with the current pose (the level of detail skipped the poses in
+        /// between: the travel and turn without the limbs' swing), 0 = nothing recent enough — what is older than a quarter
+        /// second tells nothing about the motion now. <paramref name="dt"/>: the span between the two, on the animation's clock
+        /// (<paramref name="clock"/> is its time now). Pure: the tests use it.</summary>
+        internal static int SeedSource(double clock, double poseTime, double prevPoseTime, bool havePrevPose, double frameTime, double prevFrameTime, out float dt)
+        {
+            dt = 0f;
+            if (havePrevPose && Fresh(poseTime - prevPoseTime) && clock - poseTime <= MaxSeedAge) { dt = (float)(poseTime - prevPoseTime); return 1; }
+            if (Fresh(frameTime - prevFrameTime) && clock - frameTime <= MaxSeedAge) { dt = (float)(frameTime - prevFrameTime); return 2; }
+            return 0;
+        }
+
+        /// <summary>How far the hand-over from the animation to the simulation is (0..1+), in game seconds since the activation
+        /// (#425): slower in slow motion, standing still while the game is paused — like the bodies it hands over to.</summary>
+        internal static float BlendProgress(double startTime, double now, float blendTime) => blendTime > 0f ? (float)((now - startTime) / blendTime) : 1f;
 
         private static Matrix4x4[] Compose(Instance inst, SkeletonDef skel, Matrix4x4[] animWorlds)
         {
@@ -755,7 +814,9 @@ namespace Editor.Core.Services.Physics
             }
             if (inst.BlendTime > 0f)
             {
-                float t = (float)((Stopwatch.GetTimestamp() - inst.StartTicks) / (double)Stopwatch.Frequency) / inst.BlendTime;
+                // game seconds (#425): the hand-over runs as fast as the simulation it hands over to — slower in slow motion,
+                // held while the game is paused
+                float t = BlendProgress(inst.StartTime, GameTime.Elapsed, inst.BlendTime);
                 if (t < 1f)
                 {
                     float wgt = t * t * (3f - 2f * t);

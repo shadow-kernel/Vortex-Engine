@@ -332,6 +332,39 @@ public class Clocks : VortexBehaviour
             finally { rt.End(); GameTime.ResetSession(1f / 60f); }
         }
 
+        /// <summary>#425 review: ragdolls run on game time. The hand-over blend goes as fast as the simulation — a 0.2 s blend
+        /// takes a real second at time scale 0.2 and stands still at 0 — and the bodies' starting velocity is the pose's speed per
+        /// second of the animation's clock, also from slow motion's short frames; #361: after poses the level of detail skipped,
+        /// it comes from the mesh's last two frames, and nothing older than a quarter second is used.</summary>
+        [Test]
+        public static void RagdollsTakeTheirTimeFromTheGame(TestContext t)
+        {
+            try
+            {
+                GameTime.ResetSession(1f / 60f);
+                GameTime.Scale = 0.2f;
+                for (int i = 0; i < 30; i++) GameTime.BeginTick(1f / 60f);   // half a real second
+                t.True(Near(Editor.Core.Services.Physics.RagdollService.BlendProgress(0.0, GameTime.Elapsed, 0.2f), 0.5f),
+                       "at time scale 0.2 half a real second is half of a 0.2 s blend (" + GameTime.Elapsed + " game s)");
+                double held = GameTime.Elapsed;
+                GameTime.Scale = 0f;
+                for (int i = 0; i < 30; i++) GameTime.BeginTick(1f / 60f);
+                t.Equal(held, GameTime.Elapsed, "paused: the game clock — and the blend with it — stands still");
+
+                int Source(double clock, double pose, double prevPose, double frame, double prevFrame, out float dt)
+                    => Editor.Core.Services.Physics.RagdollService.SeedSource(clock, pose, prevPose, true, frame, prevFrame, out dt);
+                float slowFrame = 0.2f / 60f;
+                t.Equal(1, Source(10.0, 10.0, 10.0 - slowFrame, 10.0, 10.0 - slowFrame, out float dt), "slow motion: the last two poses, a game-time frame apart");
+                t.True(Near(dt, slowFrame), "… over that frame's game seconds (" + dt + ")");
+                t.Equal(1, Source(10.0, 10.0, 10.0 - 0.05f / 60f, 10.0, 10.0, out _), "even at time scale 0.05");
+                t.Equal(2, Source(10.0, 8.0, 7.98, 10.0, 10.0 - 1f / 60f, out dt), "poses the level of detail skipped: the mesh's last two frames");
+                t.True(Near(dt, 1f / 60f), "… over their span");
+                t.Equal(0, Source(10.0, 8.0, 7.98, 9.0, 8.98, out _), "nothing from the last quarter second: no velocity");
+                t.Equal(0, Source(10.0, 10.0, 10.0, 10.0, 10.0, out _), "paused (the same instant twice): no velocity");
+            }
+            finally { GameTime.ResetSession(1f / 60f); }
+        }
+
         [Test]
         public static void AnimatorsFollowTheTimeScaleUnlessTheyIgnoreIt(TestContext t)
         {
