@@ -188,7 +188,7 @@ namespace Editor.Core.Services
         // thousands of times per frame. These keep that loop allocation-free and cheap.
         // One GPU mesh per primitive kind ("Primitive:Cube") for the whole scene — never one per entity.
         private static readonly Dictionary<string, long> _primitiveMeshCache = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        // Every SHARED mesh id (model submeshes + primitives): never DeleteMesh'd on behalf of one entity.
+        // Every SHARED mesh id (model submeshes, .vmesh files, primitives): never DeleteMesh'd on behalf of one entity.
         private static readonly HashSet<long> _sharedMeshIds = new HashSet<long>();
         // A model path's "path#submeshN" keys + mesh ids, resolved once — the per-frame loop no longer builds up to
         // 64 strings and misses up to 64 dictionary lookups per entity. Cleared whenever the submesh cache changes.
@@ -1716,6 +1716,7 @@ namespace Editor.Core.Services
                 // Check if it's a .vmesh file (binary format - fast load)
                 if (extension == ".vmesh")
                 {
+                    long vmesh = -1;
                     if (fromVfs)
                     {
                         // Shipped game: the native .vmesh loader is disk-path only (no bytes overload). Spill the
@@ -1730,11 +1731,21 @@ namespace Editor.Core.Services
                                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(tmp));
                                 System.IO.File.WriteAllBytes(tmp, vfsBytes);
                             }
-                            return VortexAPI.LoadVMeshFromFile(tmp);
+                            vmesh = VortexAPI.LoadVMeshFromFile(tmp);
                         }
                         catch { return -1; }
                     }
-                    return VortexAPI.LoadVMeshFromFile(fullPath);
+                    else vmesh = VortexAPI.LoadVMeshFromFile(fullPath);
+                    // one GPU mesh per .vmesh path, shared by every entity that draws it (#359): each entity used to load
+                    // its own copy — a forest of one palm was one upload and one draw run per tree. Like a model's
+                    // submeshes it is owned by the path cache: freed when no scene uses it (#358), reloaded when the
+                    // file changes (InvalidateModel), never on behalf of one entity.
+                    if (vmesh >= 0)
+                    {
+                        _submeshMeshCache[meshPath] = vmesh;
+                        _sharedMeshIds.Add(vmesh);
+                    }
+                    return vmesh;
                 }
 
                 // For model files (FBX, OBJ, etc.) - use multi-material import
