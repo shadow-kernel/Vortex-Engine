@@ -243,6 +243,65 @@ namespace VortexEditor.Shell
             catch (Exception ex) { Fail("Save scene", ex); }
         }
 
+        /// <summary>File ▸ Revert Scene (#411), like the Revert of the Material, VFX, Prefab and Behavior Tree editors: discard
+        /// the active scene's in-memory state and read its .vscene again. Asks first whenever the scene differs from its file —
+        /// saying what goes: unsaved changes, data files put back, undo steps dropped; does nothing when the scene already is its
+        /// file.</summary>
+        public static async Task RevertScene(Scene scene = null)
+        {
+            scene = scene ?? ActiveScene;
+            if (scene == null) { Toast("Open a project first"); return; }
+            var pv = SceneService.Instance.PreviewReload(scene);
+            if (pv.Blocked != null) { Toast(pv.Blocked); return; }
+            if (!pv.Differs)
+            {
+                SceneService.Instance.ReloadScene(scene);   // reads nothing: notes that the scene is its file, unsaved mark and all
+                Toast(scene.Name + " already matches its file");
+                return;
+            }
+            var what = new List<string>();
+            if (pv.Unsaved) what.Add("discards every unsaved change of the scene");
+            else if (SceneService.Instance.FileChangedOnDisk(scene)) what.Add("reads the version on disk (it changed since the editor read it)");
+            else what.Add("reads its file again");
+            if (pv.DataFiles.Count > 0) what.Add("puts back " + Plural(pv.DataFiles.Count, "terrain, foliage or area file", "terrain, foliage or area files") + " written since the save");
+            what.Add(pv.UndoSteps > 0 ? "drops its " + Plural(pv.UndoSteps, "undo step", "undo steps") : "keeps the undo history (no step is about this scene)");
+            string text = "Reloads the scene from disk: " + string.Join(", ", what) + ". This cannot be undone.";
+            if (!await Dialogs.Confirm("Revert “" + scene.Name + "”?", text, "Revert", "Cancel", destructive: true)) return;
+            var r = ReloadSceneFromDisk(scene);
+            Toast(r.Reloaded ? "Reverted " + scene.Name : r.Unchanged ? scene.Name + " already matches its file" : r.Error);
+        }
+
+        private static string Plural(int n, string one, string many) => n + " " + (n == 1 ? one : many);
+
+        /// <summary>Read a scene's .vscene again, discarding its in-memory state (#411) — File ▸ Revert Scene and the MCP
+        /// open_scene reload run this, without asking. Nothing stays selected that was replaced, the viewport re-submits the
+        /// scene and one Console line says what went.</summary>
+        public static SceneReloadResult ReloadSceneFromDisk(Scene scene)
+        {
+            var sel = Selected;
+            bool selectedHere = (sel != null && ReferenceEquals(sel.Scene, scene)) || (Vm.SelectedEntities?.Any(e => e != null && ReferenceEquals(e.Scene, scene)) ?? false);
+            var r = SceneService.Instance.ReloadScene(scene);
+            if (!r.Reloaded) return r;
+            if (selectedHere)
+            {
+                Vm.ClearSelection();
+                SelectionService.Instance.ClearSelection();
+            }
+            if (ReferenceEquals(scene, ActiveScene))
+            {
+                try { GameRuntime.MountSceneAssets(scene); } catch { }
+                try { SceneRenderService.Instance.PreloadSceneAssets(scene); } catch { }
+            }
+            SceneRenderService.StaticDirty = true;
+            AfterSceneEdit();
+            ConsoleService.Instance.LogSystem("Reverted '" + scene.Name + "' to its file" + (r.DiscardedChanges ? " — unsaved changes discarded" : "")
+                + (r.DataFilesRestored.Count > 0 ? ", " + Plural(r.DataFilesRestored.Count, "data file", "data files") + " put back (" + string.Join(", ", r.DataFilesRestored.Select(Path.GetFileName)) + ")" : "")
+                + (r.UndoStepsDropped > 0 ? ", " + Plural(r.UndoStepsDropped, "undo step", "undo steps") + " dropped" : "")
+                + (r.DataFilesKept.Count > 0 ? "; kept " + string.Join(", ", r.DataFilesKept.Select(Path.GetFileName)) + " (another scene uses it)" : "")
+                + (r.DataFilesChangedOnDisk.Count > 0 ? "; left " + string.Join(", ", r.DataFilesChangedOnDisk.Select(Path.GetFileName)) + " as it is (changed on disk since the editor wrote it)" : ""));
+            return r;
+        }
+
         // ============================================================ build
         public static void Build() => Window?.OpenBuildDialog(runAfter: false);
         public static void BuildAndRun() => Window?.OpenBuildDialog(runAfter: true);

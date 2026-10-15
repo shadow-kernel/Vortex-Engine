@@ -72,9 +72,14 @@ namespace Editor.Core.Services
                 snap.TakeList(scene, null, scene.Entities);
                 var settings = scene.Settings;
                 snap._settings.Add((scene, settings, Capture(settings, typeof(SceneSettings))));
+                snap._dirty.Add((scene, scene.IsDirty, scene.FileStateVersion));
             }
             return snap;
         }
+
+        // each scene's unsaved flag at Take: what play changed is gone after Stop, so are the marks its edits left (#411) — unless
+        // the scene was saved while playing: its file holds the game's state then, and the scene put back differs from it
+        private readonly List<(Scene scene, bool dirty, int fileState)> _dirty = new List<(Scene, bool, int)>();
 
         /// <summary>Whether Stop puts this scene back — it was loaded at Play.</summary>
         public bool Covers(Scene scene) => scene != null && _scenes.Contains(scene);
@@ -106,6 +111,7 @@ namespace Editor.Core.Services
                 }
             }
             RestoreSettings();
+            foreach (var (scene, dirty, fileState) in _dirty) scene.IsDirty = dirty || scene.FileStateVersion != fileState;
         }
 
         private static void Log(string message)

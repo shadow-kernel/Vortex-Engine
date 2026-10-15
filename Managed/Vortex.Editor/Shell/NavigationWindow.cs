@@ -232,6 +232,15 @@ namespace VortexEditor.Shell
             _clear.IsEnabled = NavigationService.HasNavMeshFile(_scene) && !_baking;
         }
 
+        /// <summary>Bring an open Navigation window up to date after a bake or clear made elsewhere (the MCP tools, #449).</summary>
+        internal static void RefreshOpen()
+        {
+            foreach (var w in EditorKit.OpenWindows<NavigationWindow>().ToList())
+            {
+                try { if (!w._baking) w.RefreshInfo(); } catch { }
+            }
+        }
+
         private void SetStatus(string text, bool error = false)
         {
             _status.Text = text ?? "";

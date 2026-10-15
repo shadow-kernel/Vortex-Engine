@@ -423,6 +423,45 @@ namespace Editor.Core.UndoRedo
         }
 
         /// <summary>
+        /// Drop every step <paramref name="match"/> picks from the undo and the redo history, keeping the order of the others,
+        /// and return how many went (#411). For steps that act on something that is gone — a scene read again from its file:
+        /// undoing one would change objects nobody sees any more, or put a discarded entity back next to its reloaded twin. A
+        /// step <paramref name="match"/> throws on is dropped too. Not while a step runs or an undo group is open.
+        /// </summary>
+        public int Drop(Func<IUndoableCommand, bool> match)
+        {
+            if (match == null)
+                return 0;
+            if (_isExecuting || _groupDepth > 0)
+                throw new InvalidOperationException("Undo steps cannot be dropped while a step runs or an undo group is open.");
+
+            int dropped = Filter(_undoStack, match) + Filter(_redoStack, match);
+            if (dropped > 0)
+                OnStateChanged();
+            return dropped;
+        }
+
+        private static int Filter(Stack<IUndoableCommand> stack, Func<IUndoableCommand, bool> match)
+        {
+            var keep = new List<IUndoableCommand>(stack.Count);   // newest first
+            int dropped = 0;
+            foreach (var command in stack)
+            {
+                bool drop;
+                try { drop = match(command); }
+                catch { drop = true; }
+                if (drop) dropped++;
+                else keep.Add(command);
+            }
+            if (dropped == 0)
+                return 0;
+            stack.Clear();
+            for (int i = keep.Count - 1; i >= 0; i--)
+                stack.Push(keep[i]);
+            return dropped;
+        }
+
+        /// <summary>
         /// Gibt eine Liste aller Undo-Befehle zurück (neueste zuerst).
         /// </summary>
         public IReadOnlyList<IUndoableCommand> GetUndoHistory()

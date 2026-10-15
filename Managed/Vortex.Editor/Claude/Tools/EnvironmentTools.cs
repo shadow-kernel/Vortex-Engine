@@ -65,33 +65,40 @@ namespace VortexEditor.Claude.Tools
                 skyEntity.AddComponent(sky);
                 scene.AddEntity(skyEntity);
             }
+            string tex = null;
             if (!string.IsNullOrEmpty(texture))
             {
                 string full = Path.IsPathRooted(texture) ? texture : Path.Combine(ProjectData.Current.Path, texture);
                 if (!File.Exists(full)) throw new ToolError("texture not found: " + texture);
-                sky.TexturePath = texture.Replace('\\', '/');
-                sky.SkyboxType = SkyboxType.Texture;
+                tex = texture.Replace('\\', '/');
             }
+            SkyboxType? kind = null;
             if (!string.IsNullOrEmpty(type))
             {
                 switch (type.ToLowerInvariant())
                 {
-                    case "gradient": sky.SkyboxType = SkyboxType.Gradient; break;
-                    case "texture": sky.SkyboxType = SkyboxType.Texture; break;
-                    case "solid": sky.SkyboxType = SkyboxType.SolidColor; break;
+                    case "gradient": kind = SkyboxType.Gradient; break;
+                    case "texture": kind = SkyboxType.Texture; break;
+                    case "solid": kind = SkyboxType.SolidColor; break;
                     default: throw new ToolError("type must be gradient, texture or solid.");
                 }
             }
-            if (exposure >= 0f) sky.Exposure = exposure;
-            if (ambient >= 0f) sky.AmbientIntensity = ambient;
-            if (top_color != null && top_color.Length >= 3) { sky.TopColorR = top_color[0]; sky.TopColorG = top_color[1]; sky.TopColorB = top_color[2]; }
-            if (horizon_color != null && horizon_color.Length >= 3) { sky.HorizonColorR = horizon_color[0]; sky.HorizonColorG = horizon_color[1]; sky.HorizonColorB = horizon_color[2]; }
-            if (bottom_color != null && bottom_color.Length >= 3) { sky.BottomColorR = bottom_color[0]; sky.BottomColorG = bottom_color[1]; sky.BottomColorB = bottom_color[2]; }
-            if (disc.HasValue) sky.SunDisc = disc.Value;
-            if (sun_size >= 0f) sky.SunSize = sun_size;
-            if (sun_disc_intensity >= 0f) sky.SunIntensity = sun_disc_intensity;
-            if (sun_glow >= 0f) sky.SunGlow = sun_glow;
-            sky.IsEnabled = true;
+            // one undo step for an existing sky too — its values are set directly (#411 review)
+            SceneModel.RecordEdit(sky, "Sky", () =>
+            {
+                if (tex != null) { sky.TexturePath = tex; sky.SkyboxType = SkyboxType.Texture; }
+                if (kind.HasValue) sky.SkyboxType = kind.Value;
+                if (exposure >= 0f) sky.Exposure = exposure;
+                if (ambient >= 0f) sky.AmbientIntensity = ambient;
+                if (top_color != null && top_color.Length >= 3) { sky.TopColorR = top_color[0]; sky.TopColorG = top_color[1]; sky.TopColorB = top_color[2]; }
+                if (horizon_color != null && horizon_color.Length >= 3) { sky.HorizonColorR = horizon_color[0]; sky.HorizonColorG = horizon_color[1]; sky.HorizonColorB = horizon_color[2]; }
+                if (bottom_color != null && bottom_color.Length >= 3) { sky.BottomColorR = bottom_color[0]; sky.BottomColorG = bottom_color[1]; sky.BottomColorB = bottom_color[2]; }
+                if (disc.HasValue) sky.SunDisc = disc.Value;
+                if (sun_size >= 0f) sky.SunSize = sun_size;
+                if (sun_disc_intensity >= 0f) sky.SunIntensity = sun_disc_intensity;
+                if (sun_glow >= 0f) sky.SunGlow = sun_glow;
+                sky.IsEnabled = true;
+            });
 
             object sun = null;
             if (align_sun)
@@ -111,8 +118,8 @@ namespace VortexEditor.Claude.Tools
                 }
                 float yaw, pitch;
                 TransformMath.LookAngles(new Vector3(0f, 0f, 0f), new Vector3(-toSun.X, -toSun.Y, -toSun.Z), out yaw, out pitch);
-                if (sunEntity.Transform != null) sunEntity.Transform.LocalRotation = new Vector3(pitch, yaw, 0f);
-                if (sun_intensity >= 0f) light.Intensity = sun_intensity;
+                if (sunEntity.Transform != null) SceneModel.SetTransform(sunEntity, null, new Vector3(pitch, yaw, 0f), null);
+                if (sun_intensity >= 0f) SceneModel.RecordEdit(light, "Sun", () => light.Intensity = sun_intensity);
                 sun = new { entity = sunEntity.Name, azimuth_deg = Math.Round(azimuth, 1), elevation_deg = Math.Round(elevation, 1), rotation = new[] { pitch, yaw, 0f }, intensity = light.Intensity };
             }
             ToolContext.UndoLabel = "sky";

@@ -108,6 +108,14 @@ namespace Editor.Core.Native
             yield return Path.Combine(baseDir, "native");
             yield return Path.GetFullPath(Path.Combine(baseDir, "..", "Frameworks"));   // .app bundle: Contents/MacOS -> Contents/Frameworks
             yield return Path.GetFullPath(Path.Combine(baseDir, ".."));                // Windows install: {app}\Editor -> {app}\VortexAPI.dll
+            // the editor's own player: {app}\Editor\player -> {app}\VortexAPI.dll (Windows install, tools/windows/stage-editor.ps1),
+            // Contents/Resources/Player -> Contents/Frameworks (.app bundle)
+            string leafDir = Path.GetFileName(Path.TrimEndingDirectorySeparator(baseDir));
+            if (string.Equals(leafDir, "player", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return Path.GetFullPath(Path.Combine(baseDir, "..", ".."));
+                yield return Path.GetFullPath(Path.Combine(baseDir, "..", "..", "Frameworks"));
+            }
             string repo = FindRepositoryRoot();
             if (repo != null)
             {

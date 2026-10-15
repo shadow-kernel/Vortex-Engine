@@ -567,17 +567,27 @@ namespace Editor.Core.Services.Terrain
             return t != null && string.Equals((t.DataPath ?? "").Replace('\\', '/'), rel, StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>Write the terrain's heights and splat map to its <c>.vterrain</c> (assigning the default path when it has none).</summary>
+        /// <summary>Write the terrain's heights and splat map to its <c>.vterrain</c> (assigning the default path when it has none).
+        /// A terrain that has not rendered yet gets its data now: a new terrain owns its file — and its path is in the scene — from
+        /// the start, not only from the scene save after the first one (#411 review).</summary>
         public static bool Save(GameEntity e)
         {
             Runtime rt;
-            if (e == null || !_runtimes.TryGetValue(e, out rt)) return false;
+            if (e == null) return false;
+            if (!_runtimes.TryGetValue(e, out rt))
+            {
+                var tc = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
+                if (tc == null) return false;
+                try { rt = Ensure(e, tc); Hook(); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Terrain] no data to save: " + ex.Message); return false; }
+            }
             var t = rt.Component;
             if (string.IsNullOrWhiteSpace(t.DataPath)) t.DataPath = DefaultDataPath(e);
             string abs = ResolvePath(t.DataPath);
             if (abs == null) return false;
             bool created = !File.Exists(abs);
-            try { rt.Data.Save(abs); rt.Unsaved = false; PlaySession.NoteWrite(abs, created); return true; }   // a terrain made in play takes its file along (#423)
+            SceneDataFiles.BeforeWrite(abs, e.Scene);   // a revert puts the saved version back (#411)
+            try { rt.Data.Save(abs); rt.Unsaved = false; SceneDataFiles.Written(abs); PlaySession.NoteWrite(abs, created); return true; }   // a terrain made in play takes its file along (#423)
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Terrain] save failed: " + ex.Message); return false; }
         }
 
@@ -596,7 +606,8 @@ namespace Editor.Core.Services.Terrain
         {
             if (_hooked) return;
             _hooked = true;
-            try { SceneService.Instance.SceneSaved += (s, scene) => { try { SaveAll(scene); } catch { } }; } catch { }
+            // before the scene file is written, by every save path: a data path assigned now is saved with the scene (#411 review)
+            Scene.Saving += scene => { try { SaveAll(scene); } catch { } };
         }
 
         // ---------------------------------------------------------------- editing

@@ -29,7 +29,9 @@ namespace VortexEditor.Claude.Tools
         // ================================================================== scenes
 
         [McpServerTool(Name = "list_scenes", ReadOnly = true, Idempotent = true)]
-        [Description("Lists the project's scenes: name, file, whether it is the active (edited) scene, entity count, unsaved changes.")]
+        [Description("Lists the project's scenes: name, file, whether it is the active (edited) scene, entity count, unsaved (the scene in memory " +
+                     "differs from what it was when read or saved, whichever way it was edited), and file_changed_on_disk when its .vscene changed " +
+                     "since the editor read or wrote it (a git checkout).")]
         public static object ListScenes()
         {
             var p = SceneModel.Project;
@@ -40,25 +42,91 @@ namespace VortexEditor.Claude.Tools
                 active = ReferenceEquals(s, p.ActiveScene) ? (bool?)true : null,
                 loaded = s.IsLoaded,
                 entities = s.IsLoaded ? SceneModel.All(s).Count() : (int?)null,
-                unsaved = s.IsDirty ? (bool?)true : null,
+                unsaved = SceneService.Instance.HasUnsavedChanges(s) ? (bool?)true : null,
+                file_changed_on_disk = SceneService.Instance.FileChangedOnDisk(s) ? (bool?)true : null,
             }).ToArray();
         }
 
-        [McpServerTool(Name = "open_scene"), NoDryRun]
-        [Description("Makes a scene the active (edited) scene — by name, or by .vscene path relative to the project (loaded into the project if needed).")]
-        public static object OpenScene([Description("Scene name or project-relative .vscene path")] string scene)
+        // ManagesUndo: a reload drops the scene's undo steps itself — no undo group may be open around it (#411)
+        [McpServerTool(Name = "open_scene"), ManagesUndo]
+        [Description("Makes a scene the active (edited) scene — by name, or by .vscene path relative to the project (loaded into the project if needed). " +
+                     "Every scene of the project is already in memory, so opening one does NOT read its file again: the result says already_open, with " +
+                     "unsaved_changes (edits since it was read or saved), file_changed_on_disk (its .vscene changed since, e.g. by a git checkout) and how " +
+                     "many undo steps a reload would drop. reload: true discards the scene's in-memory state and reads its .vscene again — entities, " +
+                     "environment, name and id come from the file, terrain / foliage / area data files written since the last save are put back (one " +
+                     "made since is removed; one changed on disk since the editor wrote it, e.g. by a git pull, is left as it is), the selection is " +
+                     "cleared and the scene's undo steps are dropped (cannot be undone); when the scene already matches its file nothing happens " +
+                     "(unchanged). Refused while playing, and when an entity of the file is in another loaded scene now.")]
+        public static object OpenScene(
+            [Description("Scene name or project-relative .vscene path (default: the active scene)")] string scene = null,
+            [Description("Discard the scene in memory and read its .vscene file again")] bool reload = false)
         {
             var p = SceneModel.Project;
-            var hit = p.Scenes.FirstOrDefault(s => s != null && string.Equals(s.Name, scene, StringComparison.OrdinalIgnoreCase));
+            var hit = string.IsNullOrEmpty(scene) ? SceneModel.ActiveScene
+                : p.Scenes.FirstOrDefault(s => s != null && string.Equals(s.Name, scene, StringComparison.OrdinalIgnoreCase));
+            string full = null;
             if (hit == null)
             {
-                string full = Path.GetFullPath(Path.Combine(p.Path, scene ?? ""));
+                full = Path.GetFullPath(Path.Combine(p.Path, scene ?? ""));
                 if (!full.StartsWith(Path.GetFullPath(p.Path), StringComparison.Ordinal) || !File.Exists(full) || !full.EndsWith(".vscene", StringComparison.OrdinalIgnoreCase))
                     throw new ToolError("No scene '" + scene + "'. Scenes: " + string.Join(", ", p.Scenes.Where(s => s != null).Select(s => s.Name)));
-                hit = EditorCommands.LoadSceneFile(full) ?? throw new ToolError("Could not load " + scene + ".");
+                // a path to a scene the project already holds is that scene (LoadSceneFile would only activate it)
+                hit = p.Scenes.FirstOrDefault(s => s != null && !string.IsNullOrEmpty(s.FilePath)
+                                                   && string.Equals(Path.GetFullPath(s.FilePath), full, StringComparison.OrdinalIgnoreCase));
             }
-            else EditorSession.Instance.ActivateScene(hit);
-            return new { active = hit.Name, entities = SceneModel.All(hit).Count() };
+            if (hit == null)
+            {
+                // not in the project yet: read from disk now
+                hit = EditorCommands.LoadSceneFile(full) ?? throw new ToolError("Could not load " + scene + ".");
+                return new { active = hit.Name, entities = SceneModel.All(hit).Count() };
+            }
+            if (reload)
+            {
+                if (SceneModel.Playing) throw new ToolError("Stop play mode first (exit_play_mode): Stop puts the scenes of Play back, over a scene read while playing.");
+                var r = EditorCommands.ReloadSceneFromDisk(hit);
+                if (r.Error != null) throw new ToolError(r.Error);
+                if (!ReferenceEquals(p.ActiveScene, hit)) EditorSession.Instance.ActivateScene(hit);
+                if (r.Unchanged)
+                    return new { active = hit.Name, entities = SceneModel.All(hit).Count(), reloaded = false, unchanged = true,
+                                 note = "The scene already matches its file: nothing was read and no undo step was dropped." };
+                return new
+                {
+                    active = hit.Name,
+                    reloaded = true,
+                    entities = SceneModel.All(hit).Count(),
+                    discarded_unsaved_changes = r.DiscardedChanges,
+                    undo_steps_dropped = r.UndoStepsDropped,
+                    data_files_restored = r.DataFilesRestored.Count > 0 ? r.DataFilesRestored.Select(Rel).ToArray() : null,
+                    data_files_kept = r.DataFilesKept.Count > 0 ? r.DataFilesKept.Select(Rel).ToArray() : null,
+                    data_files_changed_on_disk = r.DataFilesChangedOnDisk.Count > 0 ? r.DataFilesChangedOnDisk.Select(Rel).ToArray() : null,
+                };
+            }
+            // the scene was in memory all along: say so, whether it still matches its file, and what a reload would cost (#411)
+            bool unsaved = SceneService.Instance.HasUnsavedChanges(hit);
+            bool changedOnDisk = SceneService.Instance.FileChangedOnDisk(hit);
+            int drops = 0;
+            if (unsaved || changedOnDisk)
+            {
+                var pv = SceneService.Instance.PreviewReload(hit);
+                if (pv.Blocked == null && pv.Differs) drops = pv.UndoSteps;
+            }
+            EditorSession.Instance.ActivateScene(hit);
+            string note = null;
+            if (unsaved || changedOnDisk)
+                note = "Nothing was read from disk: " + (unsaved && changedOnDisk ? "the scene has unsaved changes, and its file changed on disk since it was read"
+                       : unsaved ? "the scene has unsaved changes" : "its file changed on disk since it was read") +
+                       ". reload: true reads the file (discarding the in-memory state" + (drops > 0 ? ", dropping " + drops + (drops == 1 ? " undo step" : " undo steps") : "") +
+                       "); save_scene keeps the in-memory state" + (changedOnDisk ? " over the file" : "") + ".";
+            return new
+            {
+                active = hit.Name,
+                entities = SceneModel.All(hit).Count(),
+                already_open = true,
+                unsaved_changes = unsaved ? (bool?)true : null,
+                file_changed_on_disk = changedOnDisk ? (bool?)true : null,
+                reload_drops_undo_steps = drops > 0 ? (int?)drops : null,
+                note,
+            };
         }
 
         [McpServerTool(Name = "save_scene", Idempotent = true), NoDryRun]
@@ -69,7 +137,9 @@ namespace VortexEditor.Claude.Tools
             var s = string.IsNullOrEmpty(scene) ? SceneModel.ActiveScene
                 : p.Scenes.FirstOrDefault(x => x != null && string.Equals(x.Name, scene, StringComparison.OrdinalIgnoreCase)) ?? throw new ToolError("No scene named '" + scene + "'.");
             SceneService.Instance.SaveScene(s);
-            return new { saved = s.Name, file = string.IsNullOrEmpty(s.FilePath) ? null : Rel(s.FilePath) };
+            // the file holds the game's state now; Stop puts the scene in memory back — it differs from the file then (#411 review)
+            string note = SceneModel.Playing ? "Saved while playing: the file holds the scene as the game has it now. Stop puts the scene in memory back to before Play, so it then differs from the file (unsaved) — save_scene after Stop keeps the editor's version." : null;
+            return new { saved = s.Name, file = string.IsNullOrEmpty(s.FilePath) ? null : Rel(s.FilePath), note };
         }
 
         [McpServerTool(Name = "scene_outline", ReadOnly = true, Idempotent = true)]
@@ -84,7 +154,8 @@ namespace VortexEditor.Claude.Tools
             var sb = new StringBuilder();
             int lines = 0, total = 0;
             IEnumerable<GameEntity> top = root == null ? scene.Entities : new[] { SceneModel.Resolve(root) };
-            sb.Append("Scene '").Append(scene.Name).Append("'").Append(scene.IsDirty ? " (unsaved)" : "").Append('\n');
+            sb.Append("Scene '").Append(scene.Name).Append("'").Append(SceneService.Instance.HasUnsavedChanges(scene) ? " (unsaved)" : "")
+              .Append(SceneService.Instance.FileChangedOnDisk(scene) ? " (file changed on disk)" : "").Append('\n');
             void Walk(GameEntity e, int depth)
             {
                 total++;
