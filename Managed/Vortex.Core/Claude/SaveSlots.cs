@@ -17,6 +17,10 @@ namespace Editor.Core.Claude
     /// has open in that folder goes through the running game's cache instead: it sees a change at once, and a read shows
     /// its unsaved changes too. Snapshots are copies of a slot under the sandbox's snapshots/ folder, which the exported
     /// game never reads; a snapshot of a slot without a file brings that "no save yet" back on restore.
+    /// <para>Nothing here is on the undo stack, so (#458 review): before a call overwrites or deletes a slot that holds a save,
+    /// the slot is copied to an automatic snapshot ("auto-…", the newest <see cref="AutoKeep"/> are kept) that restore_save
+    /// brings back; and on a project whose play-mode saves are Shared — the default folder is the exported game's own —
+    /// deleting or replacing a slot needs game_saves: true, so it never happens to the player's real save by default.</para>
     /// </summary>
     public static class SaveSlots
     {
@@ -54,12 +58,16 @@ namespace Editor.Core.Claude
             return live ? Vortex.Save.LiveValues() : Vortex.Save.ReadFile(FileOf(slot, gameSaves));
         }
 
-        /// <summary>Set raw values (null removes the key); <paramref name="replace"/> leaves only them in the slot. Returns the
-        /// file's text before (null when there was none) for the operation log.</summary>
-        public static string Write(int slot, bool gameSaves, IDictionary<string, string> raw, bool replace, out bool live)
+        /// <summary>Set raw values (null removes the key); <paramref name="replace"/> leaves only them in the slot (on a Shared
+        /// project's default folder only with <paramref name="gameSaves"/>). A slot that holds a save is kept first as an
+        /// automatic snapshot (<paramref name="backup"/>, null when there was nothing to keep). Returns the file's text before
+        /// (null when there was none) for the operation log.</summary>
+        public static string Write(int slot, bool gameSaves, IDictionary<string, string> raw, bool replace, out bool live, out string backup)
         {
+            if (replace) GuardDestructive(slot, gameSaves, "set_save with replace");
             string file = FileOf(slot, gameSaves);
             string before = ReadText(file);
+            backup = Backup(slot, gameSaves, "set_save");
             live = IsLive(slot, gameSaves);
             string error;
             if (live) error = Vortex.Save.ApplyLive(raw, replace);
@@ -77,11 +85,14 @@ namespace Editor.Core.Claude
             return before;
         }
 
-        /// <summary>Delete a slot (a new game). True when it had a file.</summary>
-        public static bool Reset(int slot, bool gameSaves, out bool live)
+        /// <summary>Delete a slot (a new game) — on a Shared project's default folder only with <paramref name="gameSaves"/>. A save
+        /// it held is kept first as an automatic snapshot (<paramref name="backup"/>). True when it had a file.</summary>
+        public static bool Reset(int slot, bool gameSaves, out bool live, out string backup)
         {
+            GuardDestructive(slot, gameSaves, "reset_save");
             string file = FileOf(slot, gameSaves);
             bool existed = File.Exists(file);
+            backup = Backup(slot, gameSaves, "reset_save");
             live = IsLive(slot, gameSaves);
             if (live) Vortex.Save.DeleteSlot(slot);   // the session's own file, and its cache with it
             else if (existed)
@@ -90,6 +101,41 @@ namespace Editor.Core.Claude
                 catch (Exception ex) { throw new Error("The save file could not be deleted: " + ex.Message); }
             }
             return existed;
+        }
+
+        /// <summary>A call that deletes or replaces a slot, on the default folder of a project whose play-mode saves are Shared:
+        /// that folder is the exported game's own, the developer's real playthrough — refused unless asked for with
+        /// game_saves: true (#458 review).</summary>
+        public static void GuardDestructive(int slot, bool gameSaves, string what)
+        {
+            if (gameSaves || UsesSandbox(false)) return;
+            throw new Error("This project's play-mode saves are Shared, so slot " + slot + " is the exported game's own save file — " + what +
+                            " would overwrite or delete the real save. Pass game_saves: true to do that on purpose, or switch the project to Sandbox " +
+                            "(Project Settings ▸ General ▸ Play testing ▸ Saves) for separate test saves.");
+        }
+
+        // ================================================================== automatic snapshots
+
+        /// <summary>The prefix of the snapshots taken before a call overwrites or deletes a slot.</summary>
+        public const string AutoPrefix = "auto-";
+        /// <summary>How many automatic snapshots are kept (the newest).</summary>
+        public const int AutoKeep = 10;
+
+        /// <summary>Before a call overwrites or deletes a slot: copy what it holds — the running game's view when it is live — to a
+        /// new automatic snapshot "auto-&lt;time&gt;-&lt;tool&gt;", and drop the oldest beyond <see cref="AutoKeep"/>. Returns the
+        /// snapshot's name, or null when the slot holds no save (nothing to lose). <paramref name="keep"/> (the snapshot a
+        /// restore is about to read) is never the one dropped.</summary>
+        public static string Backup(int slot, bool gameSaves, string tool, string keep = null)
+        {
+            string file = FileOf(slot, gameSaves);
+            var values = IsLive(slot, gameSaves) ? Vortex.Save.LiveValues() : Vortex.Save.ReadFile(file);
+            if (!File.Exists(file) && values.Count == 0) return null;
+            string name = AutoPrefix + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + "-" + tool;
+            Snapshot(slot, gameSaves, name, out _);
+            var autos = Snapshots().Where(n => n.StartsWith(AutoPrefix, StringComparison.Ordinal) && n != keep).OrderBy(n => n, StringComparer.Ordinal).ToList();
+            for (int i = 0; i < autos.Count - AutoKeep; i++)
+                try { Directory.Delete(Path.Combine(SnapshotsFolder, autos[i]), true); } catch { }
+            return name;
         }
 
         /// <summary>The slots that have a file, in order.</summary>
@@ -165,9 +211,12 @@ namespace Editor.Core.Claude
         }
 
         /// <summary>Put the snapshot's copy of a slot back — the slot's file is replaced, or removed when the slot had no save
-        /// when the snapshot was taken; a live slot is read again by the running game. Returns the number of keys, or -1.</summary>
-        public static int Restore(int slot, bool gameSaves, string name, out bool live)
+        /// when the snapshot was taken; a live slot is read again by the running game. On a Shared project's default folder only
+        /// with <paramref name="gameSaves"/>; what the slot held is kept first as an automatic snapshot (<paramref name="backup"/>).
+        /// Returns the number of keys, or -1.</summary>
+        public static int Restore(int slot, bool gameSaves, string name, out bool live, out string backup)
         {
+            GuardDestructive(slot, gameSaves, "restore_save");
             string file = FileOf(slot, gameSaves), copy = SnapshotFile(name, slot), absent = AbsentMarker(name, slot);
             bool hasCopy = File.Exists(copy), wasAbsent = File.Exists(absent);
             if (!hasCopy && !wasAbsent)
@@ -179,6 +228,7 @@ namespace Editor.Core.Claude
                     .Select(f => Path.GetFileNameWithoutExtension(f).Substring("save_slot".Length)).Distinct().ToList();
                 throw new Error("The snapshot \"" + name + "\" has no copy of slot " + slot + " (it has slot " + string.Join(", ", slots) + ").");
             }
+            backup = Backup(slot, gameSaves, "restore_save", keep: SnapshotName(name));
             live = IsLive(slot, gameSaves);
             int keys;
             try

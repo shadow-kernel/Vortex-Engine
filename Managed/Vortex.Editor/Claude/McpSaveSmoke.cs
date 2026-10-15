@@ -13,8 +13,9 @@ using VortexEditor.Shell;
 namespace VortexEditor.Claude
 {
     /// <summary>
-    /// Editor smoke check "mcp save slots" (#458): Project Settings shows an old project's Play-mode saves as Shared and saves
-    /// the switch to Sandbox into project.vortex; then, over MCP, set_save seeds the sandbox and enter_play_mode starts the
+    /// Editor smoke check "mcp save slots" (#458): on the template — a project made before #458, so Shared — reset_save without
+    /// game_saves is refused and the real save stays; Project Settings shows Shared and saves the switch to Sandbox into
+    /// project.vortex; then, over MCP, set_save seeds the sandbox and enter_play_mode starts the
     /// game in that state; while playing set_save changes the running game's cache, snapshot_save / restore_save bring a slot
     /// back, get_save shows the game's view; reset_save removes the slot. Through all of it — a probe that writes the save
     /// every frame, Stop flushing it — the exported game's own save_slot0.dat stays byte for byte what it was. Runs only with
@@ -60,7 +61,24 @@ namespace VortexEditor.Claude
             }
             try
             {
-                // ---- Project Settings: the template is a project made before #458 (no key): Shared; the switch to Sandbox is saved
+                await McpTestClient.Rpc(http, "initialize", new JsonObject
+                {
+                    ["protocolVersion"] = "2025-06-18", ["capabilities"] = new JsonObject(),
+                    ["clientInfo"] = new JsonObject { ["name"] = "vortex-smoke-saves", ["version"] = "1" },
+                });
+                // the player's own playthrough of the exported game, which play testing must never change
+                Directory.CreateDirectory(Path.GetDirectoryName(real));
+                File.WriteAllText(real, "credits\ti:777\n");
+                byte[] realBefore = File.ReadAllBytes(real);
+
+                // ---- a project made before #458 (the template has no key) shares the game's files: deleting the real save by default
+                // is refused (#458 review)
+                project.Settings.PlayModeSaves = null;   // as the template has it today (the finally puts back what it was)
+                var refused = await McpTestClient.Call(http, "reset_save", new JsonObject());
+                if ((bool?)refused["isError"] != true || !McpTestClient.Text(refused).Contains("game_saves: true") || !File.ReadAllBytes(real).SequenceEqual(realBefore))
+                    return Fail("reset_save on a Shared project's real save must need game_saves: " + McpTestClient.Text(refused));
+
+                // ---- Project Settings: Shared is shown for it; the switch to Sandbox is saved
                 var window = new ProjectSettingsWindow();
                 window.Show();
                 for (int i = 0; i < 60 && window.PlaySaves.SelectedIndex < 0; i++) await Task.Delay(50);
@@ -74,15 +92,6 @@ namespace VortexEditor.Claude
                 if (project.Settings.PlayModeSaves != "Sandbox" || onDisk != "Sandbox")
                     return Fail("choosing Sandbox in Project Settings was not saved: " + project.Settings.PlayModeSaves + " / project.vortex: " + onDisk);
 
-                await McpTestClient.Rpc(http, "initialize", new JsonObject
-                {
-                    ["protocolVersion"] = "2025-06-18", ["capabilities"] = new JsonObject(),
-                    ["clientInfo"] = new JsonObject { ["name"] = "vortex-smoke-saves", ["version"] = "1" },
-                });
-                // the player's own playthrough of the exported game, which play testing must never change
-                Directory.CreateDirectory(Path.GetDirectoryName(real));
-                File.WriteAllText(real, "credits\ti:777\n");
-                byte[] realBefore = File.ReadAllBytes(real);
                 await C("reset_save", new JsonObject());
 
                 // ---- seed, then Play starts in that state
@@ -103,6 +112,7 @@ namespace VortexEditor.Claude
                 // ---- while playing: the running game's cache
                 var live = await C("set_save", new JsonObject { ["values"] = new JsonObject { ["credits"] = 7000 } });
                 if ((bool?)live["live"] != true || live["runtime_only"] == null || (bool)live["runtime_only"]) return Fail("set_save in play should be live and say the file stays: " + live.ToJsonString());
+                if (!((string)live["backup"] ?? "").StartsWith("auto-", StringComparison.Ordinal)) return Fail("overwriting a save keeps it as an automatic snapshot first: " + live.ToJsonString());
                 await Task.Delay(200);
                 if ((int?)(await Probed())?["Credits"] != 7000) return Fail("the running game did not see credits 7000");
                 var view = await C("get_save", new JsonObject());
@@ -115,6 +125,11 @@ namespace VortexEditor.Claude
                 var restored = await C("restore_save", new JsonObject { ["name"] = "mcp-smoke" });
                 await Task.Delay(200);
                 if ((bool?)restored["live"] != true || (int?)(await Probed())?["Credits"] != 7000) return Fail("restore_save should bring credits 7000 back into the game: " + restored.ToJsonString());
+                // the restore replaced credits 1 — its automatic snapshot brings that back, and the named one 7000 again
+                await C("restore_save", new JsonObject { ["name"] = (string)restored["backup"] });
+                await Task.Delay(200);
+                if ((int?)(await Probed())?["Credits"] != 1) return Fail("the automatic snapshot of a restore did not bring the replaced slot back: " + restored.ToJsonString());
+                await C("restore_save", new JsonObject { ["name"] = "mcp-smoke" });
                 await C("exit_play_mode", new JsonObject());   // Stop flushes the probe's ticks — into the sandbox
 
                 if (!File.ReadAllBytes(real).SequenceEqual(realBefore)) return Fail("play testing changed the exported game's save: " + File.ReadAllText(real));
@@ -123,10 +138,10 @@ namespace VortexEditor.Claude
                 if ((int?)mine["values"]?["credits"] != 777 || (string)mine["saves"] != "game") return Fail("get_save(game_saves) reads the game's own save: " + mine.ToJsonString());
                 var reset = await C("reset_save", new JsonObject());
                 var empty = await C("get_save", new JsonObject());
-                if ((bool?)reset["deleted"] != true || (bool?)empty["exists"] != false || !(empty["snapshots"] as JsonArray).Any(n => (string)n == "mcp-smoke"))
+                if ((bool?)reset["deleted"] != true || reset["backup"] == null || (bool?)empty["exists"] != false || !(empty["snapshots"] as JsonArray).Any(n => (string)n == "mcp-smoke"))
                     return Fail("reset_save: " + reset.ToJsonString() + " " + empty.ToJsonString());
 
-                log.Log("mcp save slots: OK — Project Settings saved Sandbox; set_save seeded act 4 / rank 3 / 5000 credits and Play started there; live set, snapshot, replace, restore reached the running game; the exported game's save_slot0.dat stayed byte for byte");
+                log.Log("mcp save slots: OK — on the Shared template reset_save without game_saves was refused; Project Settings saved Sandbox; set_save seeded act 4 / rank 3 / 5000 credits and Play started there; live set, snapshot, replace, restore (and back from its automatic snapshot) reached the running game; the exported game's save_slot0.dat stayed byte for byte");
                 return true;
             }
             catch (Exception ex) { return Fail(ex.GetType().Name + ": " + ex.Message); }

@@ -19,12 +19,18 @@ namespace VortexEditor.Claude.Tools
             "Sandbox — separate test saves the exported game never reads, the default of new projects — or Shared — the exported game's own files; " +
             "game_saves: true always means the exported game's own files. ";
 
+        // the count is SaveSlots.AutoKeep (an attribute text has to be a constant)
+        private const string Safety =
+            "Not on the undo stack: a slot that holds a save is first copied to an automatic snapshot (backup in the answer; restore_save brings it back, the " +
+            "newest 10 are kept). On a Shared project deleting or replacing a slot needs game_saves: true — it is the player's real save. ";
+
         private static void NeedProject() => _ = SceneModel.Project;
 
         [McpServerTool(Name = "get_save", ReadOnly = true, Idempotent = true)]
         [Description("The game's save data — what scripts store with Save.SetInt / SetFloat / SetString / SetBool: one slot's keys with their values " +
-                     "and types (int, float, string; a bool is an int 0 / 1), plus the slots that exist and the snapshots. " + Where +
-                     "In play mode the slot the game has open shows what it holds now, unsaved changes included (live: true).")]
+                     "and types (int, float, string; a bool is an int 0 / 1), plus the slots that exist and the snapshots (auto-… ones were taken before a " +
+                     "tool overwrote or deleted a slot). " + Where + "In play mode the slot the game has open shows what it holds now, unsaved changes " +
+                     "included (live: true).")]
         public static object GetSave(
             [Description("Save slot (Save.UseSlot's number; 0 is the default)")] int slot = 0,
             [Description("The exported game's own save files instead of the ones editor play uses")] bool game_saves = false)
@@ -62,7 +68,7 @@ namespace VortexEditor.Claude.Tools
                      "state (every play session reads the saves from disk). Values: numbers, text, true / false; null removes a key. A number keeps the " +
                      "type its key has (a new whole number is an int, a fraction a float); types: {\"speed\": \"float\"} chooses one (int, float, string, " +
                      "bool). replace: true leaves only these keys in the slot. " + Where + "In play mode the slot the game has open changes in the running " +
-                     "game at once (and its unsaved changes are written with it). Not on the undo stack — snapshot_save first to go back.")]
+                     "game at once (and its unsaved changes are written with it). " + Safety)]
         public static object SetSave(
             [Description("Keys and values {\"credits\": 5000, \"name\": \"Ada\", \"old_key\": null}")] JsonElement values,
             [Description("Save slot (Save.UseSlot's number; 0 is the default)")] int slot = 0,
@@ -78,6 +84,7 @@ namespace VortexEditor.Claude.Tools
             else if (types.HasValue && types.Value.ValueKind != JsonValueKind.Null) throw new ToolError("types must be an object {\"key\": \"float\"}.");
             try
             {
+                if (replace) SaveSlots.GuardDestructive(slot, game_saves, "set_save with replace");
                 var current = SaveSlots.Read(slot, game_saves, out _);
                 var raw = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (var p in values.EnumerateObject())
@@ -89,7 +96,7 @@ namespace VortexEditor.Claude.Tools
                 foreach (var k in typeOf.Keys) if (!raw.ContainsKey(k)) throw new ToolError("types names '" + k + "', which values does not set.");
                 if (raw.Count == 0 && !replace) throw new ToolError("values is empty — name at least one key (replace: true with {} empties the slot).");
                 string file = SaveSlots.FileOf(slot, game_saves);
-                string before = SaveSlots.Write(slot, game_saves, raw, replace, out bool live);
+                string before = SaveSlots.Write(slot, game_saves, raw, replace, out bool live, out string backup);
                 Logged(file, before);
                 var after = SaveSlots.Read(slot, game_saves, out _);
                 return new
@@ -101,6 +108,7 @@ namespace VortexEditor.Claude.Tools
                     removed = raw.Where(kv => kv.Value == null).Select(kv => kv.Key).ToArray() is { Length: > 0 } gone ? gone : null,
                     keys = after.Count,
                     live = live ? (bool?)true : null,
+                    backup,
                     note = live ? "the running game holds these values now" : SceneModel.Playing ? "the running game does not have this slot open — it reads it on Save.UseSlot(" + slot + ") or at the next Play" : null,
                 };
             }
@@ -109,7 +117,7 @@ namespace VortexEditor.Claude.Tools
 
         [McpServerTool(Name = "reset_save"), NoDryRun]
         [Description("Deletes a save slot — the game sees no save there, as on a first launch (Save.SlotExists is false). " + Where +
-                     "In play mode the slot the game has open is emptied in the running game too. Not on the undo stack — snapshot_save first to go back.")]
+                     "In play mode the slot the game has open is emptied in the running game too. " + Safety)]
         public static object ResetSave(
             [Description("Save slot (Save.UseSlot's number; 0 is the default)")] int slot = 0,
             [Description("The exported game's own save files instead of the ones editor play uses")] bool game_saves = false)
@@ -119,9 +127,9 @@ namespace VortexEditor.Claude.Tools
             {
                 string file = SaveSlots.FileOf(slot, game_saves);
                 string before = File.Exists(file) ? SafeRead(file) : null;
-                bool existed = SaveSlots.Reset(slot, game_saves, out bool live);
+                bool existed = SaveSlots.Reset(slot, game_saves, out bool live, out string backup);
                 if (existed) Logged(file, before, deleted: true);
-                return new { slot, saves = Saves(game_saves), file, deleted = existed, live = live ? (bool?)true : null, note = existed ? null : "the slot had no save" };
+                return new { slot, saves = Saves(game_saves), file, deleted = existed, live = live ? (bool?)true : null, backup, note = existed ? null : "the slot had no save" };
             }
             catch (SaveSlots.Error e) { throw new ToolError(e.Message); }
         }
@@ -146,8 +154,9 @@ namespace VortexEditor.Claude.Tools
         }
 
         [McpServerTool(Name = "restore_save"), NoDryRun]
-        [Description("Puts a snapshot_save copy back over a save slot (or removes the slot when it had no save when the snapshot was taken). In play " +
-                     "mode the game reads the restored slot at once when it has it open, dropping its unsaved changes. Not on the undo stack.")]
+        [Description("Puts a snapshot back over a save slot — one of snapshot_save, or an automatic one (auto-…) — or removes the slot when it had " +
+                     "no save when the snapshot was taken. In play mode the game reads the restored slot at once when it has it open, dropping its " +
+                     "unsaved changes. " + Safety)]
         public static object RestoreSave(
             [Description("The snapshot's name")] string name,
             [Description("Save slot (Save.UseSlot's number; 0 is the default)")] int slot = 0,
@@ -158,9 +167,9 @@ namespace VortexEditor.Claude.Tools
             {
                 string file = SaveSlots.FileOf(slot, game_saves);
                 string before = File.Exists(file) ? SafeRead(file) : null;
-                int keys = SaveSlots.Restore(slot, game_saves, name, out bool live);
+                int keys = SaveSlots.Restore(slot, game_saves, name, out bool live, out string backup);
                 Logged(file, before, deleted: keys < 0);
-                return new { snapshot = SaveSlots.SnapshotName(name), slot, saves = Saves(game_saves), file, keys = keys >= 0 ? (int?)keys : null, removed = keys < 0 ? (bool?)true : null, live = live ? (bool?)true : null };
+                return new { snapshot = SaveSlots.SnapshotName(name), slot, saves = Saves(game_saves), file, keys = keys >= 0 ? (int?)keys : null, removed = keys < 0 ? (bool?)true : null, live = live ? (bool?)true : null, backup };
             }
             catch (SaveSlots.Error e) { throw new ToolError(e.Message); }
         }

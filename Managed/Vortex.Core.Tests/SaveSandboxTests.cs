@@ -159,10 +159,12 @@ namespace VortexTests
 
             // edit mode: set_save writes the sandbox file, and the next Play starts from it
             var seeded = new Dictionary<string, string> { ["act"] = "i:4", ["rank"] = "i:3", ["credits"] = "i:5000" };
-            SaveSlots.Write(0, false, seeded, replace: false, out bool live);
+            SaveSlots.Write(0, false, seeded, replace: false, out bool live, out string backup);
             t.False(live, "not playing: the file");
+            t.Equal(null, backup, "a slot without a save has nothing to keep");
             t.True(File.Exists(Vortex.Save.SlotPath(0, true)) && !File.Exists(Vortex.Save.SlotPath(0, false)), "the sandbox, not the game's save");
-            SaveSlots.Write(0, false, new Dictionary<string, string> { ["credits"] = "i:4000", ["rank"] = null }, replace: false, out _);
+            SaveSlots.Write(0, false, new Dictionary<string, string> { ["credits"] = "i:4000", ["rank"] = null }, replace: false, out _, out backup);
+            t.True(backup != null && backup.StartsWith(SaveSlots.AutoPrefix, StringComparison.Ordinal), "overwriting a save keeps it first: " + backup);
             var read = SaveSlots.Read(0, false, out _);
             t.True(read.Count == 2 && read["credits"] == "i:4000" && read["act"] == "i:4", "merged, rank removed");
             Vortex.Save.BeginSession();                     // Play
@@ -171,50 +173,98 @@ namespace VortexTests
             // play mode: the slot the game has open goes through its cache
             PlayModeService.Instance.Play();
             Vortex.Save.SetInt("xp", 10);                   // the game's own change, not flushed yet
-            SaveSlots.Write(0, false, new Dictionary<string, string> { ["credits"] = "i:9999" }, replace: false, out live);
+            SaveSlots.Write(0, false, new Dictionary<string, string> { ["credits"] = "i:9999" }, replace: false, out live, out _);
             t.True(live, "live");
             t.Equal(9999, Vortex.Save.GetInt("credits"), "the running game sees it at once");
             t.Equal(10, Vortex.Save.GetInt("xp"), "its unsaved change is kept");
             t.True(File.ReadAllText(Vortex.Save.SlotPath(0, true)).Contains("xp\ti:10"), "and written with it — file and game agree");
             var gameView = SaveSlots.Read(0, false, out live);
             t.True(live && gameView["credits"] == "i:9999", "get_save shows the game's view");
-            SaveSlots.Write(3, false, new Dictionary<string, string> { ["other"] = "i:1" }, replace: false, out live);
+            SaveSlots.Write(3, false, new Dictionary<string, string> { ["other"] = "i:1" }, replace: false, out live, out _);
             t.False(live, "a slot the game has not open is a file");
 
             // snapshot, change, restore — the running game reads the restored slot
             int keys = SaveSlots.Snapshot(0, false, "act4-start", out _);
             t.Equal(3, keys, "act, credits, xp");
-            SaveSlots.Write(0, false, new Dictionary<string, string> { ["credits"] = "i:1" }, replace: true, out _);
+            SaveSlots.Write(0, false, new Dictionary<string, string> { ["credits"] = "i:1" }, replace: true, out _, out _);
             t.Equal(1, Vortex.Save.GetInt("credits"), "replaced in the game");
             t.False(Vortex.Save.HasKey("act"), "replace left only the given keys");
-            SaveSlots.Restore(0, false, "act4-start", out live);
+            SaveSlots.Restore(0, false, "act4-start", out live, out backup);
             t.True(live, "restored into the running game");
             t.Equal(9999, Vortex.Save.GetInt("credits"), "the snapshot is back");
             t.Equal(4, Vortex.Save.GetInt("act"), "all of it");
+            t.True(backup != null, "what the restore replaced was kept too");
+            SaveSlots.Restore(0, false, backup, out _, out _);
+            t.Equal(1, Vortex.Save.GetInt("credits"), "… and comes back from its automatic snapshot");
+            SaveSlots.Restore(0, false, "act4-start", out _, out _);
 
             // a slot without a save: the snapshot remembers that, restore removes the slot again
             t.Equal(-1, SaveSlots.Snapshot(5, false, "act4-start", out _), "slot 5 has no save");
-            SaveSlots.Write(5, false, new Dictionary<string, string> { ["junk"] = "i:1" }, replace: false, out _);
-            SaveSlots.Restore(5, false, "act4-start", out _);
+            SaveSlots.Write(5, false, new Dictionary<string, string> { ["junk"] = "i:1" }, replace: false, out _, out _);
+            SaveSlots.Restore(5, false, "act4-start", out _, out _);
             t.False(File.Exists(Vortex.Save.SlotPath(5, true)), "restored to no save");
-            t.True(SaveSlots.Snapshots().SequenceEqual(new[] { "act4-start" }), "the snapshot is listed");
+            t.True(SaveSlots.Snapshots().Contains("act4-start"), "the snapshot is listed");
             err = null;
-            try { SaveSlots.Restore(0, false, "nope", out _); } catch (SaveSlots.Error e) { err = e.Message; }
+            try { SaveSlots.Restore(0, false, "nope", out _, out _); } catch (SaveSlots.Error e) { err = e.Message; }
             t.True(err != null && err.Contains("act4-start"), "an unknown snapshot lists the real ones: " + err);
             err = null;
             try { SaveSlots.Snapshot(0, false, "../escape", out _); } catch (SaveSlots.Error e) { err = e.Message; }
             t.True(err != null, "a snapshot name cannot leave its folder");
 
             // reset: the game sees no save
-            t.True(SaveSlots.Reset(0, false, out live) && live, "reset the open slot");
+            t.True(SaveSlots.Reset(0, false, out live, out backup) && live, "reset the open slot");
             t.False(Vortex.Save.SlotExists(0) || Vortex.Save.HasKey("credits"), "gone from disk and from the game");
+            t.True(backup != null, "the reset slot was kept as an automatic snapshot");
             t.True(SaveSlots.Slots(false).SequenceEqual(new[] { 3 }), "slot 3 is left");
             PlayModeService.Instance.Stop();
 
             // game_saves: the exported game's own folder, explicitly
-            SaveSlots.Write(0, true, new Dictionary<string, string> { ["real"] = "i:1" }, replace: false, out _);
+            SaveSlots.Write(0, true, new Dictionary<string, string> { ["real"] = "i:1" }, replace: false, out _, out _);
             t.True(File.Exists(Vortex.Save.SlotPath(0, false)), "game_saves writes the game's own slot");
             t.False(SaveSlots.UsesSandbox(true), "and says so");
+        }
+
+        [Test]
+        public static void ASharedProjectsRealSaveIsNeverDeletedByDefault(TestContext t)
+        {
+            // #458 review: an old project (no key) plays on the exported game's own files — the save tools' default folder
+            using var host = new Host(t, "Spectre", setting: null);
+            string real = Vortex.Save.SlotPath(0, false);
+            Directory.CreateDirectory(Path.GetDirectoryName(real));
+            File.WriteAllText(real, "act\ti:6\ncredits\ti:91234\n");   // the developer's own playthrough
+            t.False(SaveSlots.UsesSandbox(false), "Shared: the default folder is the game's own");
+            foreach (var (what, call) in new (string, Action)[]
+            {
+                ("reset_save", () => SaveSlots.Reset(0, false, out _, out _)),
+                ("restore_save", () => SaveSlots.Restore(0, false, "anything", out _, out _)),
+                ("set_save with replace", () => SaveSlots.Write(0, false, new Dictionary<string, string> { ["x"] = "i:1" }, replace: true, out _, out _)),
+            })
+            {
+                string err = null;
+                try { call(); } catch (SaveSlots.Error e) { err = e.Message; }
+                t.True(err != null && err.Contains("game_saves: true") && err.Contains(what), what + " is refused on the real save without game_saves: " + err);
+                t.Equal("act\ti:6\ncredits\ti:91234\n", File.ReadAllText(real), "the real save is untouched after " + what);
+            }
+
+            // a merge is allowed — and keeps the save first; game_saves: true deletes on purpose, also kept first
+            SaveSlots.Write(0, false, new Dictionary<string, string> { ["credits"] = "i:5" }, replace: false, out _, out string backup);
+            t.True(backup != null, "set_save on the real save keeps it as an automatic snapshot first");
+            t.True(SaveSlots.Reset(0, true, out _, out string resetBackup), "game_saves: true resets on purpose");
+            t.False(File.Exists(real), "deleted");
+            SaveSlots.Restore(0, true, backup, out _, out _);
+            t.Equal("act\ti:6\ncredits\ti:91234\n", File.ReadAllText(real), "and the original playthrough comes back from the first automatic snapshot");
+            t.True(resetBackup != null && resetBackup != backup, "each overwrite has its own snapshot");
+
+            // only the newest automatic snapshots are kept — a named one never goes
+            SaveSlots.Snapshot(0, true, "mine", out _);
+            for (int i = 0; i < SaveSlots.AutoKeep + 5; i++)
+            {
+                SaveSlots.Write(0, true, new Dictionary<string, string> { ["n"] = "i:" + i }, replace: false, out _, out _);
+                System.Threading.Thread.Sleep(2);   // distinct millisecond stamps
+            }
+            var snaps = SaveSlots.Snapshots();
+            t.Equal(SaveSlots.AutoKeep, snaps.Count(s => s.StartsWith(SaveSlots.AutoPrefix, StringComparison.Ordinal)), "the newest " + SaveSlots.AutoKeep + " automatic snapshots: " + string.Join(", ", snaps));
+            t.True(snaps.Contains("mine"), "a named snapshot is not pruned");
         }
     }
 }
