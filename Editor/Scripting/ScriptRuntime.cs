@@ -116,33 +116,263 @@ namespace Editor.Scripting
         }
 
         // ---- entity queries (#39) ----
+        // #361: Scene.Find / FindByTag answer from an index instead of walking the whole scene (with an enumerator per child list)
+        // on every call: name -> its entities and tag -> its entities, each list in hierarchy order (the walk's order: Find still
+        // returns the first). It is built at the session's first query and kept up to date entry by entry — a rename or retag
+        // moves that entity, Scene.Instantiate adds the spawn (last in hierarchy order), Scene.Destroy takes the subtree out.
+        // Any other change of the hierarchy (the editor, a tool) leaves it stale: the queries then walk the scene as before the
+        // index (without its allocations) until the walks on that state of the hierarchy have cost about one rebuild
+        // (WalksPerRebuild), and only then is it rebuilt — a hierarchy that changes before every query never pays a rebuild per
+        // change, one that settles gets its index back.
+
+        /// <summary>Queries answered by walking a changed hierarchy before the index is rebuilt. Measured on 10,000 entities: a
+        /// rebuild ~0.55 ms, a walk ~50 µs (one before the index: ~95 µs) — with 16, a change followed by any number of queries
+        /// never costs more than those queries did before the index.</summary>
+        internal const int WalksPerRebuild = 16;
+        /// <summary>Renames / retags remembered between two queries; beyond that the index goes stale (a rebuild reads every name).</summary>
+        internal const int MaxPendingRenames = 256;
+
+        private readonly Dictionary<string, List<GameEntity>> _byName = new Dictionary<string, List<GameEntity>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<GameEntity>> _byTag = new Dictionary<string, List<GameEntity>>(StringComparer.Ordinal);
+        private readonly Dictionary<GameEntity, (int Order, string Name, string Tag)> _indexed = new Dictionary<GameEntity, (int, string, string)>(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<GameEntity> _renamed = new HashSet<GameEntity>(ReferenceEqualityComparer.Instance);   // since the last query; locked (the editor renames on its thread)
+        private bool _renamesLost;   // more renames than remembered (under the _renamed lock): stale until the rebuild
+        private readonly List<GameEntity> _walkHits = new List<GameEntity>();
+        private Scene _indexScene;
+        private int _indexHierarchy = -1, _nextOrder, _staleHierarchy = -1, _staleWalks;
+        private bool _indexWatching;
+
+        /// <summary>How often the name / tag index was built from scratch (the tests count with it).</summary>
+        internal int IndexBuilds { get; private set; }
+        /// <summary>Names and tags the index keeps lists for (the tests check they do not pile up over a session).</summary>
+        internal int IndexKeys => _byName.Count + _byTag.Count;
+
+        private void OnEntityNamingChanged(GameEntity e)
+        {
+            lock (_renamed)
+            {
+                if (_renamesLost) return;
+                if (_renamed.Count < MaxPendingRenames) _renamed.Add(e);
+                else { _renamed.Clear(); _renamesLost = true; }   // too many to move one by one: the rebuild reads them all
+            }
+        }
+
+        /// <summary>Is the index the running scene as it is at hierarchy version <paramref name="hierarchy"/> — no change it did
+        /// not follow, no renames it lost?</summary>
+        private bool IndexCurrent(int hierarchy)
+        {
+            if (!ReferenceEquals(_indexScene, _currentScene) || _indexHierarchy != hierarchy) return false;
+            bool lost;
+            lock (_renamed) lost = _renamesLost;
+            if (lost) _indexHierarchy = -1;   // stale from here on, until the rebuild
+            return !lost;
+        }
+
+        /// <summary>Ready the index for a query. True: answer from it (the renames since the last query applied). False: walk the
+        /// scene for this one — the hierarchy changed under the index (see above). The session's first query builds it.</summary>
+        private bool IndexReady()
+        {
+            if (!_indexWatching) { GameEntity.NamingChanged += OnEntityNamingChanged; _indexWatching = true; }
+            int h = GameEntity.HierarchyVersion;
+            if (IndexCurrent(h)) { ApplyPendingRenames(); return true; }
+            if (ReferenceEquals(_indexScene, _currentScene))   // built before, stale now
+            {
+                if (h != _staleHierarchy) { _staleHierarchy = h; _staleWalks = 0; }
+                if (++_staleWalks <= WalksPerRebuild) return false;
+            }
+            RebuildIndex(h);
+            return true;
+        }
+
+        private void RebuildIndex(int hierarchy)
+        {
+            var scene = _currentScene;
+            lock (_renamed) { _renamed.Clear(); _renamesLost = false; }   // a rename during the walk below is pending again
+            foreach (var list in _byName.Values) list.Clear();   // the lists are reused: rebuilding the same names allocates nothing
+            foreach (var list in _byTag.Values) list.Clear();
+            _indexed.Clear();
+            _nextOrder = 0;
+            if (scene?.Entities != null)
+                for (int i = 0; i < scene.Entities.Count; i++) IndexRecursive(scene.Entities[i]);
+            DropEmpty(_byName); DropEmpty(_byTag);   // names nobody carries any more do not pile up over a session
+            _indexScene = scene; _indexHierarchy = hierarchy;
+            _staleHierarchy = -1; _staleWalks = 0;
+            IndexBuilds++;
+        }
+
+        private static void DropEmpty(Dictionary<string, List<GameEntity>> map)
+        {
+            foreach (var kv in map) if (kv.Value.Count == 0) map.Remove(kv.Key);   // removing while enumerating: allowed since .NET Core 3
+        }
+
+        private void IndexRecursive(GameEntity e)
+        {
+            if (e == null) return;
+            string name = e.Name, tag = e.Tag;   // read once: a rename on the editor's thread meanwhile is pending, not half-applied
+            if (!_indexed.TryAdd(e, (_nextOrder, name, tag))) return;
+            _nextOrder++;
+            if (name != null) ListFor(_byName, name).Add(e);   // visited in hierarchy order: the lists stay sorted
+            if (tag != null) ListFor(_byTag, tag).Add(e);
+            var children = e.Children;
+            for (int i = 0; i < children.Count; i++) IndexRecursive(children[i]);
+        }
+
+        private static List<GameEntity> ListFor(Dictionary<string, List<GameEntity>> map, string key)
+        {
+            if (!map.TryGetValue(key, out var list)) map[key] = list = new List<GameEntity>();
+            return list;
+        }
+
+        /// <summary>A renamed / retagged entity moves to its new lists, at its place in hierarchy order.</summary>
+        private void Reindex(GameEntity e)
+        {
+            if (e == null || !_indexed.TryGetValue(e, out var rec)) return;   // not in the scene's index: nothing to move
+            string name = e.Name, tag = e.Tag;
+            if (rec.Name != name)
+            {
+                RemoveFrom(_byName, rec.Name, e, rec.Order);
+                if (name != null) InsertSorted(ListFor(_byName, name), e, rec.Order);
+            }
+            if (rec.Tag != tag)
+            {
+                RemoveFrom(_byTag, rec.Tag, e, rec.Order);
+                if (tag != null) InsertSorted(ListFor(_byTag, tag), e, rec.Order);
+            }
+            _indexed[e] = (rec.Order, name, tag);
+        }
+
+        private int OrderOf(GameEntity e) => _indexed.TryGetValue(e, out var r) ? r.Order : int.MaxValue;
+
+        private int SortedIndex(List<GameEntity> list, int order)
+        {
+            int lo = 0, hi = list.Count;
+            while (lo < hi) { int mid = (lo + hi) >> 1; if (OrderOf(list[mid]) < order) lo = mid + 1; else hi = mid; }
+            return lo;
+        }
+
+        private void InsertSorted(List<GameEntity> list, GameEntity e, int order) => list.Insert(SortedIndex(list, order), e);
+
+        /// <summary>Take <paramref name="e"/> out of <paramref name="key"/>'s list, and the key out of the map once nobody has it.</summary>
+        private void RemoveFrom(Dictionary<string, List<GameEntity>> map, string key, GameEntity e, int order)
+        {
+            if (key == null || !map.TryGetValue(key, out var list)) return;
+            int i = SortedIndex(list, order);
+            if (i < list.Count && ReferenceEquals(list[i], e)) list.RemoveAt(i); else list.Remove(e);
+            if (list.Count == 0) map.Remove(key);
+        }
+
+        /// <summary>Scene.Instantiate put a subtree at the end of the scene (#361): it joins the index after everything else, when
+        /// the index was current right before the spawn (<paramref name="hierarchyBefore"/>); otherwise it stays stale.</summary>
+        private void IndexSpawned(GameEntity root, int hierarchyBefore)
+        {
+            if (!IndexCurrent(hierarchyBefore)) return;
+            ApplyPendingRenames();
+            IndexRecursive(root);
+            _indexHierarchy = GameEntity.HierarchyVersion;
+        }
+
+        /// <summary>Scene.Destroy took a subtree out of the scene (#361): its entries go, when the index was current right before.</summary>
+        private void UnindexDestroyed(GameEntity root, int hierarchyBefore)
+        {
+            if (!IndexCurrent(hierarchyBefore)) return;
+            ApplyPendingRenames();
+            void Walk(GameEntity x)
+            {
+                if (x == null || !_indexed.TryGetValue(x, out var rec)) return;
+                RemoveFrom(_byName, rec.Name, x, rec.Order);
+                RemoveFrom(_byTag, rec.Tag, x, rec.Order);
+                _indexed.Remove(x);
+                var children = x.Children;
+                for (int i = 0; i < children.Count; i++) Walk(children[i]);
+            }
+            Walk(root);
+            _indexHierarchy = GameEntity.HierarchyVersion;
+        }
+
+        private void ApplyPendingRenames()
+        {
+            GameEntity[] changed = null;
+            lock (_renamed) { if (_renamed.Count > 0) { changed = new GameEntity[_renamed.Count]; _renamed.CopyTo(changed); _renamed.Clear(); } }
+            if (changed != null) foreach (var e in changed) Reindex(e);
+        }
+
+        private void ClearIndex()
+        {
+            if (_indexWatching) { GameEntity.NamingChanged -= OnEntityNamingChanged; _indexWatching = false; }
+            _byName.Clear(); _byTag.Clear(); _indexed.Clear(); _walkHits.Clear();
+            lock (_renamed) { _renamed.Clear(); _renamesLost = false; }
+            _indexScene = null; _indexHierarchy = -1; _nextOrder = 0; _staleHierarchy = -1; _staleWalks = 0;
+        }
+
+        // the walk for a stale index: hierarchy order, as the queries walked before the index — by index, no enumerators
+
+        private GameEntity WalkFind(string name)
+        {
+            var roots = _currentScene.Entities;
+            for (int i = 0; i < roots.Count; i++) { var hit = WalkFind(roots[i], name); if (hit != null) return hit; }
+            return null;
+        }
+
+        private static GameEntity WalkFind(GameEntity e, string name)
+        {
+            if (e == null) return null;
+            if (e.Name == name) return e;
+            var children = e.Children;
+            for (int i = 0; i < children.Count; i++) { var hit = WalkFind(children[i], name); if (hit != null) return hit; }
+            return null;
+        }
+
+        private List<GameEntity> WalkTag(string tag)
+        {
+            _walkHits.Clear();
+            var roots = _currentScene.Entities;
+            for (int i = 0; i < roots.Count; i++) WalkTag(roots[i], tag, _walkHits);
+            return _walkHits;
+        }
+
+        private static void WalkTag(GameEntity e, string tag, List<GameEntity> hits)
+        {
+            if (e == null) return;
+            if (e.Tag == tag) hits.Add(e);
+            var children = e.Children;
+            for (int i = 0; i < children.Count; i++) WalkTag(children[i], tag, hits);
+        }
+
+        /// <summary>The entities tagged <paramref name="tag"/> in hierarchy order: the index's list, or the walk's (stale index).</summary>
+        private List<GameEntity> TaggedEntities(string tag)
+        {
+            if (!IndexReady()) return WalkTag(tag);
+            return _byTag.TryGetValue(tag, out var list) ? list : null;
+        }
 
         internal long FindEntityHandle(string name)
         {
             if (string.IsNullOrEmpty(name) || _currentScene?.Entities == null) return 0;
-            GameEntity found = null;
-            void Walk(GameEntity e)
-            {
-                if (found != null || e == null) return;
-                if (e.Name == name) { found = e; return; }
-                if (e.Children != null) foreach (var c in e.Children) Walk(c);
-            }
-            foreach (var e in _currentScene.Entities) { Walk(e); if (found != null) break; }
-            return found != null ? HandleForEntity(found) : 0;
+            if (!IndexReady()) { var hit = WalkFind(name); return hit != null ? HandleForEntity(hit) : 0; }
+            return _byName.TryGetValue(name, out var list) && list.Count > 0 ? HandleForEntity(list[0]) : 0;
         }
 
         internal long[] FindEntityHandlesByTag(string tag)
         {
-            var result = new List<long>();
-            if (string.IsNullOrEmpty(tag) || _currentScene?.Entities == null) return result.ToArray();
-            void Walk(GameEntity e)
-            {
-                if (e == null) return;
-                if (e.Tag == tag) result.Add(HandleForEntity(e));
-                if (e.Children != null) foreach (var c in e.Children) Walk(c);
-            }
-            foreach (var e in _currentScene.Entities) Walk(e);
-            return result.ToArray();
+            if (string.IsNullOrEmpty(tag) || _currentScene?.Entities == null) return Array.Empty<long>();
+            var list = TaggedEntities(tag);
+            var result = list == null || list.Count == 0 ? Array.Empty<long>() : new long[list.Count];
+            for (int i = 0; i < result.Length; i++) result[i] = HandleForEntity(list[i]);
+            _walkHits.Clear();   // no references kept from a walk
+            return result;
+        }
+
+        /// <summary>Scene.FindByTag into the caller's list (#361): cleared, then filled; returns the count. No allocation once the
+        /// list has room.</summary>
+        internal int FindEntityHandlesByTag(string tag, List<long> results)
+        {
+            if (results == null) return 0;
+            results.Clear();
+            if (string.IsNullOrEmpty(tag) || _currentScene?.Entities == null) return 0;
+            var list = TaggedEntities(tag);
+            if (list != null) for (int i = 0; i < list.Count; i++) results.Add(HandleForEntity(list[i]));
+            _walkHits.Clear();
+            return results.Count;
         }
 
         internal long GetParentHandle(long id)
@@ -882,6 +1112,7 @@ namespace Editor.Scripting
         {
             if (!_active || _currentScene == null || string.IsNullOrEmpty(prefabPath)) return 0;
             GameEntity ent = null;
+            int hierarchyBefore = GameEntity.HierarchyVersion;
             try { ent = Editor.Core.Services.PrefabService.Instance.InstantiatePrefab(prefabPath, _currentScene, null, false); }
             catch (Exception ex) { LogScriptError("Scene", "Instantiate", ex); }
             if (ent == null)
@@ -890,6 +1121,7 @@ namespace Editor.Scripting
                 return 0;
             }
             _spawned.Add(ent);
+            IndexSpawned(ent, hierarchyBefore);   // #361: Scene.Find knows it without a rebuild
 
             long handle = HandleForEntity(ent);
             ((Vortex.IScriptHost)this).SetPosition(handle, pos);
@@ -1066,6 +1298,7 @@ namespace Editor.Scripting
 
             // Detach from the live tree. Authored entities are LEDGERED and restored on play end;
             // runtime-spawned ones are gone for good.
+            int hierarchyBefore = GameEntity.HierarchyVersion;
             if (_spawned.Remove(e))
             {
                 if (e.Parent != null) e.Parent.Children.Remove(e); else _currentScene.Entities.Remove(e);
@@ -1077,6 +1310,7 @@ namespace Editor.Scripting
                 else { rec.Index = _currentScene.Entities.IndexOf(e); _currentScene.Entities.Remove(e); }
                 _removed.Add(rec);
             }
+            UnindexDestroyed(e, hierarchyBefore);   // #361: Scene.Find forgets the subtree without a rebuild
             // its own render resources go now (#358); a ledgered entity gets them back on its next submit after Stop
             try { Editor.Core.Services.SceneRenderService.Instance.RemoveEntityTree(e); } catch { }
             try { Editor.Core.Services.AI.BehaviorTreeService.RemoveEntity(e); } catch { }   // #111: its tree stops with it
@@ -1484,7 +1718,8 @@ namespace Editor.Scripting
             try
             {
                 Editor.Core.Services.CameraFXService.Instance.Step(dt);   // springs/noise BEFORE sockets read them
-                Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt, realDt);   // Ignore Time Scale animators: real time (#425)
+                // Ignore Time Scale animators: real time (#425); off-screen / far ones skip or thin out their pose (#361)
+                Editor.Core.Animation.AnimationService.Instance.Step(_currentScene, dt, realDt, LodView());
                 Editor.Core.Animation.BoneSocketService.Instance.Apply(_currentScene);
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] Animation step error: " + ex.Message); }
@@ -1544,6 +1779,28 @@ namespace Editor.Scripting
         }
 
         private bool _animEventsHooked;
+
+        // the widest field of view a script asked for this session (Camera.SetFieldOfView) — the level of detail's view (#361)
+        private float _scriptFov;
+
+        /// <summary>The camera this frame renders through, for the animators' level of detail (#361): the main camera where the
+        /// scripts left it this tick (the view is applied from it after the tick). Unknown — every animator poses — while the
+        /// debug camera flies (it may look anywhere) or the scene has no main camera.</summary>
+        private Editor.Core.Animation.AnimationView LodView()
+        {
+            if (Editor.Core.Services.SceneRenderService.DebugThirdPersonView) return Editor.Core.Animation.AnimationView.Unknown;
+            var cam = Editor.Core.Services.PlayCameraHelper.FindMainCameraEntity(_currentScene);
+            if (cam?.Transform == null) return Editor.Core.Animation.AnimationView.Unknown;
+            var w = Editor.Core.Animation.BoneSocketService.EntityWorld(cam);
+            var fwd = System.Numerics.Vector3.TransformNormal(System.Numerics.Vector3.UnitZ, w);   // a camera looks along its +Z
+            float fov = 60f;
+            var comps = cam.Components;
+            for (int i = 0; i < comps.Count; i++)
+                if (comps[i] is Editor.ECS.Components.Rendering.Camera c) { fov = c.FieldOfView; break; }
+            fov = Math.Max(fov, _scriptFov);   // the wider of the two: never a view narrower than what renders
+            float aspect = _uiW > 1f && _uiH > 1f ? _uiW / _uiH : 16f / 9f;
+            return new Editor.Core.Animation.AnimationView(w.Translation, fwd, fov, aspect);
+        }
 
         /// <summary>Route an AnimEvent marker (footstep, attack hit, ...) to the entity's behaviours (#408: every one).</summary>
         private void OnAnimationServiceEvent(GameEntity entity, string name)
@@ -1897,6 +2154,8 @@ namespace Editor.Scripting
             _handlesByEntity.Clear();
             _scriptOf.Clear();
             _behavioursByEntity.Clear();
+            ClearIndex();   // #361: no references into the stopped session's scene
+            _scriptFov = 0f;
             try { Editor.Core.Services.Physics.CollisionService.ResetEvents(); Editor.Core.Services.Physics.CollisionService.ClearCharacters(); } catch { }
             _dispatching = null; _dispatchingEntity = null;
             try { Editor.Core.Services.Physics.PhysicsService.Clear(); Editor.Core.Services.Physics.PhysicsService.ContactHandler = null; } catch { }
@@ -3011,6 +3270,7 @@ namespace Editor.Scripting
 
         void Vortex.IScriptHost.SetCameraFov(float fovDegrees)
         {
+            if (fovDegrees > _scriptFov && float.IsFinite(fovDegrees)) _scriptFov = fovDegrees;   // #361: the level of detail's view
             try { Editor.DllWrapper.VortexAPI.SetViewFOV(fovDegrees); }
             catch { }
         }

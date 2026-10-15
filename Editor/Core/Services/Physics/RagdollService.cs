@@ -339,6 +339,9 @@ namespace Editor.Core.Services.Physics
         public static bool Activate(GameEntity entity, Vector3? impulse = null, Vector3? point = null)
         {
             if (entity == null) return false;
+            // #361: a character off-screen may have skipped its pose — take the current one (and its motion) first; this may
+            // start an Activate On Start ragdoll itself, which the check below then finds
+            if (!_active.ContainsKey(entity)) AnimationService.Instance.EnsurePose(entity);
             if (_active.TryGetValue(entity, out var existing))
             {
                 if (impulse.HasValue) ApplyImpulse(existing, impulse.Value, point ?? PelvisPosition(existing));

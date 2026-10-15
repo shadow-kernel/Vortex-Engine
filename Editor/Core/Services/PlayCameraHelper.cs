@@ -90,16 +90,22 @@ namespace Editor.Core.Services
 
         public static Editor.ECS.Components.Transform FindMainCamera(Scene scene) => FindMainCameraEntity(scene)?.Transform;
 
+        // #361: the lookup ran over the whole scene several times a frame (the play view, the audio listener fallback, the
+        // animators' level of detail) — it is remembered until the hierarchy or a camera's main flag changes
+        private static Scene _mainScene;
+        private static GameEntity _mainEntity;
+        private static int _mainHierarchy = -1, _mainComponents = -1, _mainFlags = -1;
+
         /// <summary>The entity carrying the scene's main camera (first in hierarchy order), or null.</summary>
         public static GameEntity FindMainCameraEntity(Scene scene)
         {
             if (scene?.Entities == null) return null;
-            foreach (var e in scene.Entities)
-            {
-                var found = Rec(e);
-                if (found != null) return found;
-            }
-            return null;
+            int h = GameEntity.HierarchyVersion, c = GameEntity.ComponentsVersion, m = Editor.ECS.Components.Rendering.Camera.MainVersion;
+            if (ReferenceEquals(scene, _mainScene) && h == _mainHierarchy && c == _mainComponents && m == _mainFlags) return _mainEntity;
+            GameEntity found = null;
+            for (int i = 0; i < scene.Entities.Count && found == null; i++) found = Rec(scene.Entities[i]);
+            _mainScene = scene; _mainEntity = found; _mainHierarchy = h; _mainComponents = c; _mainFlags = m;
+            return found;
         }
 
         private static GameEntity Rec(GameEntity e)

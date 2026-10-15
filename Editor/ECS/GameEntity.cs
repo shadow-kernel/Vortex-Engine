@@ -80,6 +80,21 @@ namespace Editor.ECS
         private Transform _transform;
         private bool _isDeserializing;
 
+        // ---- versions of the entity graph (#361): caches over a scene — Scene.Find's name / tag index, the animators' list, the
+        // main camera — rebuild when one moved, instead of walking the scene every frame or call. Process-wide, only counted up.
+        private static int _hierarchyVersion, _componentsVersion;
+
+        /// <summary>Bumped when any entity's children change or a scene's root list does (#361).</summary>
+        internal static int HierarchyVersion => System.Threading.Volatile.Read(ref _hierarchyVersion);
+        /// <summary>Bumped when any entity's component list changes (#361).</summary>
+        internal static int ComponentsVersion => System.Threading.Volatile.Read(ref _componentsVersion);
+        internal static void BumpHierarchy() => System.Threading.Interlocked.Increment(ref _hierarchyVersion);
+        private static void BumpComponents() => System.Threading.Interlocked.Increment(ref _componentsVersion);
+
+        /// <summary>#361: an entity was renamed or retagged — Scene.Find's index (the script runtime, while playing) updates that one
+        /// entry instead of rebuilding. Called on the thread that set the value.</summary>
+        internal static Action<GameEntity> NamingChanged;
+
         #region Serialized Properties
 
         [IgnoreDataMember]
@@ -100,7 +115,7 @@ namespace Editor.ECS
         public string Name
         {
             get => _name;
-            set => SetProperty(ref _name, value, nameof(Name));
+            set { if (SetProperty(ref _name, value, nameof(Name))) NamingChanged?.Invoke(this); }
         }
 
         /// <summary>Set the active flag without touching the engine — for a caller that syncs the whole scene
@@ -144,7 +159,7 @@ namespace Editor.ECS
         public string Tag
         {
             get => _tag;
-            set => SetProperty(ref _tag, value, nameof(Tag));
+            set { if (SetProperty(ref _tag, value, nameof(Tag))) NamingChanged?.Invoke(this); }
         }
 
         private string _prefabPath;
@@ -223,7 +238,7 @@ namespace Editor.ECS
                 if (_children == null) { _children = new ObservableCollection<GameEntity>(); HookLayerChipWatch(); }
                 return _children;
             }
-            set { _children = value ?? new ObservableCollection<GameEntity>(); HookLayerChipWatch(); }
+            set { _children = value ?? new ObservableCollection<GameEntity>(); HookLayerChipWatch(); BumpHierarchy(); }
         }
 
         [DataMember(Name = "components", Order = 7)]
@@ -234,7 +249,7 @@ namespace Editor.ECS
                 if (_components == null) { _components = new ObservableCollection<Component>(); HookLayerChipWatch(); }
                 return _components;
             }
-            set { _components = value ?? new ObservableCollection<Component>(); HookLayerChipWatch(); }
+            set { _components = value ?? new ObservableCollection<Component>(); HookLayerChipWatch(); BumpComponents(); }
         }
 
         #endregion
@@ -462,6 +477,9 @@ namespace Editor.ECS
 
         private void OnStructureChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
+            // #361: the caches over the scene graph are stale now — the children change what Scene.Find finds, the components
+            // which animators run
+            if (ReferenceEquals(sender, _children)) BumpHierarchy(); else BumpComponents();
             if (!_isDeserializing) NotifyRenderLayerChanged();
         }
 

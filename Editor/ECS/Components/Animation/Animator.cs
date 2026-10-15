@@ -96,9 +96,19 @@ namespace Editor.ECS.Components.Animation
             set => SetProperty(ref _ignoreTimeScale, value, nameof(IgnoreTimeScale));
         }
 
+        /// <summary>#361: pose every frame, even off-screen or far away — for a character whose bones gameplay reads every frame
+        /// (a mirror, a boss's weak spot on a socket). Off = the level of detail may skip its pose while nobody sees it.</summary>
+        [DataMember(Name = "alwaysAnimate", Order = 17, IsRequired = false, EmitDefaultValue = false)]
+        public bool AlwaysAnimate
+        {
+            get => _alwaysAnimate;
+            set => SetProperty(ref _alwaysAnimate, value, nameof(AlwaysAnimate));
+        }
+
         private bool _applyRootMotion;
         private string _rootMotionBone = "";
         private bool _ignoreTimeScale;
+        private bool _alwaysAnimate;
 
         public Animator() : base() { }
         public Animator(GameEntity entity) : base(entity) { }

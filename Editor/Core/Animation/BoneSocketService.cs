@@ -197,6 +197,7 @@ namespace Editor.Core.Animation
         public bool TryGetBoneTransform(ECS.GameEntity target, string bone, out SysVec pos, out SysVec rotEuler)
         {
             pos = default(SysVec); rotEuler = default(SysVec);
+            if (target != null) AnimationService.Instance.EnsurePose(target);   // #361: a pose the level of detail skipped comes now
             if (!TryGetBoneWorld(target, bone, out var m)) return false;
             pos = m.Translation;
             // NORMALIZE the basis before extracting the euler: on a cm-authored rig (e.g. Mixamo scale 0.01)

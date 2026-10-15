@@ -1017,11 +1017,19 @@ namespace Vortex
         // All queries return SCRIPT HANDLES (long, 0 = not found) — the same ids used by TriggerHit,
         // RaycastHit and behaviours' EntityId. Handles stay valid for the run (until scene switch/stop).
 
-        /// <summary>Find an entity anywhere in the scene by exact name (first match; 0 = none).</summary>
+        /// <summary>Find an entity anywhere in the scene by exact name (first match in hierarchy order, inactive ones included;
+        /// 0 = none). Answered from the scene's name index (#361), not by walking the scene — cheap enough for every frame.
+        /// Renames, retags, Scene.Instantiate and Scene.Destroy update the index as they happen.</summary>
         public static long Find(string name) { return Editor.Scripting.ScriptRuntime.Instance.FindEntityHandle(name); }
 
-        /// <summary>Every entity carrying the given Tag (set in the Inspector).</summary>
+        /// <summary>Every entity carrying the given Tag (set in the Inspector), in hierarchy order — from the scene's tag index
+        /// (#361). Allocates the array it returns; the overload with a list does not.</summary>
         public static long[] FindByTag(string tag) { return Editor.Scripting.ScriptRuntime.Instance.FindEntityHandlesByTag(tag); }
+
+        /// <summary>Every entity carrying the tag, into <paramref name="results"/> (cleared first) — no allocation per call once
+        /// the list has room, for a manager that asks every frame (#361). Returns the count.
+        /// <c>Scene.FindByTag("Enemy", _enemies); foreach (var id in _enemies) …</c></summary>
+        public static int FindByTag(string tag, List<long> results) { return Editor.Scripting.ScriptRuntime.Instance.FindEntityHandlesByTag(tag, results); }
 
         /// <summary>Parent of an entity (0 = root/none).</summary>
         public static long Parent(long entity) { return Editor.Scripting.ScriptRuntime.Instance.GetParentHandle(entity); }
@@ -1962,6 +1970,30 @@ namespace Vortex
             a.IgnoreTimeScale = ignore;
             return true;
         }
+
+        /// <summary>The animators' level of detail (#361) — on by default, set so that nothing you can see changes: within
+        /// <paramref name="nearRadius"/> metres of the camera every character poses every frame, seen or not (shadows, a quick
+        /// turn); beyond it a character outside the view keeps its clock, its animation events (footsteps) and its root motion,
+        /// but its pose — the costly part — waits until it is in view again; in view beyond <paramref name="farDistance"/> its
+        /// pose updates <paramref name="farRate"/> times a second, beyond twice that distance half as often. A bone query
+        /// (GetBoneTransform) and Ragdoll.Activate always get the current pose. An Animator with Always Animate (Inspector) opts
+        /// out; <c>Animation.SetLod(false)</c> poses everything every frame. Call in Start(); resets on every scene load.
+        /// <see cref="PosesEvaluated"/> / <see cref="PosesSkipped"/> show the effect.</summary>
+        public static void SetLod(bool enabled, float nearRadius = 20f, float farDistance = 50f, float farRate = 30f)
+        {
+            var lod = Editor.Core.Animation.AnimationService.Instance.Lod;
+            lod.Enabled = enabled;
+            lod.NearRadius = nearRadius >= 0f && float.IsFinite(nearRadius) ? nearRadius : Editor.Core.Animation.AnimationLod.DefaultNearRadius;
+            lod.FarDistance = farDistance > 0f && float.IsFinite(farDistance) ? farDistance : Editor.Core.Animation.AnimationLod.DefaultFarDistance;
+            lod.FarRate = farRate >= 1f && float.IsFinite(farRate) ? farRate : Editor.Core.Animation.AnimationLod.DefaultFarRate;
+        }
+
+        /// <summary>Animators whose pose was evaluated in the last frame (#361) — for a debug overlay next to
+        /// <see cref="PosesSkipped"/>.</summary>
+        public static int PosesEvaluated => Editor.Core.Animation.AnimationService.Instance.PosesEvaluated;
+
+        /// <summary>Animators whose pose the level of detail skipped in the last frame (off-screen or between far updates, #361).</summary>
+        public static int PosesSkipped => Editor.Core.Animation.AnimationService.Instance.PosesSkipped;
 
         // ---- bone-masked layers (#173) ----
 

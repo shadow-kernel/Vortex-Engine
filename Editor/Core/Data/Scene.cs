@@ -55,9 +55,22 @@ namespace Editor.Core.Data
         [DataMember(Name = "entities", Order = 2)]
         public ObservableCollection<GameEntity> Entities
         {
-            get => _entities ?? (_entities = new ObservableCollection<GameEntity>());
-            set => _entities = value ?? new ObservableCollection<GameEntity>();
+            get
+            {
+                if (_entities == null) { _entities = new ObservableCollection<GameEntity>(); _entities.CollectionChanged += OnRootsChanged; }
+                return _entities;
+            }
+            set
+            {
+                if (_entities != null) _entities.CollectionChanged -= OnRootsChanged;
+                _entities = value ?? new ObservableCollection<GameEntity>();
+                _entities.CollectionChanged += OnRootsChanged;
+                GameEntity.BumpHierarchy();
+            }
         }
+
+        // #361: a root added, removed or moved changes what Scene.Find finds and which animators run — their caches rebuild
+        private static void OnRootsChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => GameEntity.BumpHierarchy();
 
         /// <summary>
         /// Per-scene environment (fog + post-FX). Optional in the file: scenes saved before v2.7.0
@@ -167,7 +180,7 @@ namespace Editor.Core.Data
         public Scene()
         {
             _id = Guid.NewGuid();
-            _entities = new ObservableCollection<GameEntity>();
+            Entities = new ObservableCollection<GameEntity>();   // hooked: a root change counts as a hierarchy change (#361)
             _engineHandle = SceneHandle.Invalid;
 			_isActive = false;
             ActiveFlagsVersion = 1;   // a new scene's flags are authored (deserialization skips constructors)
@@ -196,7 +209,7 @@ namespace Editor.Core.Data
                 try
                 {
                     var loadedScene = Serialization.DataSerializer.LoadFromBinary<Scene>(FilePath);
-                    _entities = loadedScene._entities ?? new ObservableCollection<GameEntity>();
+                    Entities = loadedScene._entities ?? new ObservableCollection<GameEntity>();
                     _settings = loadedScene._settings;   // per-scene environment (null on pre-v2.7 files -> defaults)
                     
                     // Setze Referenzen
@@ -209,7 +222,7 @@ namespace Editor.Core.Data
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"Fehler beim Laden der Szene: {ex.Message}");
-                    _entities = new ObservableCollection<GameEntity>();
+                    Entities = new ObservableCollection<GameEntity>();
                 }
             }
 
