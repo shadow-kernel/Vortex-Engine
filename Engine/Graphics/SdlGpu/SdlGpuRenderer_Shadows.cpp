@@ -420,16 +420,16 @@ namespace vortex::graphics::sdlgpu
 
 		// ---- pack casters per tile (own culling per light frustum; the scene pack is keyed to the camera) ----
 		u32 vb_used = 0, dropped = 0;
-		auto pack = [&](const XMFLOAT4X4& vp, u32 x, u32 y, u32 size, std::vector<ShadowTile>& tiles)
+		auto pack = [&](const XMFLOAT4X4& vp, u32 x, u32 y, u32 size, std::vector<ShadowTile>& tiles, u32 limit)
 		{
 			const ShadowFrustum fr = extract_shadow_frustum(vp);
 			const float min_r = shadow_min_caster_radius(vp, size);
 			auto& casters = m_shadow_tile_casters; casters.clear();
 			for (const auto& c : all)
 				if (c.r >= min_r && sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
-			// The tiles share one instance buffer. A tile over budget keeps its LARGEST casters (the shadows one sees from
-			// afar) instead of the first in queue order, and the drop is reported below.
-			const u32 room = vb_used < MAX_SHADOW_INSTANCES ? MAX_SHADOW_INSTANCES - vb_used : 0;
+			// The tiles share one instance buffer, up to `limit` for this tile. A tile over budget keeps its LARGEST casters
+			// (the shadows one sees from afar) instead of the first in queue order, and the drop is reported below.
+			const u32 room = vb_used < limit ? limit - vb_used : 0;
 			if (casters.size() > room)
 			{
 				std::nth_element(casters.begin(), casters.begin() + room, casters.end(), [](const ShadowCaster& a, const ShadowCaster& b) { return a.r > b.r; });
@@ -464,17 +464,19 @@ namespace vortex::graphics::sdlgpu
 			tiles.push_back(tile);
 		};
 
-		// cascades first: the sun's shadows must never lose casters to the spot tiles packed before them (#363)
-		for (u32 c = 0; c < m_csm_count; ++c)
-			pack(m_csm_vp[c], (c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_csm);
+		// the spot and point tiles first, together at most a quarter of the buffer; the cascades get the rest — at least three
+		// quarters, all of it when the local lights need less (#363, #466; lighting/CascadeSplits.h)
+		const u32 local_cap = lighting::local_shadow_instance_cap(MAX_SHADOW_INSTANCES);
 		for (u32 t = 0; t < m_shadow_spot_count; ++t)
-			pack(m_shadow_spots[t].vp, (t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_spot);
+			pack(m_shadow_spots[t].vp, (t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_spot, local_cap);
 		for (u32 p = 0; p < m_shadow_point_count; ++p)
 			for (u32 f = 0; f < 6; ++f)
 			{
 				const u32 tile = p * 6 + f;
-				pack(m_shadow_points[p].face_vp[f], (tile % POINT_ATLAS_COLS) * POINT_SHADOW_TILE, (tile / POINT_ATLAS_COLS) * POINT_SHADOW_TILE, POINT_SHADOW_TILE, m_shadow_tiles_point);
+				pack(m_shadow_points[p].face_vp[f], (tile % POINT_ATLAS_COLS) * POINT_SHADOW_TILE, (tile / POINT_ATLAS_COLS) * POINT_SHADOW_TILE, POINT_SHADOW_TILE, m_shadow_tiles_point, local_cap);
 			}
+		for (u32 c = 0; c < m_csm_count; ++c)
+			pack(m_csm_vp[c], (c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_csm, MAX_SHADOW_INSTANCES);
 		if (dropped > 0)
 		{
 			const auto now = std::chrono::steady_clock::now();
@@ -482,7 +484,7 @@ namespace vortex::graphics::sdlgpu
 			{
 				m_shadow_drop_logged = now;
 				log("shadows: " + std::to_string(dropped) + " caster(s) dropped this frame — the shared shadow instance budget of "
-					+ std::to_string(MAX_SHADOW_INSTANCES) + " is full (cascades packed first, largest casters kept) (#363)");
+					+ std::to_string(MAX_SHADOW_INSTANCES) + " is full (spot / point tiles at most a quarter of it, the cascades the rest; largest casters kept) (#363, #466)");
 			}
 		}
 	}

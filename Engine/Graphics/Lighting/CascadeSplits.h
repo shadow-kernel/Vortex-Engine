@@ -112,4 +112,10 @@ namespace vortex::graphics::lighting
 		}
 		out_slope = blend * CASCADE_SLOPE_TEXELS * user;
 	}
+
+	// The shadow casters' shared instance buffer (#363, #466). The spot and point lights' tiles are packed first but take
+	// at most a quarter of it together; the sun's cascades get the rest: at least three quarters, all of it when the local
+	// lights need less. Packed first without a cap, the spot tiles once took the sun's casters (#363); packed after the
+	// cascades, they got nothing once a long shadow distance filled the buffer with the last cascade's casters.
+	inline unsigned local_shadow_instance_cap(unsigned total) { return total / 4; }
 }

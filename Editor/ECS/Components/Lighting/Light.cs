@@ -196,7 +196,9 @@ namespace Editor.ECS.Components.Lighting
         /// <summary>
         /// How far from the camera a Directional light's shadows reach (m) — the far end of its last shadow cascade (#466).
         /// 80 m by default; a road, a city or a flight wants 200–500 m. The cascades adapt: the near one stays sharp and
-        /// the last one stretches out. Point and spot lights ignore it (their shadows end at their range).
+        /// the last one stretches out. Point and spot lights ignore it (their shadows end at their range). The sun's
+        /// cascades share the frame's 8192 shadow casters with spot and point shadows: those keep up to a quarter, so at
+        /// 1 km in a dense scene the smallest far casters are the ones left out (logged).
         /// </summary>
         [DataMember(Name = "shadowDistance", Order = 24)]
         public float ShadowDistance
