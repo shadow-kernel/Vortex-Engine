@@ -224,6 +224,9 @@ namespace Editor.Core.Services
             VortexAudio.ResumeVoice(_musicCurrent);
             VortexAudio.ResumeVoice(_musicPrevious);
             foreach (var s in _oneShots) VortexAudio.ResumeVoice(s.Handle);
+            // the pause is not a tick: the first tick after it must not count it (#437 review — the beat delivery would
+            // expect the next tick that far ahead and deliver the beats up to there early)
+            _lastTickSeconds = _tickClock.Elapsed.TotalSeconds;
         }
 
         /// <summary>Stop every component voice and forget the scene. Play is non-destructive:

@@ -98,6 +98,20 @@ namespace Editor.Core.Audio
             return new AdaptiveMusicPlayer(music, h, timing, start?.Name, pars, resolveClip);
         }
 
+        /// <summary>The longest a tick is expected to take (a 20 fps game); the first tick seeds the average with at most a
+        /// 30 fps one.</summary>
+        internal const double MaxExpectedTickSeconds = 0.05, FirstTickSeconds = 1.0 / 30.0;
+
+        /// <summary>The average tick after one of <paramref name="dt"/> seconds: a hitch (or the first tick after a pause)
+        /// counts as at most twice the average, so one long frame moves the prediction by milliseconds, not by its length;
+        /// a game that really runs slower pulls it up within a few dozen ticks.</summary>
+        internal static double NextAverageTick(double average, double dt)
+        {
+            if (!(dt > 0)) return average;
+            if (!(average > 0)) return Math.Min(dt, FirstTickSeconds);
+            return Math.Min(MaxExpectedTickSeconds, average * 0.9 + Math.Min(dt, average * 2) * 0.1);
+        }
+
         /// <summary>Stem lengths, read once per file version: an MP3 stem's length is a scan of the whole file, which a
         /// second Play (a scene switch, a retry) must not pay again.</summary>
         private static readonly Dictionary<string, (long Stamp, double Seconds)> _stemSeconds = new Dictionary<string, (long, double)>(StringComparer.OrdinalIgnoreCase);
@@ -194,16 +208,18 @@ namespace Editor.Core.Audio
             return path != null && VortexAudio.MusicPlayStinger(Handle, path, Math.Max(0f, st.Volume), at);
         }
 
-        /// <summary>Per game tick: book the state change that began, then deliver the beats the tick is nearest to —
-        /// <paramref name="onBeat"/>(beat, bar, isBarLine) in order — with the next tick expected <paramref name="dtSeconds"/>
-        /// later.</summary>
+        /// <summary>Per game tick (<paramref name="dtSeconds"/> since the last one): book the state change that began, then
+        /// deliver the beats the tick is nearest to — <paramref name="onBeat"/>(beat, bar, isBarLine) in order — with the next
+        /// tick expected one average tick later.</summary>
         public void Tick(double dtSeconds, Action<int, int, bool> onBeat)
         {
             if (!TryGetMusical(out double now, out var c)) return;
-            if (dtSeconds > 0 && dtSeconds < 0.25) AverageTickSeconds = AverageTickSeconds <= 0 ? dtSeconds : AverageTickSeconds * 0.95 + dtSeconds * 0.05;
+            AverageTickSeconds = NextAverageTick(AverageTickSeconds, dtSeconds);
             if (_pendingAt != ulong.MaxValue && c.Played >= _pendingAt) { _audible = _target; _pendingAt = ulong.MaxValue; }
             _beats.Clear();
-            _tracker.Advance(now, Math.Clamp(dtSeconds, 0, 0.25) * Timing.SampleRate, _beats);
+            // the next tick is predicted from the average, not from this tick's dt: after a hitch or the first tick after a
+            // pause (#437 review: 50 / 125 ms) the beats up to half that far ahead were delivered early
+            _tracker.Advance(now, AverageTickSeconds * Timing.SampleRate, _beats);
             foreach (long b in _beats)
             {
                 bool isBar = b % Timing.BeatsPerBar == 0;

@@ -176,6 +176,47 @@ namespace VortexTests
             t.True(jump > 0 && after.Count == 2 && after[0] == 3 && after[1] == 4, "after a jump back: beats 3, 4 (" + string.Join(",", back) + ")");
         }
 
+        /// <summary>#437 review: the next tick is predicted from the average tick, so one long tick — a hitch, or the first
+        /// tick after an editor pause — does not deliver the beats of the next half of it early.</summary>
+        [Test]
+        public static void ALongTickDoesNotPullBeatsEarly(TestContext t)
+        {
+            double avg = 0;
+            for (int i = 0; i < 120; i++) avg = AdaptiveMusicPlayer.NextAverageTick(avg, 1 / 60.0);
+            t.True(Math.Abs(avg - 1 / 60.0) < 1e-6, "steady 60 fps: a 16.7 ms average (" + avg * 1000 + " ms)");
+            double afterHitch = AdaptiveMusicPlayer.NextAverageTick(avg, 0.125);
+            t.True(afterHitch < 0.019, "one 125 ms tick moves it by under 2.5 ms (" + afterHitch * 1000 + " ms)");
+            double slow = avg;
+            for (int i = 0; i < 60; i++) slow = AdaptiveMusicPlayer.NextAverageTick(slow, 1 / 30.0);
+            t.True(Math.Abs(slow - 1 / 30.0) < 0.002, "a game that really runs at 30 fps pulls it there within two seconds (" + slow * 1000 + " ms)");
+            t.True(AdaptiveMusicPlayer.NextAverageTick(0, 2.0) <= 1 / 30.0 + 1e-9, "a long first tick seeds at most a 30 fps one");
+            t.Equal(avg, AdaptiveMusicPlayer.NextAverageTick(avg, 0), "a tick of no time changes nothing");
+
+            // 60 fps with one 133 ms gap ending 33 ms before the 1.5 s line: the beat comes on the tick nearest to it, not on
+            // the tick after the gap — as it did when the last tick's length predicted the next one
+            double Worst(bool averaged)
+            {
+                var m = new MusicTiming(120, 4, 4, 0, Rate);
+                var tracker = new BeatTracker(m);
+                var beats = new List<long>();
+                double prev = 0, average = 0, earliest = 0;
+                for (double w = 0; w < 3.0; w += 1 / 60.0)
+                {
+                    if (w > 1.34 && w < 1.46) continue;   // the gap: no tick
+                    double dt = w - prev;
+                    prev = w;
+                    average = AdaptiveMusicPlayer.NextAverageTick(average, dt);
+                    beats.Clear();
+                    tracker.Advance(w * Rate, (averaged ? average : dt) * Rate, beats);
+                    foreach (var b in beats) earliest = Math.Min(earliest, w - m.FrameOfBeat(b) / Rate);
+                }
+                return earliest;
+            }
+            double now = Worst(true), before = Worst(false);
+            t.True(now > -0.0095, "averaged: no beat more than half a tick early (" + (now * 1000).ToString("0.0") + " ms)");
+            t.True(before < -0.02, "the last tick's length delivered the 1.5 s beat early (" + (before * 1000).ToString("0.0") + " ms) — what this guards");
+        }
+
         /// <summary>#465 review: Time set while the source is stopped reads back where the next Play starts.</summary>
         [Test]
         public static void TimeSetWhileStoppedLandsInTheClip(TestContext t)
