@@ -585,6 +585,11 @@ namespace Editor.Core.Data
         /// (<see cref="Services.PlaySnapshot"/>).</summary>
         internal int FileStateVersion { get; private set; }
 
+        /// <summary>Whether scenes note what their file holds when they are read or written, for <see cref="MatchesBaseline"/>
+        /// (the editor's unsaved state, #411) — one serialization per read. The standalone player has nothing to save and turns it
+        /// off before it reads the project.</summary>
+        public static bool TrackFileContent { get; set; } = true;
+
         /// <summary>The scene was just read from or written to its file (#411): nothing is unsaved, the file's size and time are
         /// what <see cref="FileChangedOnDisk"/> compares with, its content as this engine writes it is what
         /// <see cref="MatchesBaseline"/> compares with (<paramref name="written"/>: the bytes just written), and its data files
@@ -600,7 +605,7 @@ namespace Editor.Core.Data
                 else _stampLength = -1;
             }
             catch { _stampLength = -1; }
-            try { _baseline = written != null ? System.Security.Cryptography.SHA256.HashData(written) : ContentHash(); }
+            try { _baseline = !TrackFileContent ? null : written != null ? System.Security.Cryptography.SHA256.HashData(written) : ContentHash(); }
             catch { _baseline = null; }
             try { Services.SceneDataFiles.Forget(this); } catch { }
         }

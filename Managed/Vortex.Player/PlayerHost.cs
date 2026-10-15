@@ -63,6 +63,8 @@ namespace Vortex.Player
                 Log("args: " + string.Join(", ", shown));
             }
 
+            // the player saves no scene: no need to note what each scene file holds as it is read (the editor's unsaved state)
+            Editor.Core.Data.Scene.TrackFileContent = false;
             // Native engine + host input wiring before the first engine call.
             NativeLoader.Register();
             if (!string.IsNullOrEmpty(options.InputScriptPath))
