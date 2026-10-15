@@ -49,6 +49,22 @@ namespace Editor.Core.Services.Build
             return list;
         }
 
+        /// <summary>
+        /// For a player this process starts: the engine library and shaders this process runs with (VORTEX_NATIVE_DIR,
+        /// VORTEX_SHADER_DIR), so the player loads exactly the editor's engine — also in an installed layout where it would not
+        /// find it from its own folder ({app}\Editor\player next to {app}\VortexAPI.dll on Windows).
+        /// </summary>
+        public static void PassNativeLocation(IDictionary<string, string> environment)
+        {
+            if (environment == null) return;
+            string lib = Editor.Core.Native.NativeLoader.ResolvedLibraryPath;
+            string dir = !string.IsNullOrEmpty(lib) ? Path.GetDirectoryName(lib) : Environment.GetEnvironmentVariable("VORTEX_NATIVE_DIR");
+            if (!string.IsNullOrEmpty(dir)) environment["VORTEX_NATIVE_DIR"] = dir;
+            string shaders = null;
+            try { shaders = Editor.Core.Native.NativeLoader.ShaderDirectory; } catch { }
+            if (!string.IsNullOrEmpty(shaders) && Directory.Exists(shaders)) environment["VORTEX_SHADER_DIR"] = shaders;
+        }
+
         /// <summary>A name scripts can ask Application.GetArg for: letters, digits, '_', '-' and '.'.</summary>
         public static bool IsArgName(string name) => !string.IsNullOrEmpty(name) && name.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.');
 

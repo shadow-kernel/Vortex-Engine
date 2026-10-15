@@ -1032,6 +1032,7 @@ namespace VortexEditor.Shell
                 var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
                 psi.ArgumentList.Add("--project=" + p.Path);
                 if (p.ActiveScene != null) psi.ArgumentList.Add("--scene=" + p.ActiveScene.Name);
+                Editor.Core.Services.Build.PlayerRun.PassNativeLocation(psi.Environment);   // the editor's engine, also in an installed layout
                 Process.Start(psi);
                 // a separate PROCESS: the editor itself is not playing, so it must not switch into its external-window
                 // play state (that disabled script hot-reload in the editor until Stop) (#346)

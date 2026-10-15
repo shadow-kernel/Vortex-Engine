@@ -122,6 +122,7 @@ namespace VortexEditor.Claude.Tools
             }))
                 psi.ArgumentList.Add(a);
             psi.Environment["VORTEX_APPDATA_DIR"] = appData;   // save games and settings of a test run stay in the run's folder
+            PlayerRun.PassNativeLocation(psi.Environment);      // the editor's engine and shaders, wherever the layout put the player
 
             var notes = new List<string>();
             try
