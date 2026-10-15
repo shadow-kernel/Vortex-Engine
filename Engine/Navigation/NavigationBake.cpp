@@ -310,11 +310,17 @@ namespace vortex::navigation {
 		// a tile whose contours have 0xfffe vertices or more (rcBuildPolyMesh; Detour's vertex indices are 16-bit).
 		// Polygons: a polygon's neighbour inside its tile is a 15-bit index next to a border / portal flag
 		// (rcPolyMesh::polys, dtPoly::neis + DT_EXT_LINK), so a tile addresses 0x7fff polygons; more would link to the
-		// wrong neighbours.
+		// wrong neighbours. The remedies are measured on dense levels: half the Tile Size left the densest tile 26-29 % of
+		// its vertices and polygons, a Max Edge Error of 5 cells (not 1.3) 35 % of its vertices, Verts Per Polygon 6 (not 3)
+		// 38 % of its polygons; a bigger Merge Region Size changed it by under 5 %. A coarser Cell Size alone made it worse
+		// (1,912 / 2,880 / 5,364 polygons at 0.15 / 0.2 / 0.3): the Tile Size counts cells, so each tile covers more ground.
 		constexpr s32 k_max_tile_verts{ 0xfffe - 1 };
 		constexpr s32 k_max_tile_polys{ 0x7fff };
-		constexpr const char* k_fail_verts{ "too many vertices in one tile (at most 65533 fit; lower the Tile Size, or raise the Cell Size or the Max Edge Error)" };
-		constexpr const char* k_fail_polys{ "too many polygons in one tile (at most 32767 fit; lower the Tile Size, or raise the Cell Size, the Merge Region Size or the Verts Per Polygon)" };
+		constexpr const char* k_fail_verts{ "too many vertices in one tile (at most 65533 fit; lower the Tile Size or raise the Max Edge Error; "
+			"raise the Cell Size only together with a lower Tile Size: the Tile Size counts cells, so coarser cells alone make every tile bigger)" };
+		constexpr const char* k_fail_polys{ "too many polygons in one tile (at most 32767 fit; lower the Tile Size, or raise the Verts Per Polygon "
+			"toward 6 or the Max Edge Error; raise the Cell Size only together with a lower Tile Size: the Tile Size counts cells, so coarser "
+			"cells alone make every tile bigger)" };
 		// How many failed tiles of one reason the bake notes list with their world-space rectangle; the rest are counted.
 		constexpr int k_listed_failures{ 10 };
 
@@ -970,7 +976,14 @@ namespace vortex::navigation {
 			log("bake: nothing walkable (%d triangles, %d boxes, %d failed tiles)", st.input_triangles, st.input_boxes, (int)failed.size());
 			return !failed.empty() ? bake_error_failed : bake_error_empty;
 		}
-		if (total > (size_t)0x7fffffff) return bake_error_failed;
+		if (total > (size_t)0x7fffffff)
+		{
+			// a .vnav is addressed with 32-bit sizes (the C ABI's int32 lengths); say so instead of a bare failure
+			note("The navmesh would be %.1f GB (%d polygons in %d tiles), more than the 2 GB a navmesh file holds: bake a smaller area "
+				"(tighter bake bounds, or split the level into scenes), or raise the Cell Size, the Max Edge Error or the Verts Per "
+				"Polygon.", (d64)total / (1024.0 * 1024.0 * 1024.0), st.poly_count, st.tile_count);
+			return bake_error_failed;
+		}
 		for (int k = 0; k < 3; ++k) { st.bounds_min[k] = job.bmin[k]; st.bounds_max[k] = job.bmax[k]; }
 		st.data_size = (s32)total;
 

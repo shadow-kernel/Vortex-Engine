@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -50,6 +51,7 @@ public:
 				run_crowd_tests();
 				run_tall_level_tests();   // replaces the loaded navmesh
 				run_legacy_file_tests();
+				run_corrupt_file_tests();
 				run_large_level_tests();
 				run_failed_tile_report_tests();
 				run_tile_grid_tests();
@@ -666,6 +668,41 @@ private:
 #endif
 	}
 
+	// A corrupt header sizes nothing: tile_count sizes the tile pool, so it is held to what the file can hold — one flipped
+	// bit (25 -> 16,777,241) used to allocate gigabytes before the tile table was read — and max_tiles sizes nothing (a
+	// flipped bit there crashed Detour on main too). Tiles whose indices point outside them are refused, not read.
+	void run_corrupt_file_tests()
+	{
+#if VORTEX_HAS_RECAST
+		namespace format = navigation::format;
+		auto with = [](std::vector<u8> blob, size_t at, auto value) { std::memcpy(&blob[at], &value, sizeof(value)); return blob; };
+		auto loads = [](const std::vector<u8>& blob) { return navigation::load(blob.data(), (s32)blob.size()) && navigation::loaded(); };
+		const auto h = header_of(_blob);
+		const size_t tile_count_at = offsetof(format::file_header, tile_count), max_tiles_at = offsetof(format::file_header, max_tiles);
+
+		const auto t0 = std::chrono::steady_clock::now();
+		const bool flipped = loads(with(_blob, tile_count_at, (s32)(h.tile_count | (1 << 24))));
+		const d64 ms = std::chrono::duration<d64, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		std::printf("[info] tile_count %d -> %d: refused in %.2f ms\n", h.tile_count, h.tile_count | (1 << 24), ms);
+		check("a tile_count with a flipped high bit is refused at once, nothing sized by it", !flipped && ms < 100.0);
+		check("version 2: a max_tiles other than tile_count is refused", !loads(with(_blob, max_tiles_at, (s32)(h.tile_count + 1))));
+		const std::vector<u8> v1 = as_version1(_blob);
+		check("version 1: max_tiles sizes nothing, a flipped high bit there still loads",
+			loads(with(v1, max_tiles_at, (s32)(header_of(v1).max_tiles | (1 << 25)))));
+
+		// the first polygon of the first tile: a vertex index past the tile's vertices, then a neighbour past its polygons
+		dtMeshHeader mh{};
+		const size_t tile_at = sizeof(format::file_header) + sizeof(format::tile_header);
+		std::memcpy(&mh, &_blob[tile_at], sizeof(mh));
+		const size_t poly_at = tile_at + ((sizeof(dtMeshHeader) + 3) & ~(size_t)3) + ((sizeof(f32) * 3 * (size_t)mh.vertCount + 3) & ~(size_t)3);
+		check("a polygon whose vertex index points past its tile is refused",
+			!loads(with(_blob, poly_at + offsetof(dtPoly, verts), (unsigned short)mh.vertCount)));
+		check("a polygon whose neighbour index points past its tile is refused",
+			!loads(with(_blob, poly_at + offsetof(dtPoly, neis), (unsigned short)(mh.polyCount + 1))));
+		check("the untouched file still loads", loads(_blob));
+#endif
+	}
+
 	// Paddi's level in #517: bake bounds of 1,550 x 16,050 m at Cell Size 0.15 and Tile Size 512 — 76.8 m tiles, a grid of
 	// 21 x 209 = 4,389. The 32-bit poly ref left each of its tiles 512 polygons (1,024 when the bounds were narrowed under
 	// 4,096 tiles) and dropped every denser tile. Here a forest clearing — 1,600 tree trunks on 72 x 72 m, inside one
@@ -757,8 +794,9 @@ private:
 		check("failed tiles: each listed with its world-space rectangle", notes.find("tile (0, 0) at x 0.0..40.0, z 0.0..40.0 (") != std::string::npos
 			&& notes.find("tile (1, 2) at x 40.0..80.0, z 80.0..120.0 (") != std::string::npos);
 		check("failed tiles: the first 10 listed, the rest counted", count_of(notes, ") at x ") == 10 && notes.find("; ... and 2 more.") != std::string::npos);
-		check("failed tiles: no 'lower the tile size' for a polygon budget that the tile size does not change",
-			notes.find("(lower the tile size)") == std::string::npos);
+		check("failed tiles: the remedies lower what one tile holds (a coarser Cell Size alone makes the tile bigger)",
+			notes.find("lower the Tile Size or raise the Max Edge Error; raise the Cell Size only together with a lower Tile Size") != std::string::npos
+			&& notes.find("(lower the tile size)") == std::string::npos);
 	}
 
 	// The 16,384 tiles a bake used to allow came from the 32-bit poly ref as well. Paddi's next try in #517 — Tile Size
