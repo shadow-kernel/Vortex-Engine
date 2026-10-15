@@ -12,6 +12,9 @@ namespace Editor.Core.Services
     /// <summary>One line in the in-editor Console. Immutable once added.</summary>
     public class LogEntry
     {
+        /// <summary>1, 2, 3 … in the order the lines were added, never reused in this editor session (not by Clear, not by
+        /// the line cap) — read_console's cursor (#457).</summary>
+        public long Id { get; set; }
         public string Time { get; set; }        // "HH:mm:ss"
         public LogLevel Level { get; set; }
         public string LevelTag { get; set; }     // "INFO" / "WARN" / "ERROR"
@@ -48,6 +51,10 @@ namespace Editor.Core.Services
 
         /// <summary>Cap so a chatty game can't grow the list unbounded; oldest lines drop off.</summary>
         public const int MaxEntries = 5000;
+
+        /// <summary>The id of the newest line ever added (0 before the first) — also after Clear or the cap removed it.</summary>
+        public long LastId => _lastId;
+        private long _lastId;
 
         private static readonly Brush InfoBrush = Freeze("#FFC8C8CE");
         private static readonly Brush WarnBrush = Freeze("#FFE2C044");
@@ -111,7 +118,8 @@ namespace Editor.Core.Services
             try { time = DateTime.Now.ToString("HH:mm:ss"); } catch { time = ""; }
             OnUi(() =>
             {
-                Entries.Add(new LogEntry { Time = time, Level = level, LevelTag = tag, Message = message, Color = color, Icon = icon });
+                // the id is given here, on the UI thread, so ids rise in the order the lines appear (#457)
+                Entries.Add(new LogEntry { Id = ++_lastId, Time = time, Level = level, LevelTag = tag, Message = message, Color = color, Icon = icon });
                 Bump(level, +1);
                 while (Entries.Count > MaxEntries) { Bump(Entries[0].Level, -1); Entries.RemoveAt(0); }
                 EntryAdded?.Invoke();

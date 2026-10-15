@@ -772,7 +772,8 @@ namespace Vortex
         // window. Works everywhere — in-editor play, the external game window, and an exported debug/release build
         // (they're all in this process) — so an unfocused/alt-tabbed game can't be driven by stray global input. ----
         /// <summary>True only while this app's window is the foreground window. Input is ignored otherwise.
-        /// The host (native GameHost / editor shell) reports focus through Editor.Core.Input.HostInput.</summary>
+        /// The host (native GameHost / editor shell) reports focus through Editor.Core.Input.HostInput. Also true while
+        /// simulated input plays — the editor's MCP tool send_input, the player's --input file (#457).</summary>
         public static bool WindowFocused { get { return Editor.Core.Input.HostInput.IsWindowFocused(); } }
 
         // ---- Gamepad / controller (Windows.Gaming.Input incl. PlayStation, XInput fallback). Polled once per tick.

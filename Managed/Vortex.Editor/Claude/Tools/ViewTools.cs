@@ -168,7 +168,7 @@ namespace VortexEditor.Claude.Tools
         {
             _ = SceneModel.ActiveScene;
             var pms = PlayModeService.Instance;
-            int before = ConsoleService.Instance.Entries.Count;
+            long before = ConsoleService.Instance.LastId;
             if (!pms.IsPlaying) EditorSession.Instance.Play();
             else if (pms.State == PlayState.Paused) pms.Resume();
             await Task.Delay((int)(Math.Clamp(run_seconds, 0.2, 10) * 1000));
@@ -199,27 +199,37 @@ namespace VortexEditor.Claude.Tools
         // ================================================================== console & stats
 
         [McpServerTool(Name = "read_console", ReadOnly = true, Idempotent = true)]
-        [Description("Recent editor console lines (newest last): engine messages, warnings, errors and script Debug.Log output.")]
+        [Description("Editor console lines: engine messages, warnings, errors and script Debug.Log output. Without since_id the newest lines " +
+                     "(newest last). Every answer has next_id: pass it as since_id to get only the lines added since — oldest first, at most limit " +
+                     "(more = how many are left; the next call with the new next_id returns them), so polling during a play test never reads a line " +
+                     "twice. missed counts lines that were removed (Console cleared, 5000-line cap) before they were read.")]
         public static object ReadConsole(
             [Description("'all', 'warning' (warnings and errors) or 'error'")] string severity = "all",
             [Description("Maximum lines")] int limit = 50,
-            [Description("Only lines containing this text")] string contains = null)
+            [Description("Only lines containing this text")] string contains = null,
+            [Description("Only the lines from this id on: the next_id of the previous answer")] long? since_id = null)
         {
-            IEnumerable<LogEntry> entries = ConsoleService.Instance.Entries.ToList();
+            Func<LogEntry, bool> level;
             switch ((severity ?? "all").ToLowerInvariant())
             {
-                case "all": case "info": break;
-                case "warning": case "warn": case "warnings": entries = entries.Where(e => e.Level == LogLevel.Warning || e.Level == LogLevel.Error); break;
-                case "error": case "errors": entries = entries.Where(e => e.Level == LogLevel.Error); break;
+                case "all": case "info": level = null; break;
+                case "warning": case "warn": case "warnings": level = e => e.Level == LogLevel.Warning || e.Level == LogLevel.Error; break;
+                case "error": case "errors": level = e => e.Level == LogLevel.Error; break;
                 default: throw new ToolError("severity must be 'all', 'warning' or 'error'.");
             }
-            if (!string.IsNullOrEmpty(contains)) entries = entries.Where(e => e.Message?.IndexOf(contains, StringComparison.OrdinalIgnoreCase) >= 0);
-            var list = entries.ToList();
-            limit = Math.Clamp(limit, 1, 500);
+            Func<LogEntry, bool> match = level;
+            if (!string.IsNullOrEmpty(contains))
+                match = e => (level == null || level(e)) && e.Message?.IndexOf(contains, StringComparison.OrdinalIgnoreCase) >= 0;
+            var console = ConsoleService.Instance;
+            var page = Editor.Core.Claude.ConsoleCursor.Read(console.Entries, console.LastId, since_id, match, Math.Clamp(limit, 1, 500));
             return new
             {
-                total = list.Count,
-                lines = list.Skip(Math.Max(0, list.Count - limit)).Select(e => e.Time + " " + Tag(e.Level) + " " + ToolHost.Shorten(e.Message, 1200)).ToArray(),
+                total = page.Total,
+                lines = page.Lines.Select(e => e.Time + " " + Tag(e.Level) + " " + ToolHost.Shorten(e.Message, 1200)).ToArray(),
+                next_id = page.NextId,
+                more = page.More > 0 ? (int?)page.More : null,
+                missed = page.Missed > 0 ? (long?)page.Missed : null,
+                note = page.Restarted ? "since_id is newer than every line — the editor was restarted and its line ids began again — so this reads from the oldest line" : null,
             };
         }
 
@@ -257,13 +267,13 @@ namespace VortexEditor.Claude.Tools
             };
         }
 
-        private static string[] NewEntries(int before, LogLevel level, int max)
+        /// <summary>The lines of one level added after the line with id <paramref name="afterId"/> (<see cref="ConsoleService.LastId"/>
+        /// before the call) — by id, so the 5000-line cap dropping old lines meanwhile does not hide them (#457).</summary>
+        internal static string[] NewEntries(long afterId, LogLevel level, int max)
         {
-            var e = ConsoleService.Instance.Entries;
-            var list = new List<string>();
-            for (int i = Math.Min(before, e.Count); i < e.Count && list.Count < max; i++)
-                if (e[i].Level == level) list.Add(ToolHost.Shorten(e[i].Message, 600));
-            return list.Count == 0 ? null : list.ToArray();
+            var console = ConsoleService.Instance;
+            var page = Editor.Core.Claude.ConsoleCursor.Read(console.Entries, console.LastId, afterId + 1, e => e.Level == level, max);
+            return page.Lines.Count == 0 ? null : page.Lines.Select(e => ToolHost.Shorten(e.Message, 600)).ToArray();
         }
 
         private static string Tag(LogLevel l) => l == LogLevel.Error ? "ERROR" : l == LogLevel.Warning ? "WARN" : l == LogLevel.System ? "SYS" : "INFO";
