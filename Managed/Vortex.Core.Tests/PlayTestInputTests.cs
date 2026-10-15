@@ -94,46 +94,59 @@ public class InputProbe : VortexBehaviour
             t.True(bad[6].Contains("unknown key 'Nope'"), "an unknown key");
         }
 
-        [Test]
-        public static void SimulatedKeysReachTheGameThroughTheInputApi(TestContext t)
+        /// <summary>What the editor's play tick does before the scripts run: advance the simulated input, hand its mouse movement and
+        /// wheel to Input, then the scripts' tick.</summary>
+        private static void Tick(ScriptRuntime rt, double dt)
+        {
+            var (dx, dy, scroll) = HostInput.Simulated.Tick(dt);
+            Vortex.Input.MouseDeltaX = 0f; Vortex.Input.MouseDeltaY = 0f; Vortex.Input.ScrollDelta = 0f;   // nothing from the physical mouse
+            Vortex.Input.SetSimulated(dx, dy, scroll);
+            rt.Update((float)dt);
+        }
+
+        private static System.Reflection.Assembly CompileProbe(TestContext t)
         {
             var file = t.Write("Scripts/InputProbe.cs", Probe);
             var asm = RoslynScriptCompiler.Compile(new[] { file }, out var log);
             if (asm == null) throw new TestFailure("the probe does not compile: " + log);
+            return asm;
+        }
+
+        private static (ScriptRuntime rt, Vortex.VortexBehaviour probe, GameEntity player) StartProbe(TestContext t, System.Reflection.Assembly asm = null)
+        {
+            asm ??= CompileProbe(t);
             var scene = new Scene { Name = "Input" };
             var player = new GameEntity(scene, "Player");
             player.AddComponentDirect(new Script(player, "Assets/Scripts/InputProbe.cs"));
             scene.Entities.Add(player);
             var rt = ScriptRuntime.Instance;
+            rt.Begin(scene, asm);
+            return (rt, rt.BehavioursOf(player)[0], player);
+        }
+
+        [Test]
+        public static void SimulatedKeysReachTheGameThroughTheInputApi(TestContext t)
+        {
             var sim = HostInput.Simulated;
             var oldKeys = HostInput.KeyDown;
             var oldFocus = HostInput.WindowFocused;
+            ScriptRuntime rt = null;
             try
             {
                 HostInput.KeyDown = vk => false;           // nobody at the keyboard …
                 HostInput.WindowFocused = () => false;     // … and another app in front (the terminal running Claude Code)
                 sim.Clear();
-                rt.Begin(scene, asm);
-                var probe = rt.BehavioursOf(player)[0];
+                var (r, probe, _) = StartProbe(t);
+                rt = r;
                 int F(string n) => (int)probe.GetType().GetField(n).GetValue(probe);
                 float Fl(string n) => (float)probe.GetType().GetField(n).GetValue(probe);
                 const double dt = 1.0 / 60;
-                void Run(double seconds)
-                {
-                    for (double s = 0; s < seconds - 1e-9; s += dt)
-                    {
-                        // what the editor's play tick does before the scripts run
-                        var (dx, dy, scroll) = sim.Tick(dt);
-                        Vortex.Input.MouseDeltaX = dx; Vortex.Input.MouseDeltaY = dy; Vortex.Input.ScrollDelta = scroll;
-                        rt.Update((float)dt);
-                    }
-                }
+                void Run(double seconds) { for (double s = 0; s < seconds - 1e-9; s += dt) Tick(rt, dt); }
 
-                t.False(Vortex.Input.WindowFocused, "unfocused before anything plays");
                 sim.Enqueue(Json("[{\"t\": 0, \"press\": \"W\"}, {\"t\": 2, \"release\": \"W\"}, {\"t\": 2.1, \"tap\": \"LButton\"}," +
                                  " {\"t\": 0.5, \"press\": \"Space\"}, {\"t\": 0.5, \"release\": \"Space\"}, {\"t\": 1, \"look\": [40, -10, 0.5]}, {\"t\": 1.2, \"scroll\": -1}]"));
-                t.True(Vortex.Input.WindowFocused, "while input plays, the game counts as focused");
                 Run(3);
+                t.False(Vortex.Input.WindowFocused, "the window never counted as focused — only the simulated input passes the gate");
                 t.True(Math.Abs(F("WTicks") - 120) <= 1, "W held for 2 s of 60 Hz ticks: " + F("WTicks"));
                 t.True(Math.Abs(Fl("Walked") - 4f) < 0.05f, "the probe walked 2 s at 2 m/s: " + Fl("Walked"));
                 t.Equal(1, F("SpaceDowns"), "a press and release in the same frame is one GetKeyDown");
@@ -143,7 +156,6 @@ public class InputProbe : VortexBehaviour
                 t.True(Math.Abs(Fl("LookX") - 40f) < 1e-3f && Math.Abs(Fl("LookY") + 10f) < 1e-3f, "the mouse movement adds up exactly: " + Fl("LookX") + ", " + Fl("LookY"));
                 t.Equal(-1f, Fl("Scroll"), "one wheel notch down");
                 t.False(sim.Active, "everything played");
-                t.False(Vortex.Input.WindowFocused, "unfocused again once it is over");
                 t.False(HostInput.IsKeyDown(0x57), "W is up");
 
                 // the real keyboard still works next to it (OR), and Clear (Stop) releases what is held
@@ -158,11 +170,111 @@ public class InputProbe : VortexBehaviour
             }
             finally
             {
-                rt.End();
+                rt?.End();
                 sim.Clear();
+                Vortex.Input.SetSimulated(0f, 0f, 0f);
                 HostInput.KeyDown = oldKeys;
                 HostInput.WindowFocused = oldFocus;
             }
+        }
+
+        [Test]
+        public static void ALoneLookOrScrollReachesAnUnfocusedGame(TestContext t)
+        {
+            // #457 review: the simulation counted as playing only while something was left to play, so the tick that emitted the
+            // last (or only) mouse movement or wheel notch found the window "unfocused" and Input dropped it
+            var sim = HostInput.Simulated;
+            var oldKeys = HostInput.KeyDown;
+            var oldFocus = HostInput.WindowFocused;
+            ScriptRuntime rt = null;
+            try
+            {
+                HostInput.KeyDown = vk => false;
+                HostInput.WindowFocused = () => false;
+                var asm = CompileProbe(t);
+                foreach (var (label, json) in new[]
+                {
+                    ("a lone scroll", "[{\"t\": 0, \"scroll\": -1}]"),
+                    ("a lone one-frame look", "[{\"t\": 0, \"look\": [40, -10]}]"),
+                    ("a lone 0.5 s look", "[{\"t\": 0, \"look\": [40, -10, 0.5]}]"),
+                })
+                foreach (double dt in new[] { 1.0 / 60, 0.033, 0.1 })
+                {
+                    sim.Clear();
+                    var (r, probe, _) = StartProbe(t, asm);
+                    rt = r;
+                    float Fl(string n) => (float)probe.GetType().GetField(n).GetValue(probe);
+                    sim.Enqueue(Json(json));
+                    for (int i = 0; i < 40; i++) Tick(rt, dt);
+                    bool scroll = label.Contains("scroll");
+                    if (scroll) t.Equal(-1f, Fl("Scroll"), label + " at dt " + dt);
+                    else t.True(Math.Abs(Fl("LookX") - 40f) < 1e-3f && Math.Abs(Fl("LookY") + 10f) < 1e-3f, label + " at dt " + dt + ": " + Fl("LookX") + ", " + Fl("LookY"));
+                    rt.End();
+                }
+            }
+            finally
+            {
+                rt?.End();
+                sim.Clear();
+                Vortex.Input.SetSimulated(0f, 0f, 0f);
+                HostInput.KeyDown = oldKeys;
+                HostInput.WindowFocused = oldFocus;
+            }
+        }
+
+        [Test]
+        public static void OnlySimulatedInputPassesAnUnfocusedWindow(TestContext t)
+        {
+            // #457 review: while simulated input played the whole game counted as focused, so a physical pad (or a global key
+            // state, as on Windows) drove the game with the editor in the background
+            var sim = HostInput.Simulated;
+            var oldKeys = HostInput.KeyDown;
+            var oldFocus = HostInput.WindowFocused;
+            var oldPad = HostInput.Gamepad;
+            ScriptRuntime rt = null;
+            try
+            {
+                HostInput.KeyDown = vk => vk == 'D';       // D held on the real keyboard (a global key state)
+                HostInput.Gamepad = () => new GamepadState { Connected = true, Buttons = 0x1000, LeftX = 1f };   // a pad: A held, stick right
+                HostInput.WindowFocused = () => false;
+                sim.Clear();
+                var (r, probe, _) = StartProbe(t);
+                rt = r;
+                sim.Enqueue(Json("[{\"press\": \"W\"}, {\"t\": 1, \"release\": \"W\"}]"));
+                Tick(rt, 1.0 / 60);
+                t.True(Vortex.Input.GetKey("W"), "the simulated W reaches the unfocused game");
+                t.False(Vortex.Input.GetKey("D"), "the physical D does not");
+                t.False(Vortex.Input.GamepadConnected || Vortex.Input.GetGamepadButton("A") || Vortex.Input.LeftStickX != 0f, "neither does the pad");
+                HostInput.WindowFocused = () => true;
+                Tick(rt, 1.0 / 60);
+                t.True(Vortex.Input.GetKey("W") && Vortex.Input.GetKey("D") && Vortex.Input.GetGamepadButton("A"), "in front, everything counts");
+            }
+            finally
+            {
+                rt?.End();
+                sim.Clear();
+                Vortex.Input.SetSimulated(0f, 0f, 0f);
+                HostInput.KeyDown = oldKeys;
+                HostInput.WindowFocused = oldFocus;
+                HostInput.Gamepad = oldPad;
+            }
+        }
+
+        [Test]
+        public static void OldPlayerScriptsKeepTheirDefaults(TestContext t)
+        {
+            // #457 review: the player's parser read a missing number as 0 — "hold LButton" was a 0.05 s hold, "look 40" moved x only
+            var problems = new List<string>();
+            var warnings = new List<string>();
+            var lines = InputScript.Parse(new[] { "4.0 hold LButton", "4.2 look 40", "4.4 look 25 -5", "4.6 hold R 0.3", "5 look" }, problems, warnings);
+            t.Equal(4, lines.Count, "four commands kept");
+            var hold = lines.First(c => c.Op == "hold" && c.Vk == 0x01);
+            t.Equal(InputScript.MinHoldSeconds, hold.Seconds, "a hold without seconds is the shortest hold");
+            var look = lines.First(c => c.Op == "look" && c.X == 40);
+            t.True(look.Y == 0 && look.Seconds == 0, "a look without dy moves along x, in one frame");
+            t.Equal(2, warnings.Count, "both said: " + string.Join(" | ", warnings));
+            t.True(warnings[0].Contains("hold without seconds") && warnings[1].Contains("look without dy"), "what was assumed");
+            t.True(problems.Count == 1 && problems[0].Contains("dx"), "a look without any number is still skipped: " + string.Join(" | ", problems));
         }
 
         [Test]

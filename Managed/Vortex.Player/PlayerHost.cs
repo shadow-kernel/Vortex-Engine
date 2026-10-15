@@ -62,8 +62,10 @@ namespace Vortex.Player
                 _captureDir = capDir;
                 // the editor's send_input plays the same commands (#457): one parser, one simulated input layer
                 var problems = new System.Collections.Generic.List<string>();
-                var commands = InputScript.ParseFile(options.InputScriptPath, problems);
+                var warnings = new System.Collections.Generic.List<string>();
+                var commands = InputScript.ParseFile(options.InputScriptPath, problems, warnings);
                 foreach (var p in problems) Log("input script: skipped " + p);
+                foreach (var w in warnings) Log("input script: " + w);
                 HostInput.Simulated.Enqueue(commands, 0);
                 _scripted = true;
                 Log("input script: " + commands.Count + " commands, captures -> " + capDir);
@@ -306,12 +308,14 @@ namespace Vortex.Player
                     Vortex.Input.MouseDeltaX = dxl; Vortex.Input.MouseDeltaY = dyl;
                 }
                 else { Vortex.Input.MouseDeltaX = 0f; Vortex.Input.MouseDeltaY = 0f; }
-                Vortex.Input.MouseDeltaX += sdx; Vortex.Input.MouseDeltaY += sdy;
+                // the scripted movement and wheel, kept apart from the physical ones: they drive the game unfocused too (#457);
+                // a menu screen takes the wheel, as it takes the physical one
+                Vortex.Input.SetSimulated(sdx, sdy, (playing && !VuiStack.Instance.HasActiveScreens) ? sscroll : 0f);
 
                 // Debug free-fly camera (P / Caps Lock) - development runs only, stripped from a shipped Release.
                 _debugCam.PreScripts(ProjectData.Current?.ActiveScene, playing && !PlayModeService.Instance.IsReleaseMode, true);
 
-                Vortex.Input.ScrollDelta = (playing && !VuiStack.Instance.HasActiveScreens) ? VortexAPI.GameHostMouseWheel() + sscroll : 0f;
+                Vortex.Input.ScrollDelta = (playing && !VuiStack.Instance.HasActiveScreens) ? VortexAPI.GameHostMouseWheel() : 0f;
 
                 // every key that went down since the last tick, before the scripts run (#337): a tap shorter than a
                 // frame is still seen by Input.GetKey / GetKeyDown for this tick; the UI reads the same events below

@@ -27,8 +27,9 @@ namespace Editor.Core.Input
         public static Func<bool> CapsLock;
 
         /// <summary>Input played in by a tool or an automated run (#457): the editor's send_input, the player's --input file.
-        /// Its keys and mouse buttons count as held next to the physical ones, and while it plays the window counts as
-        /// focused. The host advances it once per tick, before the scripts run.</summary>
+        /// Its keys and mouse buttons count as held next to the physical ones, and — unlike them — they reach the game while
+        /// another app has the focus (Input.GetKey and Input's mouse and wheel apply the focus gate per source). The host
+        /// advances it once per tick, before the scripts run.</summary>
         public static readonly SimulatedInput Simulated = new SimulatedInput();
 
         /// <summary>Held on the keyboard / mouse, or by <see cref="Simulated"/> input.</summary>
@@ -63,9 +64,7 @@ namespace Editor.Core.Input
             }
         }
 
-        /// <summary>The game window is in front — or <see cref="Simulated"/> input is playing, which drives the game while
-        /// another app (the terminal running Claude Code) has the focus.</summary>
-        public static bool IsWindowFocused() { var f = WindowFocused; return f == null || f() || Simulated.Active; }
+        public static bool IsWindowFocused() { var f = WindowFocused; return f == null || f(); }
         public static GamepadState PollGamepad() { var f = Gamepad; return f != null ? f() : default(GamepadState); }
         public static bool IsCapsLockOn() { var f = CapsLock; return f != null && f(); }
     }

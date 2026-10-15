@@ -254,10 +254,10 @@ namespace Editor.Core.Viewport
                 // send_input's commands of this tick, on the play clock (#457): its keys and mouse buttons count as held through
                 // HostInput, its mouse movement, wheel notches and UI cursor are added here — never the OS cursor
                 var sim = HostInput.Simulated.Tick(dt);
+                Vortex.Input.SetSimulated(sim.dx, sim.dy, sim.scroll);   // they reach the game with another app in front, too
                 if (!external)
                 {
                     UpdateGameMouseLook();
-                    if (sim.dx != 0f || sim.dy != 0f) { Vortex.Input.MouseDeltaX += sim.dx; Vortex.Input.MouseDeltaY += sim.dy; }
                     _debugCam.PreScripts(_currentScene, !PlayModeService.Instance.IsReleaseMode, _mouseCaptured || (_host != null && _host.IsWindowActive));
                 }
                 if (uw > 1 && uh > 1)
@@ -271,7 +271,7 @@ namespace Editor.Core.Viewport
                 ReadbackPhysics();
                 // this tick's wheel notches, 0 on a tick without any (#319): the wheel event used to set ScrollDelta and
                 // nothing reset it, so a zoom or weapon-switch script kept scrolling after one notch
-                Vortex.Input.ScrollDelta = _wheelAccum + sim.scroll; _wheelAccum = 0f;
+                Vortex.Input.ScrollDelta = _wheelAccum; _wheelAccum = 0f;
                 ScriptRuntime.Instance.Update(dt);
                 GameRuntime.ProcessPendingSceneSwitch();
                 AudioPlaybackService.Instance.Tick();
@@ -951,6 +951,7 @@ namespace Editor.Core.Viewport
             ScriptRuntime.Instance.End();
             ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
             HostInput.Simulated.Clear();                   // no simulated key stays held into editing (#457)
+            Vortex.Input.SetSimulated(0f, 0f, 0f);
             VuiStack.Instance.Reset();   // the session's screens go with its scripts, and its cached canvases (#477)
             PlaySession.End();
             VortexAPI.ClearAllRigidbodies();

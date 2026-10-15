@@ -759,21 +759,29 @@ namespace Vortex
         /// <summary>Mouse movement since the last tick, in pixels (only non-zero while the game has
         /// captured the cursor — i.e. in play before ESC). Use it for mouse-look. Forced to 0 while a screen that
         /// opted into freezing gameplay (BlocksGameplay) is up, so mouse-look stops with movement.</summary>
-        public static float MouseDeltaX { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _mouseDeltaX; } internal set { _mouseDeltaX = value; } }
-        public static float MouseDeltaY { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _mouseDeltaY; } internal set { _mouseDeltaY = value; } }
+        public static float MouseDeltaX { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : (WindowFocused ? _mouseDeltaX : 0f) + _simDeltaX; } internal set { _mouseDeltaX = value; } }
+        public static float MouseDeltaY { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : (WindowFocused ? _mouseDeltaY : 0f) + _simDeltaY; } internal set { _mouseDeltaY = value; } }
         private static float _mouseDeltaX, _mouseDeltaY;
 
         /// <summary>Mouse-wheel movement since the last tick, in NOTCHES: +1 per notch up (away), -1 per notch down.
         /// 0 when not scrolling, unfocused, or a menu screen consumed the wheel. Use it for weapon switching etc.</summary>
-        public static float ScrollDelta { get { return (Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked || !WindowFocused) ? 0f : _scrollDelta; } internal set { _scrollDelta = value; } }
+        public static float ScrollDelta { get { return Editor.UI.Vui.VuiStack.Instance.GameplayInputBlocked ? 0f : (WindowFocused ? _scrollDelta : 0f) + _simScroll; } internal set { _scrollDelta = value; } }
         private static float _scrollDelta;
+
+        // This tick's simulated mouse movement and wheel (#457): the host sets them from HostInput.Simulated before the scripts
+        // run. Unlike the physical mouse they reach the game while another app has the focus — the editor's send_input is
+        // driven from a terminal in front.
+        private static float _simDeltaX, _simDeltaY, _simScroll;
+        internal static void SetSimulated(float dx, float dy, float scroll) { _simDeltaX = dx; _simDeltaY = dy; _simScroll = scroll; }
+        /// <summary>The debug free camera took this tick's mouse movement, the simulated one too.</summary>
+        internal static void ClearSimulatedLook() { _simDeltaX = 0f; _simDeltaY = 0f; }
 
         // ---- Window focus: ALL input (keyboard, mouse, controller) is dead unless OUR window is the foreground
         // window. Works everywhere — in-editor play, the external game window, and an exported debug/release build
         // (they're all in this process) — so an unfocused/alt-tabbed game can't be driven by stray global input. ----
-        /// <summary>True only while this app's window is the foreground window. Input is ignored otherwise.
-        /// The host (native GameHost / editor shell) reports focus through Editor.Core.Input.HostInput. Also true while
-        /// simulated input plays — the editor's MCP tool send_input, the player's --input file (#457).</summary>
+        /// <summary>True only while this app's window is the foreground window. Physical input is ignored otherwise;
+        /// simulated input (the editor's MCP tool send_input, the player's --input file) still reaches the game (#457).
+        /// The host (native GameHost / editor shell) reports focus through Editor.Core.Input.HostInput.</summary>
         public static bool WindowFocused { get { return Editor.Core.Input.HostInput.IsWindowFocused(); } }
 
         // ---- Gamepad / controller (Windows.Gaming.Input incl. PlayStation, XInput fallback). Polled once per tick.

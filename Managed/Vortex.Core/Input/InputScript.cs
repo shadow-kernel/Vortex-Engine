@@ -57,12 +57,15 @@ namespace Editor.Core.Input
             public double End => Op == "tap" ? T + TapSeconds : Op == "hold" || Op == "look" ? T + Seconds : T;
         }
 
-        /// <summary>A player --input file. Lines that cannot be read are skipped and described in <paramref name="problems"/>.</summary>
-        public static List<Command> ParseFile(string path, List<string> problems) => Parse(File.ReadAllLines(path), problems);
+        /// <summary>A player --input file. Lines that cannot be read are skipped and described in <paramref name="problems"/>;
+        /// lines read with a default are described in <paramref name="warnings"/>.</summary>
+        public static List<Command> ParseFile(string path, List<string> problems, List<string> warnings = null) => Parse(File.ReadAllLines(path), problems, warnings);
 
         /// <summary>Script lines (<c>"2.5 hold LButton 0.6"</c>, <c>#</c> starts a comment). Lines that cannot be read are
-        /// skipped and described in <paramref name="problems"/> ("line 3: …"); the commands come back sorted by time.</summary>
-        public static List<Command> Parse(IEnumerable<string> lines, List<string> problems)
+        /// skipped and described in <paramref name="problems"/> ("line 3: …"); the commands come back sorted by time. What
+        /// older player scripts left out keeps the old default, said in <paramref name="warnings"/>: a hold without seconds is
+        /// the shortest hold (0.05 s), a look without dy moves along x only.</summary>
+        public static List<Command> Parse(IEnumerable<string> lines, List<string> problems, List<string> warnings = null)
         {
             var list = new List<Command>();
             int n = 0;
@@ -92,10 +95,18 @@ namespace Editor.Core.Input
                         break;
                     case "hold":
                         error = Key(c, p.Length > 2 ? p[2] : null);
-                        c.Seconds = Math.Max(MinHoldSeconds, Num(3, "the hold's seconds"));
+                        if (p.Length > 3) c.Seconds = Math.Max(MinHoldSeconds, Num(3, "the hold's seconds"));
+                        else
+                        {
+                            // the player's scripts before #457 read a missing number as 0: the shortest hold
+                            c.Seconds = MinHoldSeconds;
+                            if (error == null) warnings?.Add(where + ": hold without seconds — held " + MinHoldSeconds.ToString(CultureInfo.InvariantCulture) + " s");
+                        }
                         break;
                     case "look":
-                        c.X = Num(2, "dx"); c.Y = Num(3, "dy");
+                        c.X = Num(2, "dx");
+                        if (p.Length > 3) c.Y = Num(3, "dy");
+                        else if (error == null) warnings?.Add(where + ": look without dy — moves along x only");   // as before #457: dy 0
                         c.Seconds = p.Length > 4 ? Math.Max(0, Num(4, "the look's seconds")) : 0;
                         break;
                     case "scroll":

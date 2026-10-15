@@ -8,8 +8,8 @@ namespace Editor.Core.Input
     /// <c>--input</c> file. It never synthesizes OS events and never moves the real cursor: <see cref="HostInput"/> ORs
     /// its keys and mouse buttons with the physical ones (Input.GetKey, GetKeyDown / Up, the UI's keys), and the host adds
     /// its mouse movement and wheel notches to Input.MouseDeltaX / Y and Input.ScrollDelta and its UI cursor to
-    /// UI.MouseX / Y each tick (<see cref="Advance"/>, before the scripts run). While it plays, the window counts as
-    /// focused — the game is driven even when another app is in front, as a scripted player run always was.
+    /// UI.MouseX / Y each tick (<see cref="Advance"/>, before the scripts run). Unlike the physical keyboard, mouse and pads
+    /// it reaches the game while another app is in front — the focus gate applies per source.
     /// A key pressed in a tick stays down for that whole tick, so a press and its release within one frame is still one
     /// GetKeyDown. Runs on the host's game thread (the editor's UI thread); the commands keep the game clock of
     /// <see cref="Advance"/>, so a paused game pauses the sequence too.
@@ -40,8 +40,10 @@ namespace Editor.Core.Input
         public float CursorX { get; private set; }
         public float CursorY { get; private set; }
 
-        /// <summary>Something still plays: queued commands, held keys, a mouse movement in progress.</summary>
-        public bool Active => _pending.Count > 0 || _held.Count > 0 || _looks.Count > 0 || _releaseNext.Count > 0;
+        /// <summary>Something still plays: queued commands, held keys, a mouse movement in progress — or the last
+        /// <see cref="Advance"/> produced mouse movement or wheel notches, which the tick it belongs to still has to read.</summary>
+        public bool Active => _pending.Count > 0 || _held.Count > 0 || _looks.Count > 0 || _releaseNext.Count > 0 || _produced;
+        private bool _produced;
 
         /// <summary>Is this virtual key (keyboard key or mouse button) held by the simulation?</summary>
         public bool IsDown(int vk) => _held.Count != 0 && _held.ContainsKey(vk);
@@ -87,6 +89,7 @@ namespace Editor.Core.Input
             double prev = _now;
             _now = now;
             Frames++;
+            _produced = false;
             _pressedNow.Clear();
             if (_releaseNext.Count > 0)
             {
@@ -127,6 +130,7 @@ namespace Editor.Core.Input
             }
             float scroll = (float)_scroll;
             _scroll = 0;
+            _produced = dx != 0 || dy != 0 || scroll != 0;
             return ((float)dx, (float)dy, scroll);
         }
 
@@ -187,6 +191,7 @@ namespace Editor.Core.Input
             _releaseNext.Clear();
             _looks.Clear();
             _scroll = 0;
+            _produced = false;
             _now = 0;
             Frames = 0;
             HasCursor = false;
@@ -202,6 +207,7 @@ namespace Editor.Core.Input
             _releaseNext.Clear();
             _looks.Clear();
             _scroll = 0;
+            _produced = false;
         }
     }
 }
