@@ -73,6 +73,9 @@ public:
 		// -- streaming playback (issue #10) -----------------------------------------
 		run_streaming_tests(wav_path);
 
+		// -- playback position, seeking, scheduled starts (issue #465) ----------------
+		run_position_tests();
+
 		// -- mixer buses + ducking (issue #13) ---------------------------------------
 		run_mixer_tests(wav_path);
 
@@ -300,6 +303,132 @@ private:
 		voice_stop(s3);
 
 		std::remove(long_wav.c_str());
+	}
+
+	// A (mixer clock, voice cursor) pair taken while the mixer is idle: the cursor advances DURING a mix and the clock
+	// at its end, so a pair read across a mix is skewed by a whole block. Two reads 2 ms apart that agree saw no mix
+	// in between (a mix takes microseconds, a device period ~10 ms). False if no quiet window was found.
+	bool quiet_position(runtime::audio::voice_handle v, u64* clock, u64* cursor)
+	{
+		using namespace runtime::audio;
+		for (int attempt = 0; attempt < 400; ++attempt)
+		{
+			u64 c1 = 0, c2 = 0;
+			const u64 t1 = engine_time_frames();
+			voice_get_position(v, &c1, nullptr, nullptr);
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));   // (silent mode mixes only inside update_audio)
+			const u64 t2 = engine_time_frames();
+			voice_get_position(v, &c2, nullptr, nullptr);
+			if (t1 == t2 && c1 == c2) { *clock = t1; *cursor = c1; return true; }
+		}
+		return false;
+	}
+
+	// Playback position (issue #465): the cursor follows the mixer at the voice's pitch, holds while paused, seeks
+	// decoded and streamed clips, starts from a given position, and a scheduled start lands on its exact mixer frame
+	// (miniaudio slipped it to the next device period before the VORTEX PATCH in ma_node_read_pcm_frames).
+	void run_position_tests()
+	{
+		using namespace runtime::audio;
+		const std::string clip = write_wav("vortex_audio_position.wav", 3.0f, 330.0f);   // 3 s, 44.1 kHz mono
+		const u32 rate = engine_sample_rate();
+		check("mixer clock has a sample rate", rate > 0);
+
+		voice_params p{};
+		p.loop = true;
+		p.volume = 0.05f;
+		voice_handle v = voice_play(clip.c_str(), p);
+		u64 cursor = 0, length = 0;
+		u32 voice_rate = 0;
+		check("position of a playing voice", voice_get_position(v, &cursor, &length, &voice_rate));
+		// decoded clips are converted to the engine rate on load: 3 s of 44.1 kHz = 3 s of engine frames
+		check("clip length in the voice's frames", voice_rate == rate && length > 0
+			&& std::fabs((double)length / voice_rate - 3.0) < 0.002);
+
+		// pitch 2: the cursor runs twice as fast as the mixer clock (quiet pairs: exact to a block or two)
+		voice_set_pitch(v, 2.0f);
+		tick_seconds(0.1f);
+		u64 t0 = 0, c0 = 0, t1 = 0, c1 = 0;
+		const bool q0 = quiet_position(v, &t0, &c0);
+		tick_seconds(0.4f);
+		const bool q1 = quiet_position(v, &t1, &c1);
+		const double ratio = (t1 > t0) ? (double)((c1 + length - c0) % length) / (double)(t1 - t0) : 0.0;
+		std::printf("[info] position at pitch 2: %.4f cursor frames per mixer frame\n", ratio);
+		check("cursor advances at the voice's pitch", q0 && q1 && std::fabs(ratio - 2.0) < 0.01);
+		voice_set_pitch(v, 1.0f);
+
+		// pause holds the position, resume continues from it
+		voice_pause(v);
+		tick_seconds(0.05f);
+		u64 paused0 = 0, paused1 = 0;
+		voice_get_position(v, &paused0, nullptr, nullptr);
+		tick_seconds(0.3f);
+		voice_get_position(v, &paused1, nullptr, nullptr);
+		voice_resume(v);
+		tick_seconds(0.3f);
+		u64 resumed = 0;
+		voice_get_position(v, &resumed, nullptr, nullptr);
+		check("pause holds the position, resume continues", paused0 == paused1 && resumed != paused1);
+
+		// seek: the target reads back at once (before the mixer applied it) and playback continues from there
+		voice_seek(v, 1.25);
+		u64 sought = 0;
+		voice_get_position(v, &sought, nullptr, nullptr);
+		tick_seconds(0.2f);
+		u64 after = 0;
+		voice_get_position(v, &after, nullptr, nullptr);
+		check("seek reads back its target", sought == (u64)(1.25 * rate + 0.5));
+		check("playback continues from the seek target", after > sought && after < sought + rate / 2);
+		voice_seek(v, 4.0);   // looping: wraps to ~1 s
+		voice_get_position(v, &sought, nullptr, nullptr);
+		check("seeking a looping voice past its end wraps", sought == (u64)(4.0 * rate + 0.5) % length);
+		voice_stop(v);
+		check("a stale handle has no position", !voice_get_position(v, &cursor, nullptr, nullptr));
+
+		// a start position (AudioSource.Time set before Play) on a decoded and a streamed voice
+		voice_params from{};
+		from.volume = 0.05f;
+		from.start_position = 2.0;
+		voice_handle d = voice_play(clip.c_str(), from);
+		voice_get_position(d, &cursor, nullptr, nullptr);
+		check("a decoded voice starts at its start position", cursor >= (u64)(2.0 * rate) && cursor < (u64)(2.2 * rate));
+		voice_stop(d);
+		from.stream = true;
+		voice_handle s = voice_play(clip.c_str(), from);
+		tick_seconds(0.1f);
+		voice_get_position(s, &cursor, &length, &voice_rate);
+		check("a streamed voice starts at its start position",
+			voice_rate > 0 && cursor >= (u64)(2.0 * voice_rate) && cursor < (u64)(2.4 * voice_rate));
+		// seeking a stream: the stream refills from the new spot
+		from.start_position = 0.0;
+		from.loop = true;
+		voice_handle s2 = voice_play(clip.c_str(), from);
+		tick_seconds(0.1f);
+		voice_seek(s2, 2.5);
+		tick_seconds(0.25f);
+		voice_get_position(s2, &cursor, nullptr, &voice_rate);
+		check("seeking a streamed voice", voice_rate > 0 && cursor >= (u64)(2.5 * voice_rate) && cursor < (u64)(2.9 * voice_rate));
+		voice_stop(s);
+		voice_stop(s2);
+
+		// scheduled start: silent until its mixer frame, then the cursor counts exactly the frames since that frame
+		voice_params later{};
+		later.volume = 0.05f;
+		later.loop = true;
+		const u64 start = engine_time_frames() + rate / 4;   // 250 ms ahead
+		later.start_time = start;
+		voice_handle sch = voice_play(clip.c_str(), later);
+		check("a scheduled voice waits for its start", sch != invalid_voice && !voice_is_playing(sch));
+		tick_seconds(0.5f);
+		u64 clock = 0;
+		const bool quiet = quiet_position(sch, &clock, &cursor);
+		const long long error = (long long)cursor - (long long)(clock - start);
+		std::printf("[info] scheduled start: cursor %llu, mixer frames since the scheduled frame %llu (error %lld frames)\n",
+			(unsigned long long)cursor, (unsigned long long)(clock - start), error);
+		check("a scheduled voice plays after its start", voice_is_playing(sch));
+		check("a scheduled start lands on its exact mixer frame (+-2)", quiet && clock > start && error >= -2 && error <= 2);
+		voice_stop(sch);
+		std::remove(clip.c_str());
 	}
 
 	// Fades (issue #17): the envelope must actually change the mixed level (bus

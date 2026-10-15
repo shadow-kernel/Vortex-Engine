@@ -32,6 +32,12 @@ namespace vortex::runtime::audio {
 		// Reverb send 0..1 from the first sample on (#496): a one-shot that is over before the bridge's next
 		// per-frame voice_set_reverb_send would otherwise stay dry — a gunshot's transient is what the room answers.
 		f32 reverb_send{ 0.0f };
+		// Scheduled start (#465): the mixer frame (engine_time_frames) the first sample plays on — sample-accurate,
+		// a pitched voice one frame later (the resampler's constant latency, the same for every pitched voice).
+		// 0, or a frame the mixer has already passed, starts at once.
+		u64 start_time{ 0 };
+		// Where in the clip playback begins, in seconds (#465) — AudioSource.Time set before Play().
+		d64 start_position{ 0.0 };
 	};
 
 	// 3D properties mirrored from the AudioSource component. Stored per voice by
@@ -75,6 +81,16 @@ namespace vortex::runtime::audio {
 	void voice_set_reverb_send(voice_handle handle, f32 send);
 	// The current reverb send (diagnostics, tests); -1 for a stale handle or while the reverb node is down.
 	f32 voice_get_reverb_send(voice_handle handle);
+
+	// Playback position (#465): the frame the mixer reads next and the clip's length (0 = unknown), both in the
+	// voice's own frames at *sample_rate — the engine rate for decoded and file-streamed clips (they are converted
+	// on load), the clip's rate for streamed pak clips. It advances in mixer blocks at the voice's pitch, holds while
+	// paused, and a seek not yet applied reads as its target. False (all 0) for a stale handle.
+	bool voice_get_position(voice_handle handle, u64* cursor, u64* length, u32* sample_rate);
+	// Jump to `seconds` into the clip (#465): the mixer applies it before its next read, for decoded and streamed
+	// voices alike (a streamed voice is silent while its stream refills from the new spot). Clamped to the clip,
+	// wrapped for a looping voice; seeking a one-shot to its end finishes it. Safe no-op for a stale handle.
+	void voice_seek(voice_handle handle, d64 seconds);
 
 	// Fade envelope (issue #17): a sample-accurate multiplier ON TOP of the voice
 	// volume (final gain = volume x bus x envelope — no write conflicts, no zipper).

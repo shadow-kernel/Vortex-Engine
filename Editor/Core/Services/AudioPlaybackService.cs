@@ -41,6 +41,16 @@ namespace Editor.Core.Services
             /// push must keep multiplying these in or the variation gets stomped.</summary>
             public float RolledVolumeScale = 1f;
             public float RolledPitchScale = 1f;
+            /// <summary>#465: seconds into the clip the next start begins at (AudioSource.Time set while stopped); -1 = the
+            /// beginning. Consumed by the start; Stop() forgets it, as Unity's Stop rewinds.</summary>
+            public double StartAt = -1;
+            /// <summary>#465: the mixer frame the next start is scheduled on (PlayScheduled); 0 = at once.</summary>
+            public ulong StartFrame;
+            /// <summary>#465: the current voice waits for this mixer frame (PlayScheduled) — IsPlaying is already true then,
+            /// like Unity's. 0 = it started at once.</summary>
+            public ulong ScheduledFrame;
+            /// <summary>The clip the current voice plays (a container's rolled clip) — Length and TimeSamples read its facts.</summary>
+            public string ClipPlaying;
             // Pre-play values of everything scripts can write through the handle —
             // play must stay non-destructive (mirrors the transform snapshot).
             public float OrigVolume;
@@ -221,6 +231,8 @@ namespace Editor.Core.Services
                 RestoreBinding(b); // play is non-destructive — undo script writes
             }
             _bindings.Clear();
+            _lastBinding = null;
+            _clipFacts.Clear();   // a clip regenerated between sessions reports its new length
             _listeners.Clear();
             _warnedMultipleListeners = false;
             _active = false;
@@ -292,6 +304,7 @@ namespace Editor.Core.Services
                     RestoreBinding(b);
                     _bindings.RemoveAt(i);
                 }
+                _lastBinding = null;
                 _zones.RemoveAll(z => gone.Contains(z.Entity));
                 _listeners.RemoveAll(gone.Contains);
             }
@@ -300,27 +313,48 @@ namespace Editor.Core.Services
 
         // ---- script surface (Vortex.Audio, issue #11) --------------------------------
 
+        /// <summary>The last binding looked up: a script reading one source's Time every frame (dancers following the
+        /// band, #465) finds it without walking every binding.</summary>
+        private SourceBinding _lastBinding;
+
         private SourceBinding FindBinding(AudioSource source)
         {
+            var last = _lastBinding;
+            if (last != null && ReferenceEquals(last.Source, source)) return last;
             foreach (var b in _bindings)
-                if (ReferenceEquals(b.Source, source)) return b;
+                if (ReferenceEquals(b.Source, source)) { _lastBinding = b; return b; }
             return null;
         }
 
-        /// <summary>Script Play(): (re)start the source's voice from the beginning,
-        /// regardless of PlayOnAwake. Sources ADDED at runtime by scripts get a
-        /// binding lazily so they are controllable too.</summary>
-        public void ScriptPlay(AudioSource source)
+        /// <summary>The source's binding — created for a source a script ADDED at runtime, so it is controllable too.</summary>
+        private SourceBinding BindingFor(AudioSource source)
         {
-            if (!_active || source == null) return;
+            if (!_active || source == null) return null;
             var b = FindBinding(source);
             if (b == null)
             {
-                if (source.Entity == null) return;
+                if (source.Entity == null) return null;
                 b = new SourceBinding { Source = source, Entity = source.Entity };
                 SnapshotBinding(b);
                 _bindings.Add(b);
             }
+            return b;
+        }
+
+        /// <summary>Script Play(): (re)start the source's voice from the beginning — or from the Time set while it was
+        /// stopped (#465) — regardless of PlayOnAwake. Sources ADDED at runtime by scripts get a binding lazily so they
+        /// are controllable too.</summary>
+        public void ScriptPlay(AudioSource source) => PlayFrom(source, 0);
+
+        /// <summary>Script PlayScheduled(dspTime) (#465): (re)start the source so its first sample plays exactly when the
+        /// mixer clock (<see cref="DspSeconds"/>) reaches <paramref name="dspTime"/> — sample-accurate, the voice waits in
+        /// the mixer. A time already passed starts at once, like Play().</summary>
+        public void ScriptPlayScheduled(AudioSource source, double dspTime) => PlayFrom(source, DspFrameOf(dspTime));
+
+        private void PlayFrom(AudioSource source, ulong startFrame)
+        {
+            var b = BindingFor(source);
+            if (b == null) return;
             if (b.Handle != VortexAudio.InvalidVoice)
             {
                 VortexAudio.StopVoice(b.Handle);
@@ -329,6 +363,7 @@ namespace Editor.Core.Services
             b.WantsPlay = true;
             b.ScriptPaused = false;
             b.NextStartTick = 0;
+            b.StartFrame = startFrame;
             StartVoice(b); // immediate — stingers must not wait a frame
         }
 
@@ -337,6 +372,9 @@ namespace Editor.Core.Services
             var b = FindBinding(source);
             if (b == null) return;
             b.WantsPlay = false;
+            b.StartAt = -1;          // Stop rewinds (#465): the next Play starts from the beginning again
+            b.StartFrame = 0;
+            b.ScheduledFrame = 0;
             if (b.Handle != VortexAudio.InvalidVoice)
             {
                 VortexAudio.StopVoice(b.Handle);
@@ -368,10 +406,129 @@ namespace Editor.Core.Services
             return b != null;
         }
 
+        /// <summary>The voice plays now — or waits in the mixer for its PlayScheduled start (#465: Unity's isPlaying is true
+        /// from PlayScheduled on, so a "play if not playing" check does not schedule it again every frame).</summary>
         public bool ScriptIsPlaying(AudioSource source)
         {
             var b = FindBinding(source);
-            return b != null && VortexAudio.IsVoicePlaying(b.Handle);
+            if (b == null || b.Handle == VortexAudio.InvalidVoice) return false;
+            if (VortexAudio.IsVoicePlaying(b.Handle)) return true;
+            return b.ScheduledFrame > 0 && !b.ScriptPaused && VortexAudio.IsVoiceValid(b.Handle)
+                   && VortexAudio.GetDspTime(out _) < b.ScheduledFrame;
+        }
+
+        // ---- playback position (#465): the mixer's own cursor, so it stays exact through pauses, pitch changes and
+        // seeks — never a clock summed from frame times that drifts on hitches ---------------------------------------
+
+        /// <summary>The mixer clock in seconds (Unity's AudioSettings.dspTime): frames mixed since the audio engine
+        /// started over its rate. 0 without an audio engine.</summary>
+        public static double DspSeconds
+        {
+            get { ulong f = VortexAudio.GetDspTime(out int rate); return rate > 0 ? (double)f / rate : 0.0; }
+        }
+
+        /// <summary>The mixer frame of a DspTime in seconds; 0 (= at once) for a time already mixed, NaN or no engine.</summary>
+        private static ulong DspFrameOf(double dspTime)
+        {
+            ulong now = VortexAudio.GetDspTime(out int rate);
+            if (rate <= 0 || !(dspTime > 0)) return 0;
+            double f = Math.Round(dspTime * rate);
+            if (f >= ulong.MaxValue) return 0;
+            ulong frame = (ulong)f;
+            return frame > now ? frame : 0;
+        }
+
+        /// <summary>Script Time: seconds into the clip — the mixer's position while the source plays or is paused (it
+        /// advances in mixer blocks of ~10 ms, at the source's pitch); for a stopped source the position its next start
+        /// begins at.</summary>
+        public double ScriptGetTime(AudioSource source)
+        {
+            var b = FindBinding(source);
+            if (b == null) return 0;
+            double t = VoiceSeconds(b.Handle);
+            if (t >= 0) return t;
+            return b.StartAt > 0 ? b.StartAt : 0;
+        }
+
+        /// <summary>Script Time = seconds: seeks the playing (or paused) voice — decoded and streamed clips alike — or,
+        /// while the source is stopped, sets where its next Play() (or Play On Awake start) begins.</summary>
+        public void ScriptSetTime(AudioSource source, double seconds)
+        {
+            var b = BindingFor(source);
+            if (b == null) return;
+            if (double.IsNaN(seconds) || seconds < 0) seconds = 0;
+            if (VortexAudio.IsVoiceValid(b.Handle)) VortexAudio.SeekVoice(b.Handle, seconds);
+            else b.StartAt = seconds;
+        }
+
+        /// <summary>Script Length: the clip's length in seconds (the playing clip's — a container's rolled clip — else the
+        /// assigned clip's); 0 when unknown (an empty slot, or a container that is not playing).</summary>
+        public double ScriptGetLength(AudioSource source)
+        {
+            var b = FindBinding(source);
+            if (b != null && VortexAudio.IsVoiceValid(b.Handle)) return VoiceLength(b.Handle, b.ClipPlaying);
+            return ClipFacts(source?.AudioClipPath).Seconds;
+        }
+
+        /// <summary>Script TimeSamples: the position in samples of the clip's own sample rate (Unity's timeSamples).</summary>
+        public long ScriptGetTimeSamples(AudioSource source)
+        {
+            var b = FindBinding(source);
+            if (b == null) return 0;
+            if (VortexAudio.IsVoiceValid(b.Handle)) return VoiceSamples(b.Handle, b.ClipPlaying);
+            int rate = ClipFacts(source.AudioClipPath).Rate;
+            return b.StartAt > 0 && rate > 0 ? (long)Math.Round(b.StartAt * rate) : 0;
+        }
+
+        public void ScriptSetTimeSamples(AudioSource source, long samples)
+        {
+            var b = FindBinding(source);
+            int rate = ClipFacts(b != null && VortexAudio.IsVoiceValid(b.Handle) ? b.ClipPlaying : source?.AudioClipPath).Rate;
+            if (rate > 0) ScriptSetTime(source, (double)Math.Max(0, samples) / rate);
+        }
+
+        /// <summary>Seconds into its clip a voice plays (-1 = no live voice).</summary>
+        private static double VoiceSeconds(ulong handle)
+            => VortexAudio.GetVoicePosition(handle, out ulong cursor, out _, out int rate) && rate > 0 ? (double)cursor / rate : -1.0;
+
+        /// <summary>A live voice's clip length in seconds; a stream that cannot tell falls back to the clip's header.</summary>
+        private double VoiceLength(ulong handle, string clip)
+        {
+            if (VortexAudio.GetVoicePosition(handle, out _, out ulong length, out int rate) && rate > 0 && length > 0) return (double)length / rate;
+            return ClipFacts(clip).Seconds;
+        }
+
+        /// <summary>A live voice's position in samples of its clip's own rate — the cursor itself when the voice runs at the
+        /// clip's rate, converted when the clip was resampled to the engine rate on load.</summary>
+        private long VoiceSamples(ulong handle, string clip)
+        {
+            if (!VortexAudio.GetVoicePosition(handle, out ulong cursor, out _, out int rate) || rate <= 0) return 0;
+            int clipRate = ClipFacts(clip).Rate;
+            return SamplesAtClipRate(cursor, rate, clipRate);
+        }
+
+        /// <summary>A cursor in frames at <paramref name="voiceRate"/> as samples of the clip's own rate (rounded); the
+        /// cursor itself when the rates match or the clip's rate is unknown.</summary>
+        internal static long SamplesAtClipRate(ulong cursor, int voiceRate, int clipRate)
+            => clipRate > 0 && voiceRate > 0 && clipRate != voiceRate ? (long)Math.Round((double)cursor * clipRate / voiceRate) : (long)cursor;
+
+        /// <summary>Length (seconds) and sample rate of a clip from its header, cached per clip for the play session —
+        /// a stopped source's Length and TimeSamples need them. (0, 0) for containers and unreadable clips.</summary>
+        private readonly Dictionary<string, (double Seconds, int Rate)> _clipFacts = new Dictionary<string, (double, int)>(StringComparer.OrdinalIgnoreCase);
+
+        private (double Seconds, int Rate) ClipFacts(string clip)
+        {
+            if (string.IsNullOrEmpty(clip) || Core.Audio.SoundContainerService.IsContainerPath(clip)) return (0, 0);
+            if (_clipFacts.TryGetValue(clip, out var facts)) return facts;
+            facts = (0, 0);
+            try
+            {
+                var path = ResolveClipPath(clip);
+                if (path != null && VortexAudio.GetClipInfo(path, out float seconds, out int rate, out _)) facts = (seconds, rate);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] clip facts failed for '" + clip + "': " + ex.Message); }
+            _clipFacts[clip] = facts;
+            return facts;
         }
 
         /// <summary>FadeIn: (re)start the source silent and ramp the envelope to 1.</summary>
@@ -538,6 +695,28 @@ namespace Editor.Core.Services
 
         public bool MusicIsPlaying => VortexAudio.IsVoicePlaying(_musicCurrent);
 
+        /// <summary>Seconds into the current music track (#465) — the mixer's position; 0 without a track. Setting it
+        /// seeks the track (a streamed one refills from there); without a track it does nothing.</summary>
+        public double MusicTime
+        {
+            get { double t = VoiceSeconds(_musicCurrent); return t > 0 ? t : 0; }
+            set { VortexAudio.SeekVoice(_musicCurrent, double.IsNaN(value) || value < 0 ? 0 : value); }
+        }
+
+        /// <summary>The current music track's length in seconds (#465); 0 without a track.</summary>
+        public double MusicLength => VortexAudio.IsVoiceValid(_musicCurrent) ? VoiceLength(_musicCurrent, _musicCurrentClip) : 0;
+
+        /// <summary>The current track's position in samples of the clip's own rate (#465).</summary>
+        public long MusicTimeSamples
+        {
+            get => VortexAudio.IsVoiceValid(_musicCurrent) ? VoiceSamples(_musicCurrent, _musicCurrentClip) : 0;
+            set
+            {
+                int rate = ClipFacts(_musicCurrentClip).Rate;
+                if (rate > 0) MusicTime = (double)Math.Max(0, value) / rate;
+            }
+        }
+
         /// <summary>Start a music track (streamed, looping, priority 0 — never stolen),
         /// fading in over fadeInSeconds. Replaces the current track with a quick fade.
         /// Calling it again with the SAME clip while it plays is a no-op (scripts often
@@ -701,7 +880,9 @@ namespace Editor.Core.Services
                 // Steam Audio v2 (#21): only meaningful for 3D sources; ignored unless SA is enabled + available.
                 hrtf: b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
                 occlusion: b.Source.EnableOcclusion && b.Source.EnableHrtf && b.Source.SpatialBlend > 0f,
-                reverbSend: b.Source.ReverbZoneMix * _zoneWeight);   // from the first sample, as PushProperties keeps it (#496)
+                reverbSend: b.Source.ReverbZoneMix * _zoneWeight,    // from the first sample, as PushProperties keeps it (#496)
+                startTime: b.StartFrame,                             // PlayScheduled: waits in the mixer for that frame (#465)
+                startPosition: b.StartAt > 0 ? b.StartAt : 0);       // Time set while stopped (#465)
             b.RolledVolumeScale = volumeScale;
             b.RolledPitchScale = pitchScale;
 
@@ -709,6 +890,10 @@ namespace Editor.Core.Services
             {
                 b.NextStartTick = 0;
                 b.FreshStart = true;
+                b.ScheduledFrame = b.StartFrame;
+                b.StartFrame = 0;
+                b.StartAt = -1;      // consumed: a restart after a steal begins at the top, as before
+                b.ClipPlaying = clip;
                 PushProperties(b);
             }
             else

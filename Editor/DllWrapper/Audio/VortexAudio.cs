@@ -54,7 +54,17 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern ulong AudioPlayVoice([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus, int hrtf, int occlusion, float reverbSend);
+            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus, int hrtf, int occlusion, float reverbSend,
+            ulong startTime, double startPosition);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern ulong AudioGetDspTime(out int sampleRate);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioGetVoicePosition(ulong handle, out ulong cursor, out ulong length, out int sampleRate);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSeekVoice(ulong handle, double seconds);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioSteamSetEnabled(int enabled);
@@ -170,12 +180,34 @@ namespace Editor.DllWrapper
         /// or every pooled voice outranks this request (priority 0 = most important).
         /// stream = decode on demand (music/long ambience) instead of full pre-decode.
         /// bus routes the voice through a mixer bus (default SFX). reverbSend = the reverb send (0..1) from the
-        /// first sample on, before the per-frame SetVoiceReverbSend takes over (#496).</summary>
+        /// first sample on, before the per-frame SetVoiceReverbSend takes over (#496). startTime = the mixer frame
+        /// (<see cref="GetDspTime"/>) the voice starts on, sample-accurate, 0 = now; startPosition = seconds into the
+        /// clip playback begins at (#465).</summary>
         public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority, bool stream = false, int bus = BusSfx,
-            bool hrtf = false, bool occlusion = false, float reverbSend = 0f)
+            bool hrtf = false, bool occlusion = false, float reverbSend = 0f, ulong startTime = 0, double startPosition = 0)
         {
             if (string.IsNullOrEmpty(path)) return InvalidVoice;
-            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus, hrtf ? 1 : 0, occlusion ? 1 : 0, reverbSend);
+            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus, hrtf ? 1 : 0, occlusion ? 1 : 0, reverbSend,
+                startTime, startPosition > 0 ? startPosition : 0);
+        }
+
+        /// <summary>The mixer clock (#465): frames mixed since the audio engine started; its rate goes to
+        /// <paramref name="sampleRate"/> (0 without an audio engine). Advances in mixer blocks (~10 ms).</summary>
+        public static ulong GetDspTime(out int sampleRate) => AudioGetDspTime(out sampleRate);
+
+        /// <summary>A voice's mixer position and its clip's length (0 = unknown) in the voice's own frames at
+        /// <paramref name="sampleRate"/> (#465). False for a stale handle.</summary>
+        public static bool GetVoicePosition(ulong handle, out ulong cursor, out ulong length, out int sampleRate)
+        {
+            cursor = 0; length = 0; sampleRate = 0;
+            return handle != InvalidVoice && AudioGetVoicePosition(handle, out cursor, out length, out sampleRate) != 0;
+        }
+
+        /// <summary>Seek a voice to <paramref name="seconds"/> into its clip, decoded or streamed (#465) — the mixer
+        /// applies it before its next read; clamped to the clip, wrapped for a looping voice.</summary>
+        public static void SeekVoice(ulong handle, double seconds)
+        {
+            if (handle != InvalidVoice) AudioSeekVoice(handle, double.IsNaN(seconds) || seconds < 0 ? 0 : seconds);
         }
 
         /// <summary>Steam Audio v2 (#21) project master switch. Off by default; turning it on lazily initializes

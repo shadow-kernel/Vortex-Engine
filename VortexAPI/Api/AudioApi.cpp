@@ -42,7 +42,9 @@ EDITOR_INTERFACE s32 AudioGetWaveform(const char* path, f32* peaks, s32 bin_coun
 }
 
 // reverb_send: the voice's reverb send from its first sample (#496) — reverbZoneMix x listener zone weight, 0..1.
-EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus, s32 hrtf, s32 occlusion, f32 reverb_send)
+// start_time: the mixer frame (AudioGetDspTime) the voice starts on, 0 = now; start_position: seconds into the clip (#465).
+EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32 pan, s32 loop, s32 priority, s32 stream, s32 out_bus, s32 hrtf, s32 occlusion, f32 reverb_send,
+	u64 start_time, d64 start_position)
 {
 	runtime::audio::voice_params params{};
 	params.volume = volume;
@@ -55,7 +57,33 @@ EDITOR_INTERFACE u64 AudioPlayVoice(const char* path, f32 volume, f32 pitch, f32
 	params.hrtf = hrtf != 0;              // Steam Audio HRTF (#21), opt-in; no-op unless SA is available
 	params.occlusion = occlusion != 0;
 	params.reverb_send = reverb_send;
+	params.start_time = start_time;
+	params.start_position = start_position;
 	return runtime::audio::voice_play(path, params);
+}
+
+// ---- playback position + the mixer clock (#465) -----------------------------------
+
+// The mixer clock: frames mixed since the engine started (Unity's dspTime x rate); the rate goes to *sample_rate.
+EDITOR_INTERFACE u64 AudioGetDspTime(s32* sample_rate)
+{
+	if (sample_rate) *sample_rate = (s32)runtime::audio::engine_sample_rate();
+	return runtime::audio::engine_time_frames();
+}
+
+// The voice's mixer position and clip length in its own frames at *sample_rate; 0 = stale handle.
+EDITOR_INTERFACE s32 AudioGetVoicePosition(u64 handle, u64* cursor, u64* length, s32* sample_rate)
+{
+	u32 rate = 0;
+	const bool ok = runtime::audio::voice_get_position(handle, cursor, length, &rate);
+	if (sample_rate) *sample_rate = (s32)rate;
+	return ok ? 1 : 0;
+}
+
+// Seek a voice to `seconds` into its clip (decoded or streamed), applied by the mixer before its next read.
+EDITOR_INTERFACE void AudioSeekVoice(u64 handle, d64 seconds)
+{
+	runtime::audio::voice_seek(handle, seconds);
 }
 
 // Steam Audio v2 (issue #21): project master switch + occlusion geometry. Both no-op unless phonon.dll loads.

@@ -85,6 +85,38 @@ namespace vortex::runtime::audio {
 			return pitch < 0.01f ? 0.01f : (pitch > 100.0f ? 100.0f : pitch);
 		}
 
+		// Seconds -> frames at `rate`, rounded; negative and NaN start at 0.
+		u64 seconds_to_frames(d64 seconds, u32 rate)
+		{
+			return seconds > 0.0 ? (u64)(seconds * (d64)rate + 0.5) : 0;
+		}
+
+		// A sound from a clip through the resource manager (decoded or file-streamed) — ma_sound_init_from_file plus
+		// the initial seek point (#465): a streamed clip then fills its first pages from there instead of refilling
+		// after a seek, so a resumed or scheduled start is not late. Registered pak names resolve via the narrow
+		// lookup, real paths via wide on Windows (narrow fopen mangles paths outside the ANSI code page).
+		ma_result init_clip_sound(ma_engine* engine, const char* path, bool registered, ma_uint32 flags,
+			ma_sound_group* group, u64 seek_frames, ma_sound* out)
+		{
+			ma_sound_config config = ma_sound_config_init_2(engine);
+			config.flags = flags;
+			config.pInitialAttachment = group;
+			config.initialSeekPointInPCMFrames = seek_frames;
+#if VORTEX_PLATFORM_WINDOWS
+			wchar_t wide[1024];
+			if (registered) config.pFilePath = path;
+			else
+			{
+				if (!internal_widen_path(path, wide, 1024)) return MA_INVALID_ARGS;
+				config.pFilePathW = wide;
+			}
+#else
+			(void)registered;
+			config.pFilePath = path;
+#endif
+			return ma_sound_init_ex(engine, &config, out);
+		}
+
 		// Rolloff mapping (documented so Steam Audio v2 can swap the panner without
 		// changing attenuation semantics):
 		//   AudioRolloffMode.Logarithmic (0) -> ma_attenuation_model_inverse (1/d)
@@ -333,43 +365,36 @@ namespace vortex::runtime::audio {
 		ma_sound_group* group = (ma_sound_group*)mixer_group(mixer_bus_from_index(params.bus));
 		ma_result result;
 		ma_decoder* stream_decoder = nullptr;
-		if (is_registered_clip(path))
+		const bool registered = is_registered_clip(path);
+		if (registered && params.stream)
 		{
-			if (params.stream)
+			// miniaudio's STREAM flag only streams from files — for registered
+			// in-memory blobs (pak entries), stream through a ma_decoder over the
+			// bytes instead: decode-on-demand, no full PCM in memory.
+			u64 size = 0;
+			const void* bytes = registered_clip_bytes(path, &size);
+			if (!bytes) return invalid_voice;
+			stream_decoder = new ma_decoder{};
+			result = ma_decoder_init_memory(bytes, (size_t)size, nullptr, stream_decoder);
+			if (result == MA_SUCCESS)
 			{
-				// miniaudio's STREAM flag only streams from files — for registered
-				// in-memory blobs (pak entries), stream through a ma_decoder over the
-				// bytes instead: decode-on-demand, no full PCM in memory.
-				u64 size = 0;
-				const void* bytes = registered_clip_bytes(path, &size);
-				if (!bytes) return invalid_voice;
-				stream_decoder = new ma_decoder{};
-				result = ma_decoder_init_memory(bytes, (size_t)size, nullptr, stream_decoder);
-				if (result == MA_SUCCESS)
-				{
-					result = ma_sound_init_from_data_source(engine, stream_decoder, 0, group, &target->sound);
-					if (result != MA_SUCCESS) ma_decoder_uninit(stream_decoder);
-				}
-				if (result != MA_SUCCESS)
-				{
-					delete stream_decoder;
-					stream_decoder = nullptr;
-				}
+				// this decoder keeps the clip's own rate (#465: the start position converts with it)
+				if (params.start_position > 0.0)
+					ma_decoder_seek_to_pcm_frame(stream_decoder, seconds_to_frames(params.start_position, stream_decoder->outputSampleRate));
+				result = ma_sound_init_from_data_source(engine, stream_decoder, 0, group, &target->sound);
+				if (result != MA_SUCCESS) ma_decoder_uninit(stream_decoder);
 			}
-			else
+			if (result != MA_SUCCESS)
 			{
-				result = ma_sound_init_from_file(engine, path, flags, group, nullptr, &target->sound);
+				delete stream_decoder;
+				stream_decoder = nullptr;
 			}
 		}
 		else
 		{
-#if VORTEX_PLATFORM_WINDOWS
-			wchar_t wide[1024];
-			if (!internal_widen_path(path, wide, 1024)) return invalid_voice;
-			result = ma_sound_init_from_file_w(engine, wide, flags, group, nullptr, &target->sound);
-#else
-			result = ma_sound_init_from_file(engine, path, flags, group, nullptr, &target->sound);
-#endif
+			// the resource manager decodes and streams at the engine rate, so the start position converts with it
+			result = init_clip_sound(engine, path, registered, flags, group,
+				seconds_to_frames(params.start_position, ma_engine_get_sample_rate(engine)), &target->sound);
 		}
 		if (result != MA_SUCCESS)
 		{
@@ -436,6 +461,9 @@ namespace vortex::runtime::audio {
 		ma_sound_set_pitch(&target->sound, clamp_pitch(params.pitch));
 		ma_sound_set_pan(&target->sound, params.pan < -1.0f ? -1.0f : (params.pan > 1.0f ? 1.0f : params.pan));
 		ma_sound_set_looping(&target->sound, params.loop ? MA_TRUE : MA_FALSE);
+		// #465: a scheduled start — the node stays silent until the mixer reaches that frame (sample-accurate since
+		// the VORTEX PATCH in miniaudio's ma_node_read_pcm_frames); a frame already mixed starts at once
+		if (params.start_time > 0) ma_sound_set_start_time_in_pcm_frames(&target->sound, params.start_time);
 		ma_sound_start(&target->sound);
 
 		const u32 index = (u32)(target - g_slots.data());
@@ -611,6 +639,44 @@ namespace vortex::runtime::audio {
 		voice_slot* slot = resolve(handle);
 		if (!slot || !slot->splitter_alive) return -1.0f;
 		return ma_node_get_output_bus_volume(&slot->splitter, 1);
+	}
+
+	bool voice_get_position(voice_handle handle, u64* cursor, u64* length, u32* sample_rate)
+	{
+		if (cursor) *cursor = 0;
+		if (length) *length = 0;
+		if (sample_rate) *sample_rate = 0;
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		voice_slot* slot = resolve(handle);
+		if (!slot) return false;
+		// The data source's cursor IS the mixer's position: it advances as the mixer reads (in device-period blocks, at
+		// the voice's pitch), stands still while the voice is paused, and reports a pending seek's target.
+		ma_uint64 c = 0, l = 0;
+		ma_uint32 rate = 0;
+		ma_sound_get_cursor_in_pcm_frames(&slot->sound, &c);
+		ma_sound_get_length_in_pcm_frames(&slot->sound, &l);
+		ma_sound_get_data_format(&slot->sound, nullptr, nullptr, &rate, nullptr, 0);
+		if (cursor) *cursor = (u64)c;
+		if (length) *length = (u64)l;
+		if (sample_rate) *sample_rate = (u32)rate;
+		return true;
+	}
+
+	void voice_seek(voice_handle handle, d64 seconds)
+	{
+		std::lock_guard<std::mutex> lock(g_voices_mutex);
+		voice_slot* slot = resolve(handle);
+		if (!slot) return;
+		ma_uint32 rate = 0;
+		ma_sound_get_data_format(&slot->sound, nullptr, nullptr, &rate, nullptr, 0);
+		if (rate == 0) return;
+		ma_uint64 length = 0;
+		ma_sound_get_length_in_pcm_frames(&slot->sound, &length);
+		u64 frame = seconds_to_frames(seconds, rate);
+		if (length > 0 && frame >= length) frame = slot->looping ? frame % length : (u64)length;
+		// miniaudio hands the target to the mixing thread, which seeks before its next read — no read/seek race; a
+		// streamed clip refills from the new spot on the resource manager's job thread meanwhile
+		ma_sound_seek_to_pcm_frame(&slot->sound, frame);
 	}
 
 	void voice_set_spatial(voice_handle handle, const voice_spatial& spatial)

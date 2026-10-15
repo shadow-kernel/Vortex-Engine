@@ -292,6 +292,16 @@ namespace vortex::runtime::audio {
 		return g_state == engine_state::device;
 	}
 
+	u64 engine_time_frames()
+	{
+		return g_state != engine_state::uninitialized ? (u64)ma_engine_get_time_in_pcm_frames(&g_engine) : 0;
+	}
+
+	u32 engine_sample_rate()
+	{
+		return g_state != engine_state::uninitialized ? (u32)ma_engine_get_sample_rate(&g_engine) : 0;
+	}
+
 	bool register_clip_data(const char* name, const void* data, u64 size)
 	{
 		if (g_state == engine_state::uninitialized || !name || !*name || !data || size == 0) return false;
