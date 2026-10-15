@@ -1474,6 +1474,25 @@ namespace Vortex
             _grounded = g; return r;
         }
 
+        /// <summary>The capsule of the character <paramref name="entity"/> moves (Physics.MoveCharacter with its EntityId, with
+        /// either controller, or its Nav Agent): <paramref name="feet"/> = the bottom of the capsule, its radius and total height.
+        /// False — and the entity's position, 0, 0 — when it moves none. For entities whose position is not where they stand:
+        /// a first-person player's entity is its camera, at eye height. Aim at a character's chest:
+        /// <c>Vector3 feet; float r, h; if (Physics.CharacterCapsule(target, out feet, out r, out h)) aim = feet + Vector3.Up * (h * 0.7f);</c></summary>
+        public static bool CharacterCapsule(long entity, out Vector3 feet, out float radius, out float height)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance?.FindEntityByHandle(entity);
+            Editor.ECS.Vector3 f;
+            if (e != null && Editor.Core.Services.Physics.CollisionService.TryGetCharacterOf(e, out f, out radius, out height))
+            {
+                feet = new Vector3(f.X, f.Y, f.Z);
+                return true;
+            }
+            feet = e != null ? Scene.WorldPositionOf(entity) : Vector3.Zero;
+            radius = 0f; height = 0f;
+            return false;
+        }
+
         /// <summary>Unregister a character (#407): the capsule MoveCharacter registered under <paramref name="characterId"/>
         /// stops blocking other characters, <see cref="CanStand"/> and trigger volumes — and with the "jolt" controller its
         /// Jolt character leaves the physics world (rays, props and other characters no longer meet it). For actors that

@@ -326,7 +326,11 @@ namespace Vortex
         /// <summary>Hide a target from every agent (the player climbs into a locker) / reveal it again.</summary>
         public static void SetHidden(long target, bool hidden) { PerceptionService.SetHidden(E(target), hidden); }
 
-        /// <summary>The height the sight rays aim at on a target: 1.7 standing (default), ~1.0 crouched.</summary>
+        /// <summary>How tall <paramref name="target"/> is for the sight rays, in metres above its FEET — they aim at 25, 60 and
+        /// 95 % of it (knees, chest, head). Its feet are the bottom of the capsule of the character it moves (Physics.MoveCharacter
+        /// with its EntityId, or its Nav Agent), else its position. Without this call a character target is as tall as its
+        /// capsule — a crouch that moves a shorter capsule is aimed lower by itself — and any other target 1.7. Call it for a
+        /// pose the capsule does not show (lying prone: 0.5), not to correct the camera height of a first-person player.</summary>
         public static void SetTargetHeight(long target, float height) { PerceptionService.SetTargetHeight(E(target), height); }
 
         /// <summary>Let an agent also look for <paramref name="target"/> (besides its Target Tag).</summary>
