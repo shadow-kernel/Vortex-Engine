@@ -41,9 +41,13 @@ namespace VortexTests
                 return true;
             }
 
+            /// <summary>A test's own resolution (instead of the fixed one below).</summary>
+            public Action<GameEntity, MeshRenderer> Custom;
+
             // primitives get fixed mesh ids, a .vmat path its material id, no path the plain material; layer and tint as authored
             private void Resolve(GameEntity e, MeshRenderer mr)
             {
+                if (Custom != null) { Custom(e, mr); return; }
                 if (!mr.IsEnabled || string.IsNullOrEmpty(mr.MeshPath) || e.Transform == null) return;
                 long mesh = mr.MeshPath == "Primitive:Sphere" ? 2 : 1;
                 long mat = string.IsNullOrEmpty(mr.MaterialPath) ? 100 : (mr.MaterialPath == "b.vmat" ? 102 : 101);
@@ -321,6 +325,129 @@ namespace VortexTests
             var ops = rig.Submit(scene);
             t.Equal(5, Count(ops, VortexAPI.InstanceSet), "every instance is sent again");
             t.Equal(5, SceneRenderService.LastRetainedInstances, "five retained");
+        }
+
+        [Test]
+        public static void AMeshThatDoesNotLoadIsTriedAgain(TestContext t)
+        {
+            foreach (bool play in new[] { true, false })
+            {
+                using var rig = new Rig(play);
+                var scene = new Editor.Core.Data.Scene { Name = "Retained" };
+                bool missing = true;
+                rig.Custom = (e, mr) =>
+                {
+                    if (mr.MeshPath == "Assets/late.vmesh" && missing) { rig.Svc.ResolveFailed(); return; }   // not there (yet)
+                    rig.Svc.AddResolved(mr.MeshPath == "Assets/late.vmesh" ? 60 : 1, 100, 0, 1f, 1f, 1f, 1f);
+                };
+                Cube(scene, "Other", 5);
+                var late = new GameEntity(scene, "Late");
+                late.AddComponentDirect(new MeshRenderer(late) { MeshPath = "Assets/late.vmesh" });
+                scene.Entities.Add(late);
+                var first = rig.Submit(scene);
+                t.Equal(1, Count(first, VortexAPI.InstanceSet), (play ? "play" : "edit") + ": only the cube is drawn, the missing mesh is not");
+
+                missing = false;   // the file arrives (an import, a copy) and nothing else changes
+                if (play)
+                {
+                    System.Threading.Thread.Sleep(SceneRenderService.UnresolvedRetryMs + 100);
+                    var retried = rig.Submit(scene);
+                    t.Equal(1, Count(retried, VortexAPI.InstanceSet), "play: the next retry makes its instance");
+                    t.Equal(60L, retried[0].Mesh, "with the mesh that arrived");
+                    t.Equal(0, rig.Submit(scene).Count, "play: resolved, it is not tried again");
+                }
+                else
+                {
+                    var walked = rig.Submit(scene);
+                    t.Equal(1, Count(walked, VortexAPI.InstanceSet), "edit: the next submit (a walk) makes its instance");
+                    t.Equal(0, rig.Submit(scene).Count, "edit: resolved, the next walk sends nothing");
+                }
+            }
+        }
+
+        [Test]
+        public static void AFileThatArrivesIsTriedAtOnce(TestContext t)
+        {
+            using var rig = new Rig(play: true);
+            var scene = new Editor.Core.Data.Scene { Name = "Retained" };
+            bool missing = true;
+            rig.Custom = (e, mr) =>
+            {
+                if (missing) { rig.Svc.ResolveFailed(); return; }
+                rig.Svc.AddResolved(61, 100, 0, 1f, 1f, 1f, 1f);
+            };
+            var late = new GameEntity(scene, "Late");
+            late.AddComponentDirect(new MeshRenderer(late) { MeshPath = "Assets/late.glb" });
+            scene.Entities.Add(late);
+            t.Equal(0, rig.Submit(scene).Count, "nothing to draw yet");
+            missing = false;
+            rig.Svc.RetryUnresolvedNow();   // what InvalidateModel does for a path that never loaded (the asset watcher)
+            var ops = rig.Submit(scene);
+            t.Equal(1, Count(ops, VortexAPI.InstanceSet), "the next submit resolves it, no waiting for the retry");
+        }
+
+        [Test]
+        public static void AReloadedModelTakesOnlyItsOwnInstancesOut(TestContext t)
+        {
+            using var rig = new Rig(play: true);
+            var scene = new Editor.Core.Data.Scene { Name = "Retained" };
+            long modelMesh = 50;
+            rig.Custom = (e, mr) => rig.Svc.AddResolved(mr.MeshPath == "Assets/model.glb" ? modelMesh : 1, 100, 0, 1f, 1f, 1f, 1f);
+            for (int i = 0; i < 5; i++) Cube(scene, "Cube " + i, i);
+            var model = new GameEntity(scene, "Model");
+            model.AddComponentDirect(new MeshRenderer(model) { MeshPath = "Assets/model.glb" });
+            scene.Entities.Add(model);
+            var first = rig.Submit(scene);
+            int modelHandle = -1;
+            foreach (var op in first) if (op.Mesh == 50) modelHandle = op.Handle;
+
+            // InvalidateModel: the model's meshes are about to be freed
+            rig.Ops.Clear();
+            rig.Svc.ReleaseMeshes(new HashSet<long> { 50 });
+            t.Equal(1, rig.Ops.Count, "its instance leaves the renderer at once, before the mesh is freed");
+            t.Equal(VortexAPI.InstanceRemove, rig.Ops[0].Kind, "a remove");
+            t.Equal(modelHandle, rig.Ops[0].Handle, "of the model's instance only — the cubes stay");
+
+            modelMesh = 51;   // reloaded from the changed file
+            var walks = SceneRenderService.SceneWalks;
+            var again = rig.Submit(scene);
+            t.True(SceneRenderService.SceneWalks > walks, "play too: the next submit walks the scene");
+            t.Equal(1, again.Count, "and sends the model's new instance only");
+            t.Equal(VortexAPI.InstanceSet, again[0].Kind, "a set");
+            t.Equal(51L, again[0].Mesh, "with the reloaded mesh");
+        }
+
+        [Test]
+        public static void AFailedSubmitStartsOver(TestContext t)
+        {
+            using var rig = new Rig(play: true);
+            var scene = new Editor.Core.Data.Scene { Name = "Retained" };
+            var a = Cube(scene, "A", 1);
+            var b = Cube(scene, "B", 2);
+            rig.Submit(scene);
+            bool armed = true;
+            rig.Custom = (e, mr) =>
+            {
+                if (armed && ReferenceEquals(e, b)) { armed = false; throw new InvalidOperationException("injected"); }
+                rig.Svc.AddResolved(1, 100, 0, mr.ColorR, mr.ColorG, mr.ColorB, mr.ColorA);
+            };
+            // one frame: A restyled (its op is gathered), a spawn, then B's resolution throws before anything is sent
+            a.GetComponent<MeshRenderer>().ColorR = 0.3f;
+            var spawned = Cube(scene, "Spawned", 3);
+            b.GetComponent<MeshRenderer>().ColorR = 0.4f;
+            rig.Ops.Clear();
+            Exception failure = null;
+            try { rig.Svc.PrepareRetained(scene); rig.Svc.FinishRetained(); }
+            catch (Exception ex) { failure = ex; rig.Svc.RetainedFailed(ex); }   // what SubmitScene does
+            t.NotNull(failure, "the injected failure reached the submit");
+            t.Equal(0, rig.Ops.Count, "nothing of the failed frame reached the renderer");
+
+            var next = rig.Submit(scene);
+            t.Equal(3, Count(next, VortexAPI.InstanceSet), "the next submit sends every instance again (A, B and the spawn)");
+            bool aTint = false, bTint = false;
+            foreach (var op in next) { if (op.ColorAt(0) == 0.3f) aTint = true; if (op.ColorAt(0) == 0.4f) bTint = true; }
+            t.True(aTint && bTint, "with the colours of the failed frame");
+            t.Equal(3, SceneRenderService.LastRetainedInstances, "three retained");
         }
 
         [Test]

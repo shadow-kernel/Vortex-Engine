@@ -330,7 +330,12 @@ namespace Editor.Core.Services
             foreach (var k in _submeshMeshCache.Keys) if (SameModel(k, target)) keys.Add(k);
             foreach (var k in _meshPathToMaterialId.Keys) if (SameModel(k, target)) keys.Add(k);
             foreach (var k in _meshBoundsCache.Keys) if (SameModel(k, target)) keys.Add(k);
-            if (keys.Count == 0) return;
+            if (keys.Count == 0)
+            {
+                // never loaded (missing, or it failed): the entities that wait for it try again now — it may just have arrived
+                _instance?.RetryUnresolvedNow();
+                return;
+            }
             var ids = new HashSet<long>();
             foreach (var k in keys)
             {
@@ -342,12 +347,15 @@ namespace Editor.Core.Services
                 _isModelPath.Remove(k);
             }
             _resolvedSubmeshes.Clear();
+            var inst = Instance;
+            // the retained instances that draw them leave the renderer before the meshes are freed — only those; their entities
+            // resolve the model again on the next submit, which this requests (#361)
+            if (inst != null) inst.ReleaseMeshes(ids);
             foreach (var id in ids)
             {
                 _sharedMeshIds.Remove(id);
                 try { VortexAPI.DeleteMesh(id); } catch { }
             }
-            var inst = Instance;
             if (inst != null) inst.ForgetEntityMeshes(ids);
             ResolveEpoch++;   // the retained nodes of that model resolve again (#361)
             RuntimeDirty = true;
@@ -915,22 +923,33 @@ namespace Editor.Core.Services
             // #361: the retained meshes first — their walk (only after a structure change in play) indexes what the lights,
             // decals, terrains, foliage and water need, so those no longer walk the whole scene every frame
             long tMeshes = System.Diagnostics.Stopwatch.GetTimestamp();
-            bool retained = _retainedEnabled && PrepareRetained(scene);
-            long meshTicks = System.Diagnostics.Stopwatch.GetTimestamp() - tMeshes;
-            var index = retained ? _index : null;
-            t = System.Diagnostics.Stopwatch.GetTimestamp();
+            long meshTicks;
+            bool retainedTried = _retainedEnabled;
+            try
+            {
+                bool retained = _retainedEnabled && PrepareRetained(scene);
+                meshTicks = System.Diagnostics.Stopwatch.GetTimestamp() - tMeshes;
+                var index = retained ? _index : null;
+                t = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            // Clear and submit all lights first
-            SubmitSceneLights(scene, index); Phase(0);
-            Decals.DecalService.Submit(scene, IsPlayLike, index?.Decals); Phase(1);   // #120: the scene's Decal components + spawned decals, like the lights
-            Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike, index?.Terrains); Phase(2);   // #124: the terrains' LOD chunks (built / rebuilt here)
-            Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike, index?.Foliage); Phase(3);   // #125: painted foliage through the instancing path
-            Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike, index?.Water); Phase(4);   // #200: water surfaces into the transparent pass
+                // Clear and submit all lights first
+                SubmitSceneLights(scene, index); Phase(0);
+                Decals.DecalService.Submit(scene, IsPlayLike, index?.Decals); Phase(1);   // #120: the scene's Decal components + spawned decals, like the lights
+                Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike, index?.Terrains); Phase(2);   // #124: the terrains' LOD chunks (built / rebuilt here)
+                Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike, index?.Foliage); Phase(3);   // #125: painted foliage through the instancing path
+                Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike, index?.Water); Phase(4);   // #200: water surfaces into the transparent pass
 
-            tMeshes = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (retained) FinishRetained();   // the animated entities, then every instance change in one call
-            else if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
-            else SubmitSceneFull(scene);
+                tMeshes = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (retained) FinishRetained();   // the animated entities, then every instance change in one call
+                else if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
+                else SubmitSceneFull(scene);
+            }
+            catch (Exception ex)
+            {
+                // the retained instances' bookkeeping ran ahead of the ops that never reached the renderer: start over (#361)
+                if (retainedTried) RetainedFailed(ex);
+                throw;
+            }
             Phase(5);
             meshTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tMeshes;
             LastSubmitPhaseMs[5] = meshTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;

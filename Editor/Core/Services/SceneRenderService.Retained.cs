@@ -65,6 +65,9 @@ namespace Editor.Core.Services
             public bool[] Skinned = Array.Empty<bool>();
             public GameEntity AnimatorOwner;
             public Animator Animator;
+            // Its resolution could not load what the renderer names (a mesh or .vmat file missing or broken): it is tried
+            // again — on every walk, and in play every UnresolvedRetryMs — as the whole-scene submit tried on every submit.
+            public bool Unresolved;
         }
 
         /// <summary>Where the ops go: the renderer, or a test's recorder. Returns the renderer's instance epoch; false when the
@@ -73,7 +76,7 @@ namespace Editor.Core.Services
         internal InstanceSink Sink = VortexAPI.TryApplyRenderInstances;
 
         /// <summary>Resolves an entity's rigid instances into the scratch (<see cref="AddResolved"/>); a test replaces it, the
-        /// real one needs the engine (meshes, materials).</summary>
+        /// real one (<see cref="ResolveFromAssets"/>) needs the engine (meshes, materials).</summary>
         internal Action<GameEntity, MeshRenderer> Resolver;
 
         private readonly List<RenderNode> _nodes = new List<RenderNode>();
@@ -94,7 +97,17 @@ namespace Editor.Core.Services
         private int[] _freeHandles = new int[64];
         private int _freeCount, _nextHandle, _liveInstances;
 
-        // one entity's resolved instances (scratch)
+        // the nodes whose resolution failed (RenderNode.Unresolved), and when play tried them last
+        private readonly List<RenderNode> _unresolved = new List<RenderNode>();
+        private long _unresolvedTriedAt;
+        private bool _unresolvedNow;
+        internal const int UnresolvedRetryMs = 500;
+        private static bool _failureLogged;
+
+        // one entity's resolved instances (scratch); _resolveFailed: the resolution could not load a mesh or material it names
+        private bool _resolveFailed;
+        private string _failedPath;   // which of its paths, when the real resolution failed
+        private readonly HashSet<string> _failedThisRound = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private int _resCount;
         private long[] _resMesh = new long[8], _resMat = new long[8];
         private int[] _resLayer = new int[8];
@@ -131,6 +144,7 @@ namespace Editor.Core.Services
             bool full = _retainedFullPending || RenderChanges.Structure || !IsPlayLike || !ReferenceEquals(scene, _retainedScene);
             if (full) Reconcile(scene);
             else Incremental();
+            if (_unresolved.Count > 0) RetryUnresolved(full);
             RenderChanges.Clear();
             return true;
         }
@@ -153,6 +167,89 @@ namespace Editor.Core.Services
             if (_opCount == 0) return;
             if (Sink(_ops, _opCount, out uint epoch) && epoch != _nativeEpoch) _retainedFullPending = true;
             _opCount = 0;
+        }
+
+        /// <summary>A submit failed half-way: the ops it gathered never reached the renderer while the nodes already count them,
+        /// so start over — the renderer drops every instance and the next submit walks the scene and sends them all again.
+        /// The exception goes on to the caller, as before; this says so once per session.</summary>
+        internal void RetainedFailed(Exception ex)
+        {
+            try { DropRetained(clearNative: true); } catch { }
+            RenderChanges.StructureChanged();
+            if (_failureLogged) return;
+            _failureLogged = true;
+            try { ConsoleService.Instance.LogWarning("Scene submit failed (" + ex.GetType().Name + ": " + ex.Message + ") — the next frame sends the whole scene to the renderer again."); } catch { }
+        }
+
+        // ---------------------------------------------------------------------------------------------------- reloads
+
+        /// <summary>
+        /// Meshes are about to be freed — a model file changed on disk or is reimported (InvalidateModel), or no scene uses it
+        /// any more (#339, #358). The instances that draw them leave the renderer first, the rest of the scene stays on screen,
+        /// and their entities resolve the model again on the next submit, which is requested now: edit mode submits only on a
+        /// change, and the renderer used to drop the whole retained scene when it found an instance of a destroyed mesh.
+        /// </summary>
+        internal void ReleaseMeshes(HashSet<long> ids)
+        {
+            if (ids == null || ids.Count == 0) return;
+            bool any = false;
+            for (int i = 0; i < _nodes.Count; i++)
+            {
+                var node = _nodes[i];
+                int n = node.Animated ? node.AnimCount : node.Count;
+                for (int k = 0; k < n; k++)
+                {
+                    if (!ids.Contains(node.Meshes[k])) continue;
+                    if (node.Animated) node.AnimCount = 0;   // submitted per frame: nothing until it is resolved again
+                    else ReleaseInstances(node);
+                    node.Epoch = -1;
+                    any = true;
+                    break;
+                }
+            }
+            if (!any) return;
+            FlushOps();
+            _retainedFullPending = true;   // play too: the next submit walks the scene and resolves them
+            RequestResubmit();
+        }
+
+        /// <summary>A model or mesh file arrived or changed (the asset watcher, an import): the entities whose resolution failed
+        /// try again on the next submit, which is requested now, instead of at the next retry.</summary>
+        internal void RetryUnresolvedNow()
+        {
+            if (_unresolved.Count == 0) return;
+            _unresolvedNow = true;
+            RequestResubmit();
+        }
+
+        private static void RequestResubmit()
+        {
+            RuntimeDirty = true;   // the player's submit-once loop
+            try { Viewport.EditorViewportSession.RequestResubmit(); } catch { }
+        }
+
+        /// <summary>The nodes whose resolution failed: a walk (edit mode, a structure change) has just tried them; otherwise play
+        /// tries them every <see cref="UnresolvedRetryMs"/> — the whole-scene submit tried on every submit.</summary>
+        private void RetryUnresolved(bool walked)
+        {
+            long now = Environment.TickCount64;
+            bool due = !walked && (_unresolvedNow || now - _unresolvedTriedAt >= UnresolvedRetryMs);
+            // a path that failed again this round is not looked up again for the next entity that names it: a missing file
+            // shared by thousands of entities costs one look per round, not one per entity
+            _failedThisRound.Clear();
+            for (int i = _unresolved.Count - 1; i >= 0; i--)
+            {
+                var node = _unresolved[i];
+                if (node.Index < 0 || !node.Unresolved) { node.Unresolved = false; _unresolved.RemoveAt(i); continue; }   // gone, or resolved
+                if (!due) continue;
+                var mr = node.Renderer;
+                if (mr == null || !ReferenceEquals(mr.Entity, node.Entity) || node.Animated != NearestAnimatorEnabled(node.Entity)) { _retainedFullPending = true; continue; }
+                if (_failedThisRound.Count > 0 && (_failedThisRound.Contains(mr.MeshPath ?? "") || _failedThisRound.Contains(mr.MaterialPath ?? ""))) continue;
+                Update(node, mr, node.Animated);
+                if (!node.Unresolved) _unresolved.RemoveAt(i);
+                else if (_failedPath != null) _failedThisRound.Add(_failedPath);
+            }
+            if (walked || due) { _unresolvedTriedAt = now; _unresolvedNow = false; }
         }
 
         /// <summary>The render-relevant modes of the layer presentation (#175): a change resolves every node again.</summary>
@@ -314,17 +411,27 @@ namespace Editor.Core.Services
                     node.Skinned[i] = Resolver == null && Core.Animation.AnimationService.Instance.IsMeshSkinned(_resMesh[i]);
                 }
                 node.AnimCount = n;
-                node.Renderer = mr; node.RendererVersion = mr.RenderVersion; node.Epoch = ResolveEpoch;
+                Stamp(node, mr);
                 return;
             }
             if (node.Animated) { node.Animated = false; node.AnimCount = 0; stale = true; }   // it owned no instances: Count is 0
             if (stale)
             {
                 Resolve(node.Entity, mr);
-                node.Renderer = mr; node.RendererVersion = mr.RenderVersion; node.Epoch = ResolveEpoch;
+                Stamp(node, mr);
                 Apply(node);
             }
             else if (node.Count > 0) SendMoves(node);
+        }
+
+        /// <summary>The node was resolved from this renderer. One whose resolution could not load a mesh or material it names
+        /// stays stale and is listed, so it is tried again (its file may arrive later — an import, a copy, a download).</summary>
+        private void Stamp(RenderNode node, MeshRenderer mr)
+        {
+            node.Renderer = mr; node.RendererVersion = mr.RenderVersion;
+            if (!_resolveFailed) { node.Epoch = ResolveEpoch; node.Unresolved = false; return; }
+            node.Epoch = -1;
+            if (!node.Unresolved) { node.Unresolved = true; _unresolved.Add(node); }
         }
 
         /// <summary>An entity under an enabled Animator, every frame — SubmitEntity's work with its resolution cached on the node:
@@ -437,6 +544,8 @@ namespace Editor.Core.Services
             }
             _nodes.Clear();
             _animatedNodes.Clear();
+            for (int i = 0; i < _unresolved.Count; i++) _unresolved[i].Unresolved = false;
+            _unresolved.Clear();
             _freeCount = 0; _nextHandle = 0; _opCount = 0; _liveInstances = 0;
             _retainedFullPending = true;
             _retainedScene = null;
@@ -460,10 +569,18 @@ namespace Editor.Core.Services
         private void Resolve(GameEntity entity, MeshRenderer mr)
         {
             _resCount = 0;
+            _resolveFailed = false;
+            _failedPath = null;
             if (Resolver != null) { Resolver(entity, mr); return; }
+            ResolveFromAssets(entity, mr);
+        }
+
+        /// <summary>The real resolution: the engine's meshes and materials for the renderer's paths (see <see cref="Resolve"/>).</summary>
+        internal void ResolveFromAssets(GameEntity entity, MeshRenderer mr)
+        {
             if (!mr.IsEnabled || string.IsNullOrEmpty(mr.MeshPath) || entity.Transform == null) return;
             long meshId = GetOrCreateMesh(entity.Id, mr);
-            if (meshId < 0) return;
+            if (meshId < 0) { _resolveFailed = true; _failedPath = mr.MeshPath; return; }   // missing or broken: tried again (Stamp)
             int layer = mr.RenderLayer;
             if (!PresentLayer(ref layer)) return;
             float r, g, b, a;
@@ -482,9 +599,14 @@ namespace Editor.Core.Services
                 }
             }
             long materialId = GetOrCreateMaterial(entity.Id, mr);
+            // a .vmat that did not load draws with the fallback look and is tried again, as the whole-scene submit did
+            if (!string.IsNullOrEmpty(mr.MaterialPath) && !_vmatPathCache.ContainsKey(mr.MaterialPath)) { _resolveFailed = true; _failedPath = mr.MaterialPath; }
             TintFor(mr, materialId, out r, out g, out b, out a);
             AddResolved(meshId, materialId, layer, r, g, b, a);
         }
+
+        /// <summary>For a test's <see cref="Resolver"/>: the resolution could not load what the renderer names.</summary>
+        internal void ResolveFailed() => _resolveFailed = true;
 
         internal void AddResolved(long mesh, long material, int layer, float r, float g, float b, float a)
         {
