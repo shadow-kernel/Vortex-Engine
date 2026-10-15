@@ -275,6 +275,54 @@ namespace Editor.Core.Services.Physics
             PublishDynamicShapes();
         }
 
+        /// <summary>#421: rebuild ONE entity's bodies from its current components — a Collider or Rigidbody added or removed while
+        /// playing. Its children keep their bodies (the same ids); its own joints are created again and joints of other entities
+        /// that hold it re-attach to the new body. The character world gets the entity's own shapes again (a dynamic body leaves
+        /// it, as at play start). Nothing but the removal while the entity is inactive in the hierarchy.</summary>
+        public static void RebuildEntity(GameEntity e)
+        {
+            if (!IsBuilt || e == null) { if (e != null) { try { CollisionService.RefreshOwnShapes(e); } catch { } } return; }
+            // joints that hold this entity's body: its own go (they are made again below), others' detach until it is back
+            for (int i = _joints.Count - 1; i >= 0; i--)
+            {
+                var rec = _joints[i];
+                bool own = ReferenceEquals(rec.Entity, e);
+                if (!own && !ReferenceEquals(rec.Connected, e)) continue;
+                if (rec.Id != 0) { try { VortexAPI.PhysicsDestroyConstraint(rec.Id); } catch { } _jointById.Remove(rec.Id); rec.Id = 0; }
+                if (own) ForgetRec(rec);
+            }
+            for (int i = _jointComponents.Count - 1; i >= 0; i--)   // a joint component taken off the entity is no joint any more
+            {
+                var j = _jointComponents[i];
+                if (!ReferenceEquals(j.Entity, e) || (e.Components != null && e.Components.Contains(j))) continue;
+                j.PropertyChanged -= OnJointComponentChanged;
+                _jointComponents.RemoveAt(i);
+                _jointComponentSet.Remove(j);
+                _jointWarned.Remove(j);
+            }
+            for (int i = _bodies.Count - 1; i >= 0; i--)
+            {
+                var b = _bodies[i];
+                if (b.Entity != e) continue;
+                try { VortexAPI.PhysicsDestroyBody(b.Id); } catch { }
+                _byId.Remove(b.Id);
+                _bodies.RemoveAt(i);
+            }
+            _byEntity.Remove(e);
+            _solidBodiesOf.Remove(e);
+            try { CollisionService.RefreshOwnShapes(e); } catch { }
+            if (ActiveInHierarchy(e))
+            {
+                try { CreateBodiesFor(e); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Physics] body for '" + e.Name + "' failed: " + ex.Message); }
+                if (e.Components != null)
+                    foreach (var c in e.Components)
+                        if (c is PhysicsJoint j && _jointComponentSet.Add(j)) { _jointComponents.Add(j); j.PropertyChanged += OnJointComponentChanged; }
+                CreatePendingJoints(e);
+            }
+            PublishDynamicShapes();
+        }
+
         /// <summary>Re-sync an entity after a script moved or edited its colliders (Physics.RefreshCollider):
         /// static/kinematic bodies are teleported to the entity's current pose, dynamic entities are removed from the
         /// static collision world again (RefreshCollider re-baked them there).</summary>

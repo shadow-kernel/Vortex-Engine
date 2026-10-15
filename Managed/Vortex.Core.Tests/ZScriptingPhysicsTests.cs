@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Reflection;
 using Editor.Core.Data;
 using Editor.Core.Services;
@@ -132,6 +133,64 @@ public class BodyProbe : VortexBehaviour
                 Vortex.Scene.SetActive(rt.HandleForEntity(area), false);
                 t.Equal("OnDisable body=True", string.Join(" | ", log), "SetActive(root, false): OnDisable while the body still exists");
                 t.False(PhysicsService.HasRigidbody(car), "… and it is gone afterwards");
+            }
+            finally { rt.End(); GameTime.ResetSession(1f / 60f); PhysicsNative.Shutdown(); }
+        }
+
+        /// <summary>#421 acceptance: a scene entity with only a Collider becomes a dynamic body after Physics.AddRigidbody(id, 5):
+        /// HasRigidbody, GetMass 5, it falls; its child keeps its own body (the same id); RemoveRigidbody makes it static again;
+        /// an entity with neither collider nor mesh is refused with a warning and left as it was; Stop takes the Rigidbody off.</summary>
+        [Test]
+        public static void ARigidbodyAddedWhilePlayingMakesAStaticPropFall(TestContext t)
+        {
+            if (!Jolt()) return;
+            var asm = Compile(t);
+            var rt = ScriptRuntime.Instance;
+            try
+            {
+                var s = new Scene { Name = "Props" };
+                var post = new GameEntity(s, "LampPost");
+                post.Transform.LocalPosition = new Vector3(0f, 100f, 0f);
+                post.AddComponentDirect(new BoxCollider(post));
+                post.AddComponentDirect(new Script(post, "Assets/Scripts/Idle.cs"));
+                s.Entities.Add(post);
+                var bulb = new GameEntity(s, "Bulb");
+                bulb.Transform.LocalPosition = new Vector3(0f, 2f, 0f);
+                bulb.AddComponentDirect(new SphereCollider(bulb) { Radius = 0.2f });
+                bulb.AddComponentDirect(new Rigidbody(bulb) { Mass = 0.5f, BodyType = RigidbodyType.Kinematic });
+                bulb.Parent = post; post.Children.Add(bulb);
+                var ghost = new GameEntity(s, "Ghost");   // no collider, no mesh
+                ghost.Transform.LocalPosition = new Vector3(10f, 100f, 0f);
+                s.Entities.Add(ghost);
+                PhysicsRaycastTests.AsLoaded(s);
+                GameTime.ResetSession(1f / 60f);
+                rt.Begin(s, asm);
+                long id = rt.HandleForEntity(post);
+                t.True(PhysicsService.HasBody(post) && !PhysicsService.HasRigidbody(post), "authored: a static body");
+                uint bulbBody = PhysicsService.GetBodyId(bulb);
+                t.True(bulbBody != 0, "the child has its own body");
+
+                t.True(Vortex.Physics.AddRigidbody(id, 5f), "AddRigidbody(id, 5) succeeds");
+                t.True(Vortex.Physics.HasRigidbody(id), "HasRigidbody is true at once");
+                t.True(Math.Abs(Vortex.Physics.GetMass(id) - 5f) < 1e-3f, "GetMass is 5 (" + Vortex.Physics.GetMass(id) + ")");
+                t.Equal(bulbBody, PhysicsService.GetBodyId(bulb), "the child keeps its body (same id)");
+                for (int i = 0; i < 30; i++) rt.Update(1f / 60f);
+                t.True(post.Transform.LocalPosition.Y < 99.5f, "it falls (y " + post.Transform.LocalPosition.Y + ")");
+
+                t.True(Vortex.Physics.RemoveRigidbody(id), "RemoveRigidbody");
+                t.True(PhysicsService.HasBody(post) && !PhysicsService.HasRigidbody(post), "a static body again");
+                t.False(Vortex.Physics.RemoveRigidbody(id), "nothing left to remove");
+
+                long gid = rt.HandleForEntity(ghost);
+                t.False(Vortex.Physics.AddRigidbody(gid, 2f), "no collider and no mesh: refused");
+                t.True(ConsoleService.Instance.Entries.Any(x => x.Level == LogLevel.Warning && x.Message.Contains("'Ghost'") && x.Message.Contains("no enabled collider")), "… with a warning");
+                t.True(ghost.GetComponent<Rigidbody>() == null, "… and the entity left as it was");
+
+                t.True(Vortex.Scene.AddComponent(gid, "SphereCollider") && Vortex.Physics.AddRigidbody(gid, 2f), "a collider first, then the Rigidbody: a body");
+                t.True(Math.Abs(PhysicsService.GetMass(ghost) - 2f) < 1e-3f, "with its mass");
+                rt.End();
+                t.True(post.GetComponent<Rigidbody>() == null && ghost.GetComponent<Rigidbody>() == null && ghost.GetComponent<SphereCollider>() == null,
+                       "play end: the runtime components are gone");
             }
             finally { rt.End(); GameTime.ResetSession(1f / 60f); PhysicsNative.Shutdown(); }
         }

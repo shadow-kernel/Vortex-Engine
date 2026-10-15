@@ -996,6 +996,12 @@ namespace Editor.Core.Services.Physics
             // the Jolt bodies (PhysicsService.AddRecursive) — a level part saved inactive must not hold invisible walls and
             // floors. SetEntityActive adds the subtree when it is switched on.
             if (e == null || !e.IsActive) return;
+            AddOwnShapes(e);
+            if (e.Children != null) foreach (var c in e.Children) AddRecursive(c);
+        }
+
+        private static void AddOwnShapes(GameEntity e)
+        {
             var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
             if (terrain != null && terrain.IsEnabled && terrain.Collision) AddTerrainShape(e);   // #124
             var foliage = e.GetComponent<Editor.ECS.Components.Rendering.Foliage>();
@@ -1006,7 +1012,15 @@ namespace Editor.Core.Services.Physics
                 // Solid colliders block (go into _world); triggers only report overlap (go into _triggers).
                 AddOwnShape(e, col);
             }
-            if (e.Children != null) foreach (var c in e.Children) AddRecursive(c);
+        }
+
+        /// <summary>#421: ONE entity's own shapes again from its current components (a collider added or removed while playing) —
+        /// its children keep theirs. Nothing while the entity is inactive in the hierarchy.</summary>
+        public static void RefreshOwnShapes(GameEntity e)
+        {
+            if (!IsBuilt || e == null) return;
+            RemoveEntityShapes(e, includeChildren: false);
+            if (ActiveInHierarchy(e)) AddOwnShapes(e);
         }
 
         /// <summary>The colliding foliage instances (#125: trunks) as vertical capsules of the static world.</summary>

@@ -296,6 +296,50 @@ namespace Editor.Core.Services
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] AddEntity failed: " + ex.Message); }
         }
 
+        /// <summary>#421: a component added to a running entity — an Audio Source gets its binding (Play On Awake starts it on
+        /// the next tick, a script's Play() at once), a Reverb Zone joins the zones, an Audio Listener the ears. Nothing for one
+        /// the service knows already (the entity's first Audio Source is the one that plays).</summary>
+        public void AddComponent(GameEntity e, ECS.Component c)
+        {
+            if (!_active || e == null || c == null) return;
+            try
+            {
+                if (c is AudioSource src && !_bindings.Exists(b => ReferenceEquals(b.Source, src)) && ReferenceEquals(e.GetComponent<AudioSource>(), src))
+                {
+                    var b = new SourceBinding { Source = src, Entity = e };
+                    SnapshotBinding(b);
+                    b.WantsPlay = src.PlayOnAwake;
+                    _bindings.Add(b);
+                }
+                else if (c is ReverbZone zone && !_zones.Exists(z => ReferenceEquals(z.Zone, zone))) _zones.Add(new ZoneBinding { Zone = zone, Entity = e });
+                else if (c is AudioListener && !_listeners.Contains(e)) _listeners.Add(e);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] AddComponent failed: " + ex.Message); }
+        }
+
+        /// <summary>#421: a component taken off a running entity — an Audio Source's voice stops and its binding goes, a Reverb
+        /// Zone or an Audio Listener leaves.</summary>
+        public void RemoveComponent(GameEntity e, ECS.Component c)
+        {
+            if (c == null) return;
+            try
+            {
+                if (c is AudioSource src)
+                {
+                    for (int i = _bindings.Count - 1; i >= 0; i--)
+                    {
+                        if (!ReferenceEquals(_bindings[i].Source, src)) continue;
+                        VortexAudio.StopVoice(_bindings[i].Handle);
+                        RestoreBinding(_bindings[i]);
+                        _bindings.RemoveAt(i);
+                    }
+                }
+                else if (c is ReverbZone zone) _zones.RemoveAll(z => ReferenceEquals(z.Zone, zone));
+                else if (c is AudioListener && e != null && e.GetComponent<AudioListener>() == null) _listeners.Remove(e);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] RemoveComponent failed: " + ex.Message); }
+        }
+
         /// <summary>An entity that left the running game (Scene.Destroy): its sounds stop and its sources and zones
         /// are released (authored entities get their pre-play values back — play stays non-destructive).</summary>
         public void RemoveEntity(GameEntity e)

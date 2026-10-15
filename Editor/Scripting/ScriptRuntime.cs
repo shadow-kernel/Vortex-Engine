@@ -333,6 +333,224 @@ namespace Editor.Scripting
                 foreach (var c in e.Children) StopAudioRecursive(c);
         }
 
+        // ---- components added / removed while playing (#421) ----
+        // Runtime only, like spawns and SetActive: End takes added components off again and puts removed ones back in their
+        // slot (the editor's play snapshot does too, #508). Each change reaches the engine at once — physics, rendering, audio.
+
+        private readonly List<(GameEntity Entity, Editor.ECS.Component Component)> _componentsAdded = new List<(GameEntity, Editor.ECS.Component)>();
+        private readonly List<(GameEntity Entity, Editor.ECS.Component Component, int Index)> _componentsRemoved = new List<(GameEntity, Editor.ECS.Component, int)>();
+        private static Dictionary<string, Type> _componentTypes;
+
+        /// <summary>Components an entity has at most one of — the engine reads the first (a second Light, Camera, Rigidbody,
+        /// Mesh Renderer, Audio Listener or Audio Source would do nothing).</summary>
+        private static readonly HashSet<Type> OnePerEntity = new HashSet<Type>
+        {
+            typeof(Editor.ECS.Components.Lighting.Light), typeof(Editor.ECS.Components.Rendering.Camera), typeof(Editor.ECS.Components.Physics.Rigidbody),
+            typeof(Editor.ECS.Components.Rendering.MeshRenderer), typeof(Editor.ECS.Components.Audio.AudioListener), typeof(Editor.ECS.Components.Audio.AudioSource),
+        };
+
+        private static string ComponentKey(string name)
+        {
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (char ch in name) if (char.IsLetterOrDigit(ch)) sb.Append(char.ToLowerInvariant(ch));
+            return sb.ToString();
+        }
+
+        /// <summary>A component type by the name the Inspector shows or its class name, any case, spaces ignored ("Rigidbody",
+        /// "box collider", "MeshRenderer", "Mesh Renderer") — base types too ("Collider" = any collider). Null when unknown.</summary>
+        internal static Type ComponentTypeByName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            var map = _componentTypes;
+            if (map == null)
+            {
+                map = new Dictionary<string, Type>(StringComparer.Ordinal);
+                // the class names; the Inspector's names are the same words with spaces ("Mesh Renderer"), which the key drops
+                foreach (var t in typeof(Editor.ECS.Component).Assembly.GetTypes())
+                {
+                    if (!typeof(Editor.ECS.Component).IsAssignableFrom(t) || t == typeof(Editor.ECS.Component)) continue;
+                    map[ComponentKey(t.Name)] = t;
+                }
+                _componentTypes = map;
+            }
+            return map.TryGetValue(ComponentKey(name), out var found) ? found : null;
+        }
+
+        /// <summary>Scene.AddComponent (#421): a new component of <paramref name="typeName"/> on the entity, registered with the
+        /// running engine at once. Null — with a Console warning saying why — for an unknown entity or type, a Transform or
+        /// Script, a second one of a one-per-entity type, or outside play.</summary>
+        internal Editor.ECS.Component AddComponentAtRuntime(long id, string typeName) => AddComponentAtRuntime(id, typeName, null);
+
+        /// <summary>As above; <paramref name="configure"/> sets the new component up before the engine takes it in (one body
+        /// build, with the right mass).</summary>
+        internal Editor.ECS.Component AddComponentAtRuntime(long id, string typeName, Action<Editor.ECS.Component> configure)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || !_active) { WarnComponent("AddComponent", typeName, e, "the entity is unknown (or the game is not running)"); return null; }
+            var t = ComponentTypeByName(typeName);
+            if (t == null) { WarnComponent("AddComponent", typeName, e, "there is no component type of that name"); return null; }
+            if (t == typeof(Editor.ECS.Components.Transform)) { WarnComponent("AddComponent", typeName, e, "every entity has its Transform already"); return null; }
+            if (t == typeof(Script)) { WarnComponent("AddComponent", typeName, e, "scripts come with their entity (a prefab for Scene.Instantiate) — switch one on with Enabled"); return null; }
+            if (t.IsAbstract || t.GetConstructor(new[] { typeof(GameEntity) }) == null || t == typeof(Editor.ECS.Components.Physics.Collider))
+            {
+                WarnComponent("AddComponent", typeName, e, "name a concrete type — BoxCollider, SphereCollider, CapsuleCollider or MeshCollider for a collider");
+                return null;
+            }
+            if (OnePerEntity.Contains(t) && e.Components.Any(c => t.IsInstanceOfType(c)))
+            {
+                WarnComponent("AddComponent", typeName, e, "it has one already (one per entity)");
+                return null;
+            }
+            Editor.ECS.Component comp;
+            try { comp = (Editor.ECS.Component)Activator.CreateInstance(t, e); configure?.Invoke(comp); }
+            catch (Exception ex) { WarnComponent("AddComponent", typeName, e, ex.InnerException?.Message ?? ex.Message); return null; }
+            e.AddComponentDirect(comp);   // no undo step: runtime only
+            _componentsAdded.Add((e, comp));
+            RegisterRuntimeComponent(e, comp, added: true);
+            return comp;
+        }
+
+        /// <summary>Scene.RemoveComponent (#421): the entity's first component of <paramref name="typeName"/> (a base type matches
+        /// its subclasses: "Collider" = the first collider) leaves the entity and the running engine. False — with a warning —
+        /// when there is none, for a Transform or Script, or outside play.</summary>
+        internal bool RemoveComponentAtRuntime(long id, string typeName)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || !_active) { WarnComponent("RemoveComponent", typeName, e, "the entity is unknown (or the game is not running)"); return false; }
+            var t = ComponentTypeByName(typeName);
+            if (t == null) { WarnComponent("RemoveComponent", typeName, e, "there is no component type of that name"); return false; }
+            if (t == typeof(Editor.ECS.Components.Transform) || t == typeof(Script))
+            {
+                WarnComponent("RemoveComponent", typeName, e, t == typeof(Script) ? "switch a script off with Enabled = false, or Scene.Destroy its entity" : "the Transform cannot be removed");
+                return false;
+            }
+            int index = -1;
+            for (int i = 0; i < e.Components.Count; i++) if (t.IsInstanceOfType(e.Components[i])) { index = i; break; }
+            if (index < 0) { WarnComponent("RemoveComponent", typeName, e, "it has none"); return false; }
+            var comp = e.Components[index];
+            e.Components.RemoveAt(index);
+            int added = _componentsAdded.FindIndex(x => ReferenceEquals(x.Component, comp));
+            if (added >= 0) _componentsAdded.RemoveAt(added);   // added while playing: simply gone again
+            else _componentsRemoved.Add((e, comp, index));     // authored: back in its slot when play ends
+            RegisterRuntimeComponent(e, comp, added: false);
+            return true;
+        }
+
+        internal bool HasComponentAtRuntime(long id, string typeName)
+        {
+            var e = FindEntityByHandle(id);
+            var t = ComponentTypeByName(typeName);
+            return e != null && t != null && e.Components.Any(c => t.IsInstanceOfType(c));
+        }
+
+        /// <summary>A component joined or left a running entity (#421): the systems that build from components at play start
+        /// take it in or let it go now. Physics rebuilds the entity's OWN bodies (children keep theirs); a Mesh Renderer
+        /// registers with the engine; audio binds or releases it. Lights, particle systems, animators, Nav Agents, areas and
+        /// cameras are read from the scene every frame and need nothing.</summary>
+        private void RegisterRuntimeComponent(GameEntity e, Editor.ECS.Component c, bool added)
+        {
+            try
+            {
+                if (c is Editor.ECS.Components.Physics.Collider || c is Editor.ECS.Components.Physics.Rigidbody || c is Editor.ECS.Components.Physics.PhysicsJoint)
+                    Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e);
+                else if (c is Editor.ECS.Components.Rendering.MeshRenderer mr)
+                {
+                    if (added) mr.SyncToEngine(); else mr.RemoveFromEngine();
+                    // a renderer standing in as the body's shape (a Rigidbody without colliders) changes the body too
+                    if (Editor.Core.Services.Physics.PhysicsService.HasRigidbody(e) || e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>() != null)
+                        Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e);
+                }
+                else if (c is Editor.ECS.Components.Audio.AudioSource || c is Editor.ECS.Components.Audio.ReverbZone || c is Editor.ECS.Components.Audio.AudioListener)
+                {
+                    if (added) Editor.Core.Services.AudioPlaybackService.Instance.AddComponent(e, c);
+                    else Editor.Core.Services.AudioPlaybackService.Instance.RemoveComponent(e, c);
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[ScriptRuntime] runtime component " + c.GetType().Name + ": " + ex.Message); }
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;   // structural (#364 A)
+        }
+
+        private static void WarnComponent(string what, string typeName, GameEntity e, string why)
+        {
+            try
+            {
+                Editor.Core.Services.ConsoleService.Instance.LogWarning("Scene." + what + "('" + (e?.Name ?? "?") + "', \"" + typeName + "\"): " + why
+                    + (what == "AddComponent" && ComponentTypeByName(typeName) == null
+                        ? ". Types: Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, MeshCollider, Light, AudioSource, MeshRenderer, ParticleSystem, Animator, NavAgent, Decal …"
+                        : "") + ".");
+            }
+            catch { }
+        }
+
+        /// <summary>Physics.AddRigidbody (#421): the entity gets a Rigidbody (or its Rigidbody the mass and kind given) and its
+        /// body is built now — from its enabled colliders, or its mesh when it has no Collider at all. Children keep theirs.
+        /// False, with a warning, when no body can be made (no physics world, no collider and no mesh): the entity is left as
+        /// it was.</summary>
+        internal bool AddRigidbodyAtRuntime(long id, float mass, bool kinematic)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || !_active) { WarnComponent("AddComponent", "Rigidbody", e, "the entity is unknown (or the game is not running)"); return false; }
+            if (!Editor.Core.Services.Physics.PhysicsService.IsBuilt)
+            {
+                WarnComponent("AddComponent", "Rigidbody", e, "rigid-body physics is not running (" + Editor.DllWrapper.PhysicsNative.Reason + ")");
+                return false;
+            }
+            void Setup(Editor.ECS.Component c)
+            {
+                var r = (Editor.ECS.Components.Physics.Rigidbody)c;
+                r.Mass = mass > 0f && float.IsFinite(mass) ? mass : 1f;
+                r.BodyType = kinematic ? Editor.ECS.Components.Physics.RigidbodyType.Kinematic : Editor.ECS.Components.Physics.RigidbodyType.Dynamic;
+                r.IsEnabled = true;
+            }
+            var rb = e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>();
+            bool made = rb == null;
+            if (made) { if (AddComponentAtRuntime(id, "Rigidbody", Setup) == null) return false; }   // one body build, with the mass
+            else { Setup(rb); Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e); }
+            if (Editor.Core.Services.Physics.PhysicsService.HasRigidbody(e)) return true;
+            if (!ActiveInHierarchy(e)) return true;   // switched off: the body is made when it is switched on (OnEnable sees it)
+            WarnComponent("AddComponent", "Rigidbody", e, "it has no enabled collider and no mesh to make a body from — add a BoxCollider (Scene.AddComponent) first");
+            if (made) RemoveComponentAtRuntime(id, "Rigidbody");   // nothing could come of it: leave the entity as it was
+            return false;
+        }
+
+        /// <summary>Physics.RemoveRigidbody (#421): the Rigidbody goes and the entity is a static body again (or none without
+        /// colliders). False when it has none.</summary>
+        internal bool RemoveRigidbodyAtRuntime(long id)
+        {
+            var e = FindEntityByHandle(id);
+            if (e == null || e.GetComponent<Editor.ECS.Components.Physics.Rigidbody>() == null) return false;
+            return RemoveComponentAtRuntime(id, "Rigidbody");
+        }
+
+        /// <summary>Put the components back as they were before play (#421): added ones off, removed ones into their slots.</summary>
+        private void RollbackRuntimeComponents()
+        {
+            for (int i = _componentsAdded.Count - 1; i >= 0; i--)
+            {
+                var (e, c) = _componentsAdded[i];
+                try
+                {
+                    if (c is Editor.ECS.Components.Rendering.MeshRenderer mr) mr.RemoveFromEngine();
+                    e.Components.Remove(c);
+                }
+                catch { }
+            }
+            _componentsAdded.Clear();
+            for (int i = _componentsRemoved.Count - 1; i >= 0; i--)
+            {
+                var (e, c, index) = _componentsRemoved[i];
+                try
+                {
+                    if (e.Components.Contains(c)) continue;
+                    c.Entity = e;
+                    e.Components.Insert(Math.Min(Math.Max(index, 0), e.Components.Count), c);
+                    if (c is Editor.ECS.Components.Rendering.MeshRenderer mr) mr.SyncToEngine();
+                }
+                catch { }
+            }
+            _componentsRemoved.Clear();
+        }
+
         // ---- component-level enable toggles (#51) ----
 
         internal bool SetRendererEnabled(long id, bool enabled)
@@ -880,6 +1098,7 @@ namespace Editor.Scripting
         /// restored) — play mode must never alter the authored scene.</summary>
         private void RollbackRuntimeSceneChanges()
         {
+            RollbackRuntimeComponents();   // #421
             foreach (var e in _spawned)
             {
                 try

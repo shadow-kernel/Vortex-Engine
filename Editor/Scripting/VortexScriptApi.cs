@@ -1075,6 +1075,54 @@ namespace Vortex
         /// <summary>The .vmat currently assigned to an entity's mesh ("" = the model's own material).</summary>
         public static string MaterialOf(long entity) { return Host != null ? Host.GetEntityMaterial(entity) : ""; }
 
+        /// <summary>Give an entity's Mesh Renderer another model at runtime (#421) — a project-relative path
+        /// ("Assets/Models/wreck.glb", "Assets/Models/car.glb#submesh2") or a primitive ("Primitive:Cube", "Primitive:Sphere"):
+        /// a car swaps to its wreck, a bare entity that got a Mesh Renderer (<see cref="AddComponent"/>) starts to render. It
+        /// renders from the next frame; a body made from the mesh (a Rigidbody without colliders) is rebuilt. False without a
+        /// Mesh Renderer. Play end restores the authored mesh.</summary>
+        public static bool SetMeshOf(long entity, string meshPath)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
+            var mr = e?.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>();
+            if (mr == null) return false;
+            mr.MeshPath = string.IsNullOrEmpty(meshPath) ? meshPath : meshPath.Replace('\\', '/');
+            if (Editor.Core.Services.Physics.PhysicsService.UsesMeshAsBody(e)) Editor.Core.Services.Physics.PhysicsService.RebuildEntity(e);
+            Editor.Core.Services.SceneRenderService.RuntimeDirty = Editor.Core.Services.SceneRenderService.StaticDirty = true;
+            return true;
+        }
+
+        /// <summary>The model an entity's Mesh Renderer draws ("" without one).</summary>
+        public static string MeshOf(long entity)
+        {
+            var e = Editor.Scripting.ScriptRuntime.Instance.FindEntityByHandle(entity);
+            return e?.GetComponent<Editor.ECS.Components.Rendering.MeshRenderer>()?.MeshPath ?? "";
+        }
+
+        /// <summary>Add a component to an entity while the game runs (#421), by the name the Inspector's Add Component menu
+        /// shows (any case, spaces optional): "Rigidbody", "BoxCollider", "SphereCollider", "CapsuleCollider", "MeshCollider",
+        /// "Light", "AudioSource", "MeshRenderer", "ParticleSystem", "Animator", "NavAgent", "Decal", "Area", … It joins the
+        /// engine at once: a collider or a Rigidbody rebuilds the entity's OWN body (its children keep theirs) — a scene prop
+        /// with only a collider plus a Rigidbody falls from this frame on; a Light lights the next frame (<see cref="GetLight"/>
+        /// sets it up); an Audio Source can play now (<see cref="GetAudioSource"/>); a Mesh Renderer draws once it has a mesh
+        /// (<see cref="SetMeshOf"/>). The new component has the Inspector's defaults. Runtime only: when play stops it is gone
+        /// again. False — with a Console warning saying why — for an unknown entity or type, a Transform or Script, or a second
+        /// Light, Camera, Rigidbody, Mesh Renderer, Audio Source or Audio Listener (one per entity).
+        /// <c>Scene.AddComponent(lamp, "Light"); Scene.GetLight(lamp).Intensity = 8f;</c></summary>
+        public static bool AddComponent(long entity, string type)
+            { return Editor.Scripting.ScriptRuntime.Instance.AddComponentAtRuntime(entity, type) != null; }
+
+        /// <summary>Remove an entity's component while the game runs (#421) — the first one of that type ("Collider" takes the
+        /// first collider of any kind). It leaves the engine at once: without its collider or Rigidbody the entity's own body is
+        /// rebuilt (a dynamic prop becomes static, or has no body), without its Light it goes dark, without its Audio Source
+        /// the sound stops. Runtime only: play end puts it back. False — with a warning — when there is none, and for a
+        /// Transform or Script (switch a script off with <see cref="VortexBehaviour.Enabled"/>).</summary>
+        public static bool RemoveComponent(long entity, string type)
+            { return Editor.Scripting.ScriptRuntime.Instance.RemoveComponentAtRuntime(entity, type); }
+
+        /// <summary>True when the entity has a component of that type (a base type counts its kinds: "Collider").</summary>
+        public static bool HasComponent(long entity, string type)
+            { return Editor.Scripting.ScriptRuntime.Instance.HasComponentAtRuntime(entity, type); }
+
         /// <summary>Set an entity's WORLD position + rotation in one call — correct even when the entity
         /// is a CHILD of a moved/rotated/scaled parent (the engine converts to the local frame; the
         /// entity's own scale is untouched). THE way to camera-lock a viewmodel that lives under the
@@ -1848,6 +1896,22 @@ namespace Vortex
         /// <c>foreach (var id in Physics.OverlapSphere(Position, 4f)) Physics.AddImpulse(id, (Scene.WorldPositionOf(id) - Position).Normalized * 20f);</c>
         /// Triggers are not included. Empty without a physics-enabled build.</summary>
         public static long[] OverlapSphere(Vector3 center, float radius) { return Host != null ? (Host.PhysicsOverlapSphere(center, radius) ?? new long[0]) : new long[0]; }
+
+        /// <summary>Make an entity a physics body while the game runs (#421): it gets a Rigidbody — Dynamic, or Kinematic with
+        /// <paramref name="kinematic"/> — with <paramref name="mass"/> kg, and its body is built at once from its enabled
+        /// colliders (or from its mesh when it has no Collider at all), so a lamp post that was only a static collider falls,
+        /// rolls and gets pushed from this frame on, and Physics.AddImpulse works right away. Its children keep their own
+        /// bodies. An entity that has a Rigidbody already takes the mass and kind given. Runtime only: play end takes the
+        /// Rigidbody off again. False, with a Console warning, when the game has no physics world or the entity neither has an
+        /// enabled collider nor a mesh (it is left as it was). An entity that is switched off gets its body when it is switched
+        /// on. <c>if (Physics.AddRigidbody(hit.EntityId, 40f)) Physics.AddImpulse(hit.EntityId, dir * 200f);</c></summary>
+        public static bool AddRigidbody(long entity, float mass = 1f, bool kinematic = false)
+            { return Editor.Scripting.ScriptRuntime.Instance.AddRigidbodyAtRuntime(entity, mass, kinematic); }
+
+        /// <summary>Take an entity's Rigidbody off while the game runs (#421): it is a static body again (its colliders stay), or
+        /// has no body without colliders; children keep theirs. Play end puts an authored Rigidbody back. False when it has none.</summary>
+        public static bool RemoveRigidbody(long entity)
+            { return Editor.Scripting.ScriptRuntime.Instance.RemoveRigidbodyAtRuntime(entity); }
 
         /// <summary>True when the entity is a moving physics body (a Dynamic or Kinematic Rigidbody). Bodies exist only while
         /// the entity is active in the hierarchy: false while it or an ancestor is switched off (Scene.SetActive) — in Start of
