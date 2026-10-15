@@ -1,4 +1,5 @@
 #include "DX12Renderer_Internal.h"
+#include "../Lighting/CascadeSplits.h"
 #include <algorithm>
 #include <unordered_map>
 
@@ -386,6 +387,7 @@ namespace vortex::graphics::dx12
 		using namespace DirectX;
 
 		m_csm_count = 0;
+		m_csm_bias[0] = m_csm_bias[1] = m_csm_bias[2] = 1.0f; m_csm_bias[3] = 0.0f;
 		if (!m_pipeline_3d.shadow_pso() || !m_csm_map) return;
 		if (!m_dir_cast_shadows || m_dir_shadow_strength <= 0.0f || m_directional_intensity <= 0.001f) return;
 
@@ -404,12 +406,11 @@ namespace vortex::graphics::dx12
 		XMMATRIX lightView = XMMatrixLookToLH(XMVectorZero(), lightDir, lightUp);
 
 		// Practical split scheme over [near, shadow distance]: blend of logarithmic (resolution where
-		// it counts, near the camera) and uniform (no absurdly thin far cascades). near/far MUST match
-		// update_per_frame_constants' hardcoded projection (0.1 / 1000) for consistent world distances.
-		const float nearZ = 0.1f;
-		const float farZ = m_dir_shadow_distance;
-		const float lambda = 0.6f;
-		float splitNear = nearZ;
+		// it counts, near the camera) and uniform (no absurdly thin far cascades) — the classic 0.6 blend up
+		// to 80 m, towards the logarithmic split beyond it (#466, lighting/CascadeSplits.h, as on SDL GPU).
+		float splits[CSM_CASCADES];
+		lighting::cascade_splits(m_dir_shadow_distance, CSM_CASCADES, splits);
+		float splitNear = lighting::CASCADE_NEAR_Z;
 
 		// Camera basis for slicing the view frustum (same inputs update_per_frame_constants uses).
 		XMVECTOR eye = XMLoadFloat3(&m_camera_position);
@@ -424,10 +425,7 @@ namespace vortex::graphics::dx12
 
 		for (u32 c = 0; c < CSM_CASCADES; ++c)
 		{
-			const float f = (float)(c + 1) / (float)CSM_CASCADES;
-			const float logSplit = nearZ * powf(farZ / nearZ, f);
-			const float uniSplit = nearZ + (farZ - nearZ) * f;
-			const float splitFar = uniSplit + lambda * (logSplit - uniSplit);
+			const float splitFar = splits[c];
 
 			// 8 world-space corners of this frustum slice.
 			XMVECTOR corners[8]; int k = 0;
@@ -460,8 +458,9 @@ namespace vortex::graphics::dx12
 			float cy = floorf(XMVectorGetY(cLS) / worldPerTexel) * worldPerTexel;
 			const float cz = XMVectorGetZ(cLS);
 
-			// Ortho crop; near pulled back toward the light so casters ABOVE/BEHIND the slice
-			// (a roof over the corridor, a tower off-screen) still land in the depth map.
+			// Ortho crop; near pulled back toward the light by the whole shadow distance so casters ABOVE/BEHIND
+			// the slice (a roof over the corridor, a tower off-screen throwing its shadow over the camera) still land
+			// in the depth map. The depth bias follows the texel, not this range (#466, lighting/CascadeSplits.h).
 			XMMATRIX proj = XMMatrixOrthographicOffCenterLH(
 				cx - radius, cx + radius, cy - radius, cy + radius,
 				cz - radius - m_dir_shadow_distance, cz + radius);
@@ -479,6 +478,9 @@ namespace vortex::graphics::dx12
 			splitNear = splitFar;
 		}
 		m_csm_count = CSM_CASCADES;
+		// the depth bias beyond 80 m: per texel and slope instead of a fraction of the deeper boxes (#466; 1, 1, 1, 0 up to 80 m)
+		lighting::cascade_bias(m_dir_shadow_distance, CSM_CASCADES, m_csm_radius, tanHalfX, tanHalfY, SHADOW_TILE_SIZE,
+			m_dir_shadow_bias, m_dir_shadow_softness, m_csm_bias, m_csm_bias[3]);
 	}
 
 
@@ -537,6 +539,7 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::render_shadow_pass()
 	{
 		using namespace DirectX;
+		instancing::ScopedMs timed(m_cpu_stats.shadow_ms);   // caster gather + pack + the depth passes' recording (#361)
 		if ((m_shadow_spot_count == 0 && m_csm_count == 0 && m_shadow_point_count == 0)
 			|| !m_shadow_instance_vb_mapped) return;
 
@@ -596,14 +599,14 @@ namespace vortex::graphics::dx12
 		// ---- cull one tile's casters (shared by spot, cascade and point tiles) ----
 		// Own pack per tile: the scene's instance packing is keyed to the MAIN camera frustum and
 		// runs later — the wall BEHIND the player must still cast into the light frustum.
-		auto pack_casters = [&](const ShadowFrustum& fr, float min_r)
+		auto pack_casters = [&](const ShadowFrustum& fr, float min_r, u32 limit)
 		{
 			casters.clear();
 			for (const auto& c : all)
 				if (c.r >= min_r && sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
-			// The tiles share one instance buffer. A tile over budget keeps its LARGEST casters (the shadows one sees from
-			// afar) instead of the first in queue order, and the drop is reported once the frame is packed.
-			const u32 room = vb_used < MAX_SHADOW_INSTANCES ? MAX_SHADOW_INSTANCES - vb_used : 0;
+			// The tiles share one instance buffer, up to `limit` for this tile. A tile over budget keeps its LARGEST casters
+			// (the shadows one sees from afar) instead of the first in queue order, and the drop is reported once the frame is packed.
+			const u32 room = vb_used < limit ? limit - vb_used : 0;
 			if (casters.size() > room)
 			{
 				std::nth_element(casters.begin(), casters.begin() + room, casters.end(), [](const ShadowCaster& a, const ShadowCaster& b) { return a.r > b.r; });
@@ -688,41 +691,9 @@ namespace vortex::graphics::dx12
 			vb_used += (u32)casters.size();
 		};
 
-		// ---- directional cascade atlas (#24): t8 — packed FIRST so the sun never loses casters to the spot tiles (#363) ----
-		if (m_csm_count > 0 && m_csm_map)
-		{
-			if (m_csm_map_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
-			{
-				D3D12_RESOURCE_BARRIER b{};
-				b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-				b.Transition.pResource = m_csm_map.Get();
-				b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-				b.Transition.StateBefore = m_csm_map_state;
-				b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-				m_command_list->ResourceBarrier(1, &b);
-				m_csm_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-			}
-
-			auto cdsv = m_csm_dsv_heap->GetCPUDescriptorHandleForHeapStart();
-			m_command_list->ClearDepthStencilView(cdsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-			m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &cdsv);
-
-			for (u32 c = 0; c < m_csm_count; ++c)
-			{
-				pack_casters(extract_shadow_frustum(m_csm_vp[c]), shadow_min_caster_radius(m_csm_vp[c], SHADOW_TILE_SIZE));
-				draw_tile((c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE,
-					SHADOW_TILE_SIZE, MAX_SHADOW_SPOTS + c);
-			}
-
-			D3D12_RESOURCE_BARRIER b{};
-			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			b.Transition.pResource = m_csm_map.Get();
-			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-			b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-			m_command_list->ResourceBarrier(1, &b);
-			m_csm_map_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-		}
+		// The spot and point tiles are packed first, together at most a quarter of the buffer; the cascades after them get
+		// the rest — at least three quarters, all of it when the local lights need less (#363, #466; lighting/CascadeSplits.h).
+		const u32 local_cap = lighting::local_shadow_instance_cap(MAX_SHADOW_INSTANCES);
 
 		// ---- spot atlas (#23): t7 ----
 		if (m_shadow_spot_count > 0 && m_shadow_map)
@@ -745,7 +716,7 @@ namespace vortex::graphics::dx12
 
 			for (u32 t = 0; t < m_shadow_spot_count; ++t)
 			{
-				pack_casters(extract_shadow_frustum(m_shadow_spots[t].vp), 0.f);
+				pack_casters(extract_shadow_frustum(m_shadow_spots[t].vp), 0.f, local_cap);
 				draw_tile((t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, t);
 			}
 
@@ -783,7 +754,7 @@ namespace vortex::graphics::dx12
 			{
 				for (u32 f = 0; f < 6; ++f)
 				{
-					pack_casters(extract_shadow_frustum(m_shadow_points[p].face_vp[f]), 0.f);
+					pack_casters(extract_shadow_frustum(m_shadow_points[p].face_vp[f]), 0.f, local_cap);
 					const u32 tile = p * 6 + f;
 					draw_tile((tile % POINT_ATLAS_COLS) * POINT_SHADOW_TILE,
 						(tile / POINT_ATLAS_COLS) * POINT_SHADOW_TILE,
@@ -801,6 +772,44 @@ namespace vortex::graphics::dx12
 			m_command_list->ResourceBarrier(1, &b);
 			m_point_shadow_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 		}
+
+		// ---- directional cascade atlas (#24): t8 — packed after the local tiles, with all the buffer they left (at least three
+		// quarters of it): the sun never loses casters to them beyond that (#363, #466) ----
+		if (m_csm_count > 0 && m_csm_map)
+		{
+			if (m_csm_map_state != D3D12_RESOURCE_STATE_DEPTH_WRITE)
+			{
+				D3D12_RESOURCE_BARRIER b{};
+				b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				b.Transition.pResource = m_csm_map.Get();
+				b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				b.Transition.StateBefore = m_csm_map_state;
+				b.Transition.StateAfter = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+				m_command_list->ResourceBarrier(1, &b);
+				m_csm_map_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			}
+
+			auto cdsv = m_csm_dsv_heap->GetCPUDescriptorHandleForHeapStart();
+			m_command_list->ClearDepthStencilView(cdsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+			m_command_list->OMSetRenderTargets(0, nullptr, FALSE, &cdsv);
+
+			for (u32 c = 0; c < m_csm_count; ++c)
+			{
+				pack_casters(extract_shadow_frustum(m_csm_vp[c]), shadow_min_caster_radius(m_csm_vp[c], SHADOW_TILE_SIZE), MAX_SHADOW_INSTANCES);
+				draw_tile((c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE,
+					SHADOW_TILE_SIZE, MAX_SHADOW_SPOTS + c);
+			}
+
+			D3D12_RESOURCE_BARRIER b{};
+			b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			b.Transition.pResource = m_csm_map.Get();
+			b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			b.Transition.StateBefore = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+			b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			m_command_list->ResourceBarrier(1, &b);
+			m_csm_map_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+		}
+
 		if (dropped > 0)
 		{
 			const auto now = std::chrono::steady_clock::now();
@@ -808,7 +817,7 @@ namespace vortex::graphics::dx12
 			{
 				m_shadow_drop_logged = now;
 				OutputDebugStringA(("[dx12] shadows: " + std::to_string(dropped) + " caster(s) dropped this frame — the shared shadow instance budget of "
-					+ std::to_string(MAX_SHADOW_INSTANCES) + " is full (cascades packed first, largest casters kept) (#363)\n").c_str());
+					+ std::to_string(MAX_SHADOW_INSTANCES) + " is full (spot / point tiles at most a quarter of it, the cascades the rest; largest casters kept) (#363, #466)\n").c_str());
 			}
 		}
 	}

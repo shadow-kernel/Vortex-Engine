@@ -27,7 +27,7 @@ namespace Editor.ECS
         public bool IsEnabled
         {
             get => _isEnabled;
-            set => SetProperty(ref _isEnabled, value, nameof(IsEnabled));
+            set { if (SetProperty(ref _isEnabled, value, nameof(IsEnabled))) RenderChanges.ComponentToggled(this); }   // #361
         }
 
         /// <summary>

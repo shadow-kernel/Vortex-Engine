@@ -11,7 +11,7 @@ namespace Editor.Core.Services
     /// Manages rendering of scene entities in the viewport.
     /// Acts as bridge between Editor entities and Engine rendering.
     /// </summary>
-    public class SceneRenderService : IDisposable
+    public partial class SceneRenderService : IDisposable
     {
         private static SceneRenderService _instance;
         public static SceneRenderService Instance
@@ -188,7 +188,7 @@ namespace Editor.Core.Services
         // thousands of times per frame. These keep that loop allocation-free and cheap.
         // One GPU mesh per primitive kind ("Primitive:Cube") for the whole scene — never one per entity.
         private static readonly Dictionary<string, long> _primitiveMeshCache = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        // Every SHARED mesh id (model submeshes + primitives): never DeleteMesh'd on behalf of one entity.
+        // Every SHARED mesh id (model submeshes, .vmesh files, primitives): never DeleteMesh'd on behalf of one entity.
         private static readonly HashSet<long> _sharedMeshIds = new HashSet<long>();
         // A model path's "path#submeshN" keys + mesh ids, resolved once — the per-frame loop no longer builds up to
         // 64 strings and misses up to 64 dictionary lookups per entity. Cleared whenever the submesh cache changes.
@@ -294,6 +294,7 @@ namespace Editor.Core.Services
         {
             if (!string.IsNullOrEmpty(meshPath) && materialId >= 0)
             {
+                if (!_meshPathToMaterialId.TryGetValue(meshPath, out long was) || was != materialId) ResolveEpoch++;   // the retained nodes resolve again (#361)
                 _meshPathToMaterialId[meshPath] = materialId;
                 _sharedMaterialIds.Add(materialId);   // shared by every entity of that model: never deleted per entity
                 Log($"[SceneRenderService] Registered material {materialId} for mesh path: {meshPath}");
@@ -310,6 +311,7 @@ namespace Editor.Core.Services
                 _submeshMeshCache[meshPath] = meshId;
                 _sharedMeshIds.Add(meshId);
                 _resolvedSubmeshes.Clear();   // per-path submesh sets are re-resolved on the next submit
+                ResolveEpoch++;
                 Log($"[SceneRenderService] Registered mesh {meshId} for path: {meshPath}");
             }
         }
@@ -328,7 +330,12 @@ namespace Editor.Core.Services
             foreach (var k in _submeshMeshCache.Keys) if (SameModel(k, target)) keys.Add(k);
             foreach (var k in _meshPathToMaterialId.Keys) if (SameModel(k, target)) keys.Add(k);
             foreach (var k in _meshBoundsCache.Keys) if (SameModel(k, target)) keys.Add(k);
-            if (keys.Count == 0) return;
+            if (keys.Count == 0)
+            {
+                // never loaded (missing, or it failed): the entities that wait for it try again now — it may just have arrived
+                _instance?.RetryUnresolvedNow();
+                return;
+            }
             var ids = new HashSet<long>();
             foreach (var k in keys)
             {
@@ -340,13 +347,17 @@ namespace Editor.Core.Services
                 _isModelPath.Remove(k);
             }
             _resolvedSubmeshes.Clear();
+            var inst = Instance;
+            // the retained instances that draw them leave the renderer before the meshes are freed — only those; their entities
+            // resolve the model again on the next submit, which this requests (#361)
+            if (inst != null) inst.ReleaseMeshes(ids);
             foreach (var id in ids)
             {
                 _sharedMeshIds.Remove(id);
                 try { VortexAPI.DeleteMesh(id); } catch { }
             }
-            var inst = Instance;
             if (inst != null) inst.ForgetEntityMeshes(ids);
+            ResolveEpoch++;   // the retained nodes of that model resolve again (#361)
             RuntimeDirty = true;
         }
 
@@ -541,6 +552,7 @@ namespace Editor.Core.Services
             if (scene == null) return;
 
             _vmatPathCache.Clear();   // fresh material resolution for the (re)loaded scene
+            ResolveEpoch++;
             Decals.DecalService.ClearMaterialCache();
             try { EvictModelsUnusedBy(scene); } catch { }   // the previous scene's models go (#358)
             Log($"[SceneRenderService] Preloading assets for scene: {scene.Name}");
@@ -670,40 +682,8 @@ namespace Editor.Core.Services
             if (animator != null && animator.IsEnabled)
                 Core.Animation.AnimationService.Instance.TryGetPalette(animatorOwner, meshRenderer.MeshPath, out bonePalette, out boneCount);
 
-            // Render layer (#175): 0 = world, 1 = first-person viewmodel (second pass, own FOV, depth
-            // cleared, casts no shadows), 2 = third-person only (hidden for the local player in play).
-            // Travels with every submit variant below. While playing (editor play, game window, GameHost)
-            // the layers always behave like the shipped game; in edit mode the viewport's preview mode
-            // decides how FP/3P meshes are presented (see ViewmodelPreviewMode).
             int layer = meshRenderer.RenderLayer;
-            if (layer < 0 || layer > 2) layer = 0;   // unknown layers = world geometry, in editor AND play
-            if (layer != 0)
-            {
-                if (DebugThirdPersonView)
-                {
-                    // In-game debug freecam: you are now an EXTERNAL camera looking AT the player, so render
-                    // like OTHER cameras see them — show the third-person body (layer 2) as world geometry,
-                    // hide the local first-person viewmodel (layer 1). Takes priority over the play-like FP
-                    // behaviour so flying out shows the character cleanly instead of nothing + floating arms.
-                    // DebugShowViewmodel inverts that: the freecam inspects the FIRST-PERSON arms + weapon
-                    // (grip / finger placement) as world geometry and hides the body instead.
-                    if (layer == (DebugShowViewmodel ? 2 : 1)) return;
-                    layer = 0;
-                }
-                else if (IsPlayLike || EditorViewmodelPreview == ViewmodelPreviewMode.GameView)
-                {
-                    if (layer == 2) return;            // third-person only: the local player never sees it
-                }
-                else if (EditorViewmodelPreview == ViewmodelPreviewMode.Hidden)
-                {
-                    if (layer == 1) return;            // FP meshes live in the game's FP pass, not the build view
-                    layer = 0;                          // 3P body: normal world object while editing
-                }
-                else // AsWorld — placement mode: draw FP/3P meshes as plain world geometry
-                {
-                    layer = 0;
-                }
-            }
+            if (!PresentLayer(ref layer)) return;
 
             // Imported models (no explicit .vmat) are multi-submesh with per-submesh colored materials —
             // submit EVERY submesh, not just the first, so e.g. a Kenney tree shows trunk + leaves.
@@ -737,6 +717,44 @@ namespace Editor.Core.Services
             else
                 SubmitRigid(meshId, materialId, worldMatrix, layer, r, g, b, a);
             _submitN++;
+        }
+
+        /// <summary>
+        /// Render layer (#175): 0 = world, 1 = first-person viewmodel (second pass, own FOV, depth cleared, casts no
+        /// shadows), 2 = third-person only (hidden for the local player in play). The layer a MeshRenderer's RenderLayer is
+        /// drawn on now, or false when it is not drawn at all. While playing (editor play, game window, GameHost) the layers
+        /// always behave like the shipped game; in edit mode the viewport's preview mode decides how FP/3P meshes are
+        /// presented (see ViewmodelPreviewMode). Shared by every submit path.
+        /// </summary>
+        private static bool PresentLayer(ref int layer)
+        {
+            if (layer < 0 || layer > 2) layer = 0;   // unknown layers = world geometry, in editor AND play
+            if (layer == 0) return true;
+            if (DebugThirdPersonView)
+            {
+                // In-game debug freecam: you are now an EXTERNAL camera looking AT the player, so render
+                // like OTHER cameras see them — show the third-person body (layer 2) as world geometry,
+                // hide the local first-person viewmodel (layer 1). Takes priority over the play-like FP
+                // behaviour so flying out shows the character cleanly instead of nothing + floating arms.
+                // DebugShowViewmodel inverts that: the freecam inspects the FIRST-PERSON arms + weapon
+                // (grip / finger placement) as world geometry and hides the body instead.
+                if (layer == (DebugShowViewmodel ? 2 : 1)) return false;
+                layer = 0;
+            }
+            else if (IsPlayLike || EditorViewmodelPreview == ViewmodelPreviewMode.GameView)
+            {
+                if (layer == 2) return false;            // third-person only: the local player never sees it
+            }
+            else if (EditorViewmodelPreview == ViewmodelPreviewMode.Hidden)
+            {
+                if (layer == 1) return false;            // FP meshes live in the game's FP pass, not the build view
+                layer = 0;                                // 3P body: normal world object while editing
+            }
+            else // AsWorld — placement mode: draw FP/3P meshes as plain world geometry
+            {
+                layer = 0;
+            }
+            return true;
         }
 
         /// <summary>A rigid (non-skinned) submit: batched per (mesh, material, layer) inside SubmitScene, immediate
@@ -886,28 +904,67 @@ namespace Editor.Core.Services
             }
         }
 
+        /// <summary>The whole last <see cref="SubmitScene"/> (lights, decals, terrain, foliage, water, meshes) in ms, and what it
+        /// allocated on the calling thread (#361) — the bench and the player's FPS line read them.</summary>
+        public static double LastSceneSubmitMs;
+        public static long LastSceneSubmitAllocBytes;
+        /// <summary>The phases of the last SubmitScene in ms: lights, decals, terrain, foliage, water, meshes.</summary>
+        public static readonly double[] LastSubmitPhaseMs = new double[6];
+        /// <summary>SubmitScene calls so far — a frame counter for measurements.</summary>
+        public static long SubmitCount;
+
         public void SubmitScene(Data.Scene scene)
         {
             if (scene == null || scene.Entities == null) return;
+            long alloc0 = GC.GetAllocatedBytesForCurrentThread();
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp(), t = t0;
+            void Phase(int i) { long now = System.Diagnostics.Stopwatch.GetTimestamp(); LastSubmitPhaseMs[i] = (now - t) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; t = now; }
+            ReapEnvironmentTextures();   // a cross-fade's swapped-out reflection maps, once no frame reads them (#464)
 
-            // Clear and submit all lights first
-            SubmitSceneLights(scene);
-            Decals.DecalService.Submit(scene, IsPlayLike);   // #120: the scene's Decal components + spawned decals, like the lights
-            Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike);   // #124: the terrains' LOD chunks (built / rebuilt here)
-            Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike);   // #125: painted foliage through the instancing path
-            Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike);   // #200: water surfaces into the transparent pass
+            // #361: the retained meshes first — their walk (only after a structure change in play) indexes what the lights,
+            // decals, terrains, foliage and water need, so those no longer walk the whole scene every frame
+            long tMeshes = System.Diagnostics.Stopwatch.GetTimestamp();
+            long meshTicks;
+            bool retainedTried = _retainedEnabled;
+            try
+            {
+                bool retained = _retainedEnabled && PrepareRetained(scene);
+                meshTicks = System.Diagnostics.Stopwatch.GetTimestamp() - tMeshes;
+                var index = retained ? _index : null;
+                t = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            var swSubmit = System.Diagnostics.Stopwatch.StartNew();
-            if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
-            else SubmitSceneFull(scene);
-            swSubmit.Stop();
-            LastSubmitMs = swSubmit.Elapsed.TotalMilliseconds; LastSubmitMeshes = _submitN;
+                // Clear and submit all lights first
+                SubmitSceneLights(scene, index); Phase(0);
+                Decals.DecalService.Submit(scene, IsPlayLike, index?.Decals); Phase(1);   // #120: the scene's Decal components + spawned decals, like the lights
+                Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike, index?.Terrains); Phase(2);   // #124: the terrains' LOD chunks (built / rebuilt here)
+                Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike, index?.Foliage); Phase(3);   // #125: painted foliage through the instancing path
+                Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike, index?.Water); Phase(4);   // #200: water surfaces into the transparent pass
+
+                tMeshes = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (retained) FinishRetained();   // the animated entities, then every instance change in one call
+                else if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
+                else SubmitSceneFull(scene);
+            }
+            catch (Exception ex)
+            {
+                // the retained instances' bookkeeping ran ahead of the ops that never reached the renderer: start over (#361)
+                if (retainedTried) RetainedFailed(ex);
+                throw;
+            }
+            Phase(5);
+            meshTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tMeshes;
+            LastSubmitPhaseMs[5] = meshTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            LastSubmitMs = LastSubmitPhaseMs[5];
+            LastSubmitMeshes = _submitN;
+            LastSceneSubmitMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            LastSceneSubmitAllocBytes = GC.GetAllocatedBytesForCurrentThread() - alloc0;
+            SubmitCount++;
             // a slow submit is either the first one (it imports every model) or a scene too big for the per-frame
             // re-submit (#364 A) — say so, at most once every 10 s
-            if (swSubmit.ElapsedMilliseconds > 500 && (DateTime.UtcNow - _slowSubmitLogAt).TotalSeconds > 10)
+            if (LastSubmitMs > 500 && (DateTime.UtcNow - _slowSubmitLogAt).TotalSeconds > 10)
             {
                 _slowSubmitLogAt = DateTime.UtcNow;
-                try { ConsoleService.Instance.LogSystem("Scene submit '" + scene.Name + "': " + _submitN + " meshes in " + swSubmit.ElapsedMilliseconds + " ms"); } catch { }
+                try { ConsoleService.Instance.LogSystem("Scene submit '" + scene.Name + "': " + _submitN + " meshes in " + (long)LastSubmitMs + " ms"); } catch { }
             }
             if (scene.Name != "Lobby" && _ssDbg < 12) { _ssDbg++; try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_submit.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " SubmitScene '" + scene.Name + "' topEnts=" + System.Linq.Enumerable.Count(scene.Entities) + " submitted=" + _submitN + "\r\n"); } catch { } }
 
@@ -1679,6 +1736,7 @@ namespace Editor.Core.Services
                 // Check if it's a .vmesh file (binary format - fast load)
                 if (extension == ".vmesh")
                 {
+                    long vmesh = -1;
                     if (fromVfs)
                     {
                         // Shipped game: the native .vmesh loader is disk-path only (no bytes overload). Spill the
@@ -1693,11 +1751,21 @@ namespace Editor.Core.Services
                                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(tmp));
                                 System.IO.File.WriteAllBytes(tmp, vfsBytes);
                             }
-                            return VortexAPI.LoadVMeshFromFile(tmp);
+                            vmesh = VortexAPI.LoadVMeshFromFile(tmp);
                         }
                         catch { return -1; }
                     }
-                    return VortexAPI.LoadVMeshFromFile(fullPath);
+                    else vmesh = VortexAPI.LoadVMeshFromFile(fullPath);
+                    // one GPU mesh per .vmesh path, shared by every entity that draws it (#359): each entity used to load
+                    // its own copy — a forest of one palm was one upload and one draw run per tree. Like a model's
+                    // submeshes it is owned by the path cache: freed when no scene uses it (#358), reloaded when the
+                    // file changes (InvalidateModel), never on behalf of one entity.
+                    if (vmesh >= 0)
+                    {
+                        _submeshMeshCache[meshPath] = vmesh;
+                        _sharedMeshIds.Add(vmesh);
+                    }
+                    return vmesh;
                 }
 
                 // For model files (FBX, OBJ, etc.) - use multi-material import
@@ -1768,6 +1836,7 @@ namespace Editor.Core.Services
                         _submeshMeshCache[actualPath] = submeshes[0].MeshId;
                         _sharedMeshIds.Add(submeshes[0].MeshId);
                         _resolvedSubmeshes.Clear();   // the per-path submesh sets pick the new entries up next submit
+                        ResolveEpoch++;
 
                         // finish the import cache for the next start (#364 C): the manifest is written last and only
                         // when the engine wrote every submesh file and the material records; anything else (skinned
@@ -2202,6 +2271,7 @@ namespace Editor.Core.Services
                 if (!_sharedMeshIds.Contains(meshId)) VortexAPI.DeleteMesh(meshId);
                 _entityMeshes.Remove(entityId);
             }
+            ResolveEpoch++;   // the retained nodes resolve again (#361)
         }
 
         /// <summary>
@@ -2223,8 +2293,15 @@ namespace Editor.Core.Services
         public void RemoveEntityTree(GameEntity e)
         {
             if (e == null) return;
+            // its retained instances leave the renderer first, before a mesh of its own is freed under them (#361)
+            try { ReleaseTree(e); FlushOps(); } catch { }
+            RemoveEntityTreeResources(e);
+        }
+
+        private void RemoveEntityTreeResources(GameEntity e)
+        {
             try { RemoveEntity(e.Id); } catch { }
-            if (e.Children != null) for (int i = 0; i < e.Children.Count; i++) RemoveEntityTree(e.Children[i]);
+            if (e.Children != null) for (int i = 0; i < e.Children.Count; i++) RemoveEntityTreeResources(e.Children[i]);
         }
 
         /// <summary>
@@ -2257,6 +2334,9 @@ namespace Editor.Core.Services
         /// </summary>
         public void ClearAllRenderables()
         {
+            // the retained instances first: they may draw meshes freed below (#361)
+            DropRetained(clearNative: true);
+            ResolveEpoch++;
             // CRITICAL: imported MODEL meshes are SHARED + owned by _submeshMeshCache (loaded ONCE from a file,
             // reused by every entity that references the same path — incl. all Ctrl+D duplicates — and kept
             // resident across scene reloads so re-loading never re-imports). _entityMeshes maps MANY entities to
@@ -2472,6 +2552,8 @@ namespace Editor.Core.Services
         private bool _hasDirectionalLight = false;
         // the sun as last submitted (the sky light's ground bounce reads it): colour × intensity and the direction's y
         private float _sunR = 1f, _sunG = 1f, _sunB = 1f, _sunIntensity = 0f, _sunDirY = -1f, _sunDirX = 0f, _sunDirZ = 0f;
+        // the scene's Directional Light's shadow settings as last submitted: a script's sun (#466) takes the ones it leaves out
+        private bool _sceneHasSun, _sceneSunCasts; private float _sceneSunStrength = 1f, _sceneSunBias = 0.0008f, _sceneSunDistance = 80f;
         private SkyLight.Coefficients _lastSkyLight;
         private float _lastAmbientStrength = 0.35f;
         /// <summary>With <see cref="DebugThirdPersonView"/>: render the first-person viewmodel (layer 1) as world
@@ -2480,6 +2562,9 @@ namespace Editor.Core.Services
         public static bool DebugShowViewmodel;
 
         private bool _hasSkybox = false;
+        // the Skybox component the last scene-light submit drew (null without one): the scene's own sky in a cross-fade (#464)
+        private Skybox _lastSkybox;
+        private bool _skyBlendOn;   // the sky pass has cross-fade pictures set (#464)
 
         /// <summary>Ambient strength a game SCRIPT set via Vortex.Lighting.SetAmbient during play. While set,
         /// scene re-submits must NOT stomp it with the editor defaults below — the shipped-game loop re-submits
@@ -2497,6 +2582,47 @@ namespace Editor.Core.Services
             public float[] Gradient;   // top rgb, horizon rgb, bottom rgb — when no texture
         }
         public static SkyOverride ScriptSky;
+
+        /// <summary>The sun's disc a script set with Vortex.Sky.SetSun (#499) — wins over the Skybox component's Sun settings until
+        /// Sky.Clear or the end of play.</summary>
+        public sealed class SkySunOverride
+        {
+            public bool Draw = true;
+            public float SizeDegrees = 0.53f, Intensity = 1f, Glow = 1f;
+        }
+        public static SkySunOverride ScriptSkySun;
+
+        /// <summary>The sun's disc (#499) the renderer gets: a script's (on / off), else the Skybox component's (auto / on / off),
+        /// else auto with the real sun's 0.53°.</summary>
+        internal static void PushSkySun(Skybox skybox)
+        {
+            var o = ScriptSkySun;
+            if (o != null) VortexAPI.ApplySkySun(o.Draw ? 1 : 2, o.SizeDegrees, o.Intensity, o.Glow);
+            else if (skybox != null) VortexAPI.ApplySkySun((int)skybox.SunDisc, skybox.SunSize, skybox.SunIntensity, skybox.SunGlow);
+            else VortexAPI.ApplySkySun(0, 0.53f, 1f, 1f);
+        }
+
+        /// <summary>The sun a game script set with Vortex.Lighting.SetDirectional (#466) — wins over the scene's Directional Light
+        /// (and over the default sun) until Lighting.ClearDirectional or the end of play, so the next scene-light submit no longer
+        /// resets it. Shadow values the script left out (null) are the scene's Directional Light's, else the classic defaults.</summary>
+        public sealed class SunOverride
+        {
+            public float DirX, DirY = -1f, DirZ, R = 1f, G = 1f, B = 1f, Intensity = 1f;
+            public bool? CastShadows;
+            public float? ShadowStrength;
+            public float? ShadowDistance;
+
+            /// <summary>The shadow values the renderer gets: the script's where it gave them, else the scene sun's (when the scene
+            /// has a Directional Light), else off / 1 / 80 m.</summary>
+            public void Resolve(bool sceneHasSun, bool sceneCasts, float sceneStrength, float sceneDistance,
+                                out bool castShadows, out float shadowStrength, out float shadowDistance)
+            {
+                castShadows = CastShadows ?? (sceneHasSun && sceneCasts);
+                shadowStrength = ShadowStrength ?? (sceneHasSun ? sceneStrength : 1f);
+                shadowDistance = ECS.Components.Lighting.Light.ClampShadowDistance(ShadowDistance ?? (sceneHasSun ? sceneDistance : 80f));   // 5 m .. 10 km, as the Light
+            }
+        }
+        public static SunOverride ScriptSun;
 
         /// <summary>The identity a light keeps in the renderer's light budget from frame to frame (#416): its entity's saved id
         /// folded to 64 bits — the same while the entity lives, whatever the light does (moves, flickers, changes colour), so
@@ -2527,7 +2653,7 @@ namespace Editor.Core.Services
         /// <summary>
         /// Submit all lights in the scene to the renderer.
         /// </summary>
-        private void SubmitSceneLights(Data.Scene scene)
+        private void SubmitSceneLights(Data.Scene scene, SceneIndex index = null)
         {
             // Clear previous frame's lights
             VortexAPI.ClearAllLights();
@@ -2535,15 +2661,21 @@ namespace Editor.Core.Services
             _hasSceneLights = false;
             _hasDirectionalLight = false;
             _hasSkybox = false;
+            _lastSkybox = null;
 
-            // Collect and submit all lights and skybox
-            foreach (var entity in scene.Entities)
+            // Collect and submit all lights and skybox — from the scene index when there is one (#361), else by walking
+            if (index != null)
             {
-                SubmitEntityLightsRecursive(entity);
+                var lights = index.Lights;
+                for (int i = 0; i < lights.Count; i++) SubmitEntityLights(lights[i]);
             }
+            else foreach (var entity in scene.Entities) SubmitEntityLightsRecursive(entity);
 
+            // a script's sun (#466) wins over the scene's Directional Light and the default sun until it is cleared
+            _sceneHasSun = _hasDirectionalLight;
+            if (ScriptSun != null) ApplyScriptSun(ScriptSun);
             // If no lights in scene, use default directional light
-            if (!_hasSceneLights)
+            else if (!_hasSceneLights)
             {
                 // Default sun light (like Unity/Unreal default scene)
                 VortexAPI.SetDirectionalLightParams(
@@ -2565,7 +2697,9 @@ namespace Editor.Core.Services
             // the ambient right now (horror scenes crush it to ~0.01; the default would flood the dark).
             if (!_hasSkybox)
             {
-                if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); }   // a scripted sky needs no Skybox component (#349)
+                if (!SkyFade.Active) ClearSkyBlend();
+                if (SkyFade.Active) { ApplySkyFade(null); PushSkySun(null); }   // a cross-fade between scripted skies (#464)
+                else if (ScriptSky != null) { ApplyScriptSky(ScriptSky); SubmitSkyLight(ScriptSky); PushSkySun(null); }   // a scripted sky needs no Skybox component (#349)
                 else { VortexAPI.EnableSkybox(false); VortexAPI.SetSkyLight(null, false); PushEnvironmentMap(null); SkyHaze.SetHorizon(false, 0f, 0f, 0f); }
                 _lastAmbientStrength = ScriptAmbientOverride ?? 0.35f;
                 VortexAPI.SetAmbientLightStrength(_lastAmbientStrength);  // 0.35 matches the engine header default
@@ -2725,6 +2859,7 @@ namespace Editor.Core.Services
             string key = m != null ? m.Key : "";
             if (key == _envKey) return;
             _envKey = key;
+            ReleaseBlendedEnvironmentMap();   // a plain map — or none — replaces a cross-fade's blended one
             if (m == null) { VortexAPI.ApplyEnvironmentMap(-1, 0); return; }
             long id;
             if (!_envTextures.TryGetValue(key, out id) || id < 0)
@@ -2736,6 +2871,265 @@ namespace Editor.Core.Services
             VortexAPI.ApplyEnvironmentMap(id, id >= 0 ? mips : 0);
         }
 
+        // ---- the sky's cross-fade (#464): a weighted blend of skies drawn, lit and mirrored together ----
+
+        /// <summary>The scene's own sky as a script sky: the Skybox component's picture (no yaw) or its gradient (a solid colour
+        /// is a gradient of one colour); null without a visible component.</summary>
+        internal static SkyOverride ComponentSky(Skybox s)
+        {
+            if (s == null || !s.IsEnabled) return null;
+            if ((s.SkyboxType == SkyboxType.Texture || s.SkyboxType == SkyboxType.Cubemap) && !string.IsNullOrEmpty(s.TexturePath))
+                return new SkyOverride { TexturePath = s.TexturePath, Exposure = s.Exposure, RotationDeg = 0f };
+            if (s.SkyboxType == SkyboxType.SolidColor)
+                return new SkyOverride { Exposure = s.Exposure, Gradient = new[] { s.TopColorR, s.TopColorG, s.TopColorB, s.TopColorR, s.TopColorG, s.TopColorB, s.TopColorR, s.TopColorG, s.TopColorB } };
+            return new SkyOverride { Exposure = s.Exposure, Gradient = new[] { s.TopColorR, s.TopColorG, s.TopColorB, s.HorizonColorR, s.HorizonColorG, s.HorizonColorB, s.BottomColorR, s.BottomColorG, s.BottomColorB } };
+        }
+
+        /// <summary>The sky shown now as a weighted list (a running cross-fade included): what Vortex.Sky fades from. Empty without
+        /// any sky.</summary>
+        public static List<SkyFade.Layer> CurrentSkyLayers() => SkyFade.Current(ScriptSky ?? ComponentSky(Instance._lastSkybox));
+
+        /// <summary>True when the scene has a Skybox component to fade back to (Sky.Clear with a fade).</summary>
+        public static bool HasSceneSky => ComponentSky(Instance._lastSkybox) != null;
+
+        /// <summary>Advances the sky's cross-fade (#464) by a frame of game time and shows it at once (a shipped game re-submits a
+        /// static scene only when something changes). At the end the plain sky comes with the next submit. Called by the script
+        /// runtime every tick.</summary>
+        public static void TickSkyFade(float dt)
+        {
+            Instance.ReapEnvironmentTextures();   // a shipped game may not re-submit during a fade
+            if (!SkyFade.Active) return;
+            if (SkyFade.Tick(dt)) { RuntimeDirty = true; return; }
+            if (!SkyFade.Manual) Instance.ApplySkyFade(Instance._lastSkybox);
+        }
+
+        /// <summary>Shows the sky's cross-fade now — after Sky.SetBlend, without waiting for a submit.</summary>
+        public static void ApplySkyFadeNow()
+        {
+            if (SkyFade.Active) Instance.ApplySkyFade(Instance._lastSkybox);
+        }
+
+        /// <summary>No cross-fade pictures in the sky pass (the plain sky draws alone).</summary>
+        private void ClearSkyBlend()
+        {
+            if (!_skyBlendOn) return;
+            _skyBlendOn = false;
+            VortexAPI.ApplySkyboxBlendLayer(0, -1, 1f, 0f, 0, 0f);
+            VortexAPI.ApplySkyboxBlendLayer(1, -1, 1f, 0f, 0, 0f);
+        }
+
+        /// <summary>The cross-fade's sky (#464): the base sky (the gradient, else the first picture) and up to two pictures over
+        /// it in the sky pass, with the SH9 sky light, the haze's horizon and the reflection map blended by the same weights —
+        /// so ambient light and reflections follow the sky without a pop.</summary>
+        private void ApplySkyFade(Skybox skybox)
+        {
+            // a picture that cannot be loaded leaves the blend (its weight to the skies that can be shown, one warning per
+            // file): it would draw nothing and darken the sky light, the haze and the reflection towards black
+            var layers = SkyFade.Without(SkyFade.Current(ScriptSky ?? ComponentSky(skybox)), CanShowSky);
+            if (layers.Count == 0) return;
+            var plan = SkyFade.Plan(layers);
+            var b = plan.Base.Sky;
+            float baseRot = 0f;
+            if (!string.IsNullOrEmpty(b.TexturePath) && SubmitSkyTexture(b.TexturePath, b.Exposure, b.RotationDeg)) baseRot = b.RotationDeg;
+            else
+            {
+                VortexAPI.EnableSkybox(true);
+                VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Gradient);
+                var g = b.Gradient;
+                if (g != null && g.Length >= 9)
+                    VortexAPI.SetSkyboxGradient(g[0] * b.Exposure, g[1] * b.Exposure, g[2] * b.Exposure, g[3] * b.Exposure, g[4] * b.Exposure, g[5] * b.Exposure, g[6] * b.Exposure, g[7] * b.Exposure, g[8] * b.Exposure);
+            }
+            for (int i = 0; i < 2; i++)
+            {
+                if (i < plan.Over.Count)
+                {
+                    var o = plan.Over[i].Sky;
+                    string full = SkyFullPath(o.TexturePath);
+                    long id = SkyTextureId(full);
+                    VortexAPI.ApplySkyboxBlendLayer(i, id, o.Exposure, o.RotationDeg, SkyHdrMode(full), id >= 0 ? plan.Amount[i] : 0f);
+                }
+                else VortexAPI.ApplySkyboxBlendLayer(i, -1, 1f, 0f, 0, 0f);
+            }
+            _skyBlendOn = true;
+
+            // the sky light: SH projection is linear, so the blend's coefficients are the weighted sum of the skies' own — over
+            // the skies whose light is known (renormalised), as the haze's horizon
+            var c = new SkyLight.Coefficients();
+            var key = new System.Text.StringBuilder("fade");
+            float hr = 0f, hg = 0f, hb = 0f, cw = 0f, hw = 0f;
+            foreach (var l in layers)
+            {
+                var lc = SkyCoefficients(l.Sky);
+                if (lc != null)
+                {
+                    for (int k = 0; k < 27; k++) c.Sh[k] += lc.Sh[k] * l.Weight;
+                    cw += l.Weight;
+                    key.Append('|').Append(lc.Key).Append('@').Append(l.Weight.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture));
+                }
+                float r, g, bl;
+                if (SkyHorizon(l.Sky, out r, out g, out bl)) { hr += r * l.Weight; hg += g * l.Weight; hb += bl * l.Weight; hw += l.Weight; }
+            }
+            if (cw > 1e-6f) { if (cw < 0.9999f) for (int k = 0; k < 27; k++) c.Sh[k] /= cw; c.Key = key.ToString(); }
+            else c = null;   // no sky light known: off, as for a plain sky without one
+            if (hw > 1e-6f && hw < 0.9999f) { hr /= hw; hg /= hw; hb /= hw; }
+            SkyHaze.SetHorizon(hw > 1e-6f, hr, hg, hb);
+            try
+            {
+                var st = Data.ProjectData.Current?.ActiveScene?.Settings;
+                if (c != null && st != null && st.BounceStrength > 0f)
+                    c = SkyLight.WithGroundBounce(c, st.BounceStrength, st.BounceR, st.BounceG, st.BounceB, _sunR, _sunG, _sunB, _sunIntensity, _sunDirY);
+            }
+            catch { }
+            PushSkyLight(c);
+            PushBlendedEnvironmentMap(layers, baseRot);
+        }
+
+        private readonly HashSet<string> _skyFadeWarned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Whether the sky pass can show a sky of a cross-fade: a gradient always, a picture when it loads (warned
+        /// about once per file when it does not).</summary>
+        private bool CanShowSky(SkyOverride s)
+        {
+            if (s == null || string.IsNullOrEmpty(s.TexturePath)) return s != null;
+            string full = SkyFullPath(s.TexturePath);
+            if (SkyTextureId(full) >= 0) return true;
+            if (_skyFadeWarned.Add(full))
+                try { ConsoleService.Instance.LogWarning("Sky: '" + s.TexturePath + "' cannot be loaded; the cross-fade leaves it out (the sky, its light and reflections blend between the others)"); } catch { }
+            return false;
+        }
+
+        /// <summary>One sky's SH9 light (its picture's, turned by its yaw, or its gradient's), cached by SkyLight.</summary>
+        private static SkyLight.Coefficients SkyCoefficients(SkyOverride s)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(s.TexturePath)) return SkyLight.FromTexture(SkyFullPath(s.TexturePath), s.Exposure, s.RotationDeg);
+                var g = s.Gradient;
+                if (g != null && g.Length >= 9)
+                    return SkyLight.FromGradient(g[0] * s.Exposure, g[1] * s.Exposure, g[2] * s.Exposure, g[3] * s.Exposure, g[4] * s.Exposure, g[5] * s.Exposure, g[6] * s.Exposure, g[7] * s.Exposure, g[8] * s.Exposure);
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>One sky's radiance just above the horizon, as the haze that follows the sky uses it.</summary>
+        private static bool SkyHorizon(SkyOverride s, out float r, out float g, out float b)
+        {
+            r = g = b = 0f;
+            try
+            {
+                if (!string.IsNullOrEmpty(s.TexturePath)) return SkyLight.HorizonColor(SkyFullPath(s.TexturePath), s.Exposure, out r, out g, out b);
+                var c = s.Gradient;
+                if (c != null && c.Length >= 9) { r = c[3] * s.Exposure; g = c[4] * s.Exposure; b = c[5] * s.Exposure; return true; }
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>One sky's reflection map at the blend's width (SkyLight caches it).</summary>
+        private static SkyLight.ReflectionMap SkyReflection(SkyOverride s, int width)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(s.TexturePath)) return SkyLight.ReflectionFromTexture(SkyFullPath(s.TexturePath), s.Exposure, width);
+                var g = s.Gradient;
+                if (g != null && g.Length >= 9)
+                    return SkyLight.ReflectionFromGradient(g[0] * s.Exposure, g[1] * s.Exposure, g[2] * s.Exposure, g[3] * s.Exposure, g[4] * s.Exposure, g[5] * s.Exposure, g[6] * s.Exposure, g[7] * s.Exposure, g[8] * s.Exposure, width);
+            }
+            catch { }
+            return null;
+        }
+
+        // the blended reflection map: built on a worker (a 512 x 256 weighted sum), one at a time, uploaded when done
+        private System.Threading.Tasks.Task<SkyLight.ReflectionMap> _envBlendJob;
+        private string _envBlendJobKey;
+        private long _envBlendTexture = -1;
+        private const int ReflectionBlendWidth = 512;
+
+        /// <summary>The reflection map of a blend of skies. The lit shaders have one sampler slot for it (Metal allows 16 per
+        /// stage and the standard shader uses all of them), so the blend is baked on the CPU instead: each sky's own map turned to
+        /// the base sky's yaw (the shaders add that one via env_ground.w), weighted, summed — in steps of 1/64 of the weights (a
+        /// step changes a reflection by ~1.5 %; an 8 s fade re-bakes ~60 times, each a few ms on a worker thread). Skies without
+        /// a map leave the sum, renormalised over the rest; with none at all there is no reflection map, as for such a plain sky.</summary>
+        private void PushBlendedEnvironmentMap(List<SkyFade.Layer> layers, float baseRot)
+        {
+            var key = new System.Text.StringBuilder("rblend|").Append(baseRot.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+            foreach (var l in layers)
+                key.Append('|').Append(l.Sky.TexturePath ?? "grad:" + string.Join(",", l.Sky.Gradient ?? new float[0]))
+                   .Append('/').Append(l.Sky.Exposure.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture))
+                   .Append('/').Append(l.Sky.RotationDeg.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture))
+                   .Append('@').Append(Math.Round(l.Weight * 64f));
+            string k = key.ToString();
+            if (k == _envKey) return;
+            if (_envBlendJob != null)
+            {
+                if (!_envBlendJob.IsCompleted) return;   // one bake at a time: the newest weights follow when it is done
+                var done = _envBlendJob; string doneKey = _envBlendJobKey;
+                _envBlendJob = null;
+                if (done.Status == System.Threading.Tasks.TaskStatus.RanToCompletion && done.Result != null) ShowBlendedEnvironmentMap(done.Result, doneKey);
+                if (doneKey == k) return;
+            }
+            // the skies' own maps on this thread (cached; the first look at a picture decodes it, as a plain sky switch does)
+            var parts = new List<(SkyLight.ReflectionMap map, float weight, float shiftDeg)>();
+            float sum = 0f;
+            foreach (var l in layers)
+            {
+                var m = SkyReflection(l.Sky, ReflectionBlendWidth);
+                if (m != null) { parts.Add((m, l.Weight, string.IsNullOrEmpty(l.Sky.TexturePath) ? 0f : l.Sky.RotationDeg - baseRot)); sum += l.Weight; }
+            }
+            if (parts.Count == 0 || !(sum > 1e-6f)) { PushEnvironmentMap(null); return; }
+            if (sum < 0.9999f)
+                for (int i = 0; i < parts.Count; i++) parts[i] = (parts[i].map, parts[i].weight / sum, parts[i].shiftDeg);
+            _envBlendJobKey = k;
+            _envBlendJob = System.Threading.Tasks.Task.Run(() => SkyLight.BlendReflections(parts, ReflectionBlendWidth));
+        }
+
+        private void ShowBlendedEnvironmentMap(SkyLight.ReflectionMap m, string key)
+        {
+            long id = -1;
+            try { id = VortexAPI.CreateTextureFromPixels(m.Width, m.Height, m.Rgba, false, true); } catch { id = -1; }
+            if (id < 0) return;
+            int mips = 1 + (int)Math.Floor(Math.Log(Math.Max(m.Width, m.Height), 2.0));
+            VortexAPI.ApplyEnvironmentMap(id, mips);
+            RetireEnvironmentTexture(_envBlendTexture);   // a frame in flight may still read it
+            _envBlendTexture = id;
+            _envKey = key;
+        }
+
+        /// <summary>A plain reflection map (or none) is bound again: the last blended one goes, and a bake still running is dropped.</summary>
+        private void ReleaseBlendedEnvironmentMap()
+        {
+            _envBlendJob = null;
+            RetireEnvironmentTexture(_envBlendTexture);
+            _envBlendTexture = -1;
+        }
+
+        // Blended reflection maps swapped out while frames in flight may still read them. DX12 frees a texture at once (SDL GPU
+        // only once the GPU is done with it), so they wait here — as Gi.RadianceCache's volumes do — until eight submits or
+        // fade ticks (at least four frames: the play loop runs both every frame) and a quarter of a second have passed.
+        private readonly List<(long id, int tick, long time)> _envGraveyard = new List<(long, int, long)>();
+        private int _envTick;
+
+        private void RetireEnvironmentTexture(long id)
+        {
+            if (id >= 0) _envGraveyard.Add((id, _envTick, System.Diagnostics.Stopwatch.GetTimestamp()));
+        }
+
+        /// <summary>Once per scene submit and per fade tick: frees the retired reflection maps no frame can read any more.</summary>
+        private void ReapEnvironmentTextures()
+        {
+            _envTick++;
+            if (_envGraveyard.Count == 0) return;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp(), quarter = System.Diagnostics.Stopwatch.Frequency / 4;
+            for (int i = _envGraveyard.Count - 1; i >= 0; i--)
+            {
+                var e = _envGraveyard[i];
+                if (_envTick - e.tick <= 8 || now - e.time < quarter) continue;
+                try { VortexAPI.DeleteTexture(e.id); } catch { }
+                _envGraveyard.RemoveAt(i);
+            }
+        }
+
         private void SubmitEntityLightsRecursive(GameEntity entity)
         {
             if (entity == null || !entity.IsActive) return;
@@ -2743,17 +3137,32 @@ namespace Editor.Core.Services
             // the session flag must stay inert during play/GameHost re-submits).
             if (entity.IsHiddenInEditor && !IsPlayLike) return;
 
+            SubmitEntityLights(entity);
+
+            // Process children
+            var children = entity.Children;
+            for (int i = 0; i < children.Count; i++) SubmitEntityLightsRecursive(children[i]);
+        }
+
+        /// <summary>One visible entity's Skybox and Light (the scene index lists the entities that have one, #361).</summary>
+        private void SubmitEntityLights(GameEntity entity)
+        {
             // Check for Skybox component
             var skybox = entity.GetComponent<Skybox>();
             if (skybox != null && skybox.IsEnabled)
             {
                 _hasSkybox = true;
+                if (_lastSkybox == null) _lastSkybox = skybox;
                 
                 // Enable skybox rendering
                 VortexAPI.EnableSkybox(true);
                 
-                // a script's sky (#349) wins over the component while it is set
-                if (ScriptSky != null) ApplyScriptSky(ScriptSky);
+                // the sun's disc at the scene's light (#499): the component's settings, or a script's
+                PushSkySun(skybox);
+                // a cross-fade (#464) draws a blend of skies; else a script's sky (#349) wins over the component while it is set
+                if (!SkyFade.Active) ClearSkyBlend();
+                if (SkyFade.Active) ApplySkyFade(skybox);
+                else if (ScriptSky != null) ApplyScriptSky(ScriptSky);
                 else switch (skybox.SkyboxType)
                 {
                     case SkyboxType.SolidColor:
@@ -2807,8 +3216,11 @@ namespace Editor.Core.Services
                 
                 // the sky as a LIGHT (IBL step 1): SH9 irradiance baked off the picture or the gradient — blue from above,
                 // the ground's bounce from below — replaces the shaders' fixed hemisphere ambient
-                if (ScriptSky != null) SubmitSkyLight(ScriptSky);
-                else SubmitSkyLight(skybox);
+                if (!SkyFade.Active)   // a cross-fade's light, haze and reflections came with ApplySkyFade (#464)
+                {
+                    if (ScriptSky != null) SubmitSkyLight(ScriptSky);
+                    else SubmitSkyLight(skybox);
+                }
 
                 // Also set ambient light based on skybox colors — unless a game script owns the ambient.
                 var (ambientR, ambientG, ambientB) = skybox.GetAmbientColor();
@@ -2834,10 +3246,9 @@ namespace Editor.Core.Services
                     // player camera, and lights used to submit LocalPosition/LocalRotation: a parented spot
                     // rendered at its local offset near the origin with an unrotated cone. Meshes already
                     // accumulate the chain; lights now match. Local forward is +Z (the old Euler math was
-                    // exactly Ry·Rx·(0,0,1)), so the world forward is the matrix's third basis row.
-                    float[] wm;
-                    try { wm = BuildWorldMatrixWithParent(entity); }
-                    catch { wm = BuildWorldMatrix(transform); }
+                    // exactly Ry·Rx·(0,0,1)), so the world forward is the matrix's third basis row. The transform's cached
+                    // world matrix (#361) — the same values, without two new arrays per level and frame.
+                    float[] wm = transform.WorldMatrix;
                     float px = wm[12], py = wm[13], pz = wm[14];
                     float dirX = wm[8], dirY = wm[9], dirZ = wm[10];
                     float dl = (float)Math.Sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
@@ -2852,13 +3263,17 @@ namespace Editor.Core.Services
                             // CSM (#24): ShadowType != None turns on the sun's cascade pass. Bias mapping:
                             // the component's legacy 0.05 default scales by 0.016 to land on the tuned
                             // CSM NDC bias (0.0008); user tweaks stay proportional (same idea as spots).
+                            // ShadowDistance (#466): the far end of the last cascade — it used to fall back to the wrapper's 80 m here
+                            _sceneSunCasts = light.ShadowType != ECS.Components.Lighting.ShadowType.None;
+                            _sceneSunStrength = light.ShadowStrength; _sceneSunBias = light.ShadowBias * 0.016f; _sceneSunDistance = light.ShadowDistance;
                             VortexAPI.SetDirectionalLightParams(
                                 dirX, dirY, dirZ,
                                 light.ColorR, light.ColorG, light.ColorB,
                                 light.Intensity,
-                                light.ShadowType != ECS.Components.Lighting.ShadowType.None,
+                                _sceneSunCasts,
                                 light.ShadowStrength,
-                                light.ShadowBias * 0.016f);
+                                _sceneSunBias,
+                                light.ShadowDistance);
                             // Soft = a 16-tap Poisson disk of 4 shadow texels (a penumbra), Hard = the 3x3 box
                             VortexAPI.SetDirectionalShadowSoftnessTexels(light.ShadowType == ECS.Components.Lighting.ShadowType.Soft ? 10.0f : 1.0f);   // the cap of the contact-hardening filter: the radius grows with the blocker distance, so a wide cap keeps contact shadows sharp
                             break;
@@ -2897,20 +3312,45 @@ namespace Editor.Core.Services
                     }
                 }
             }
-
-            // Process children
-            if (entity.Children != null)
-            {
-                foreach (var child in entity.Children)
-                {
-                    SubmitEntityLightsRecursive(child);
-                }
-            }
         }
 
-        // Cache for built-in skybox sphere
-        private long _skyboxTextureId = -1;
-        private string _cachedSkyboxTexturePath = null;
+        // the sky pictures loaded so far, by full path (-1 = missing: not retried every frame) — a cross-fade (#464) shows up
+        // to three at once, and switching back to a picture shown before reuses it
+        private readonly Dictionary<string, long> _skyTextureIds = new Dictionary<string, long>();
+
+        /// <summary>A sky picture's full path (project-relative or rooted).</summary>
+        private static string SkyFullPath(string texturePath)
+        {
+            var projectPath = Data.ProjectData.Current?.Path ?? "";
+            return System.IO.Path.IsPathRooted(texturePath) ? texturePath : System.IO.Path.Combine(projectPath, texturePath);
+        }
+
+        /// <summary>The registry texture of a sky picture, loaded once (-1 when it cannot be).</summary>
+        private long SkyTextureId(string fullTexturePath)
+        {
+            if (_skyTextureIds.TryGetValue(fullTexturePath, out long id)) return id;
+            id = -1;
+            if (!AssetVfs.Exists(fullTexturePath))
+                Log($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
+            else
+            {
+                Log($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
+                id = ImportTexturePath(fullTexturePath);
+                if (id < 0) Log("[SceneRenderService] Failed to load skybox texture");
+            }
+            _skyTextureIds[fullTexturePath] = id;
+            return id;
+        }
+
+        /// <summary>How the sky pass shows a picture: a Radiance .hdr keeps its range (RGBA16F) — where the scene uses the exposure
+        /// pipeline (a scene exposure or the neutral tonemapper) it is exposed + tonemapped like the lit surfaces (2), else shown
+        /// the classic way (1); an 8-bit picture as it is (0).</summary>
+        private static int SkyHdrMode(string fullTexturePath)
+        {
+            if (!fullTexturePath.EndsWith(".hdr", StringComparison.OrdinalIgnoreCase)) return 0;
+            var st = Data.ProjectData.Current?.ActiveScene?.Settings;
+            return st != null && (st.SceneExposure != 0f || st.Tonemapper != 0) ? 2 : 1;
+        }
 
         /// <summary>
         /// Submit a skybox with texture on a built-in inverted sphere.
@@ -2928,39 +3368,28 @@ namespace Editor.Core.Services
         /// cannot be loaded (the caller falls back to the gradient).</summary>
         private bool SubmitSkyTexture(string texturePath, float exposure, float rotationDeg)
         {
-            var projectPath = Data.ProjectData.Current?.Path ?? "";
-            var fullTexturePath = System.IO.Path.IsPathRooted(texturePath)
-                ? texturePath
-                : System.IO.Path.Combine(projectPath, texturePath);
-
-            if (_cachedSkyboxTexturePath != fullTexturePath)
-            {
-                // a new path: load it once; a missing file is remembered too, so the fallback does not retry every frame
-                _cachedSkyboxTexturePath = fullTexturePath;
-                _skyboxTextureId = -1;
-                if (!AssetVfs.Exists(fullTexturePath))
-                    Log($"[SceneRenderService] Skybox texture not found: {fullTexturePath}");
-                else
-                {
-                    Log($"[SceneRenderService] Loading skybox texture: {fullTexturePath}");
-                    _skyboxTextureId = ImportTexturePath(fullTexturePath);
-                    if (_skyboxTextureId < 0) Log("[SceneRenderService] Failed to load skybox texture");
-                }
-            }
-            if (_skyboxTextureId < 0) return false;
+            var fullTexturePath = SkyFullPath(texturePath);
+            long id = SkyTextureId(fullTexturePath);   // loaded once; a missing file is remembered too, so the fallback does not retry every frame
+            if (id < 0) return false;
 
             VortexAPI.EnableSkybox(true);
             VortexAPI.SetSkyboxRenderMode(VortexAPI.SkyboxMode.Texture);
-            // a Radiance .hdr keeps its range (RGBA16F): where the scene uses the exposure pipeline (a scene exposure or the
-            // neutral tonemapper) the sky pass exposes + tonemaps it like the lit surfaces; other scenes keep the classic look
-            int hdrMode = 0;
-            if (fullTexturePath.EndsWith(".hdr", StringComparison.OrdinalIgnoreCase))
-            {
-                var st = Data.ProjectData.Current?.ActiveScene?.Settings;
-                hdrMode = st != null && (st.SceneExposure != 0f || st.Tonemapper != 0) ? 2 : 1;
-            }
-            VortexAPI.ApplySkyboxTexture(_skyboxTextureId, exposure, rotationDeg, hdrMode);
+            VortexAPI.ApplySkyboxTexture(id, exposure, rotationDeg, SkyHdrMode(fullTexturePath));
             return true;
+        }
+
+        /// <summary>The sun a script set (#466): its direction, colour and intensity; the shadow values it left out are the scene
+        /// Directional Light's (as the last scene-light submit found it), else off / 1 / 80 m. It is the sun for the sky light's
+        /// ground bounce and the world radiance cache too. Lighting.SetDirectional calls it at once as well.</summary>
+        internal void ApplyScriptSun(SunOverride s)
+        {
+            bool sceneSun = _sceneHasSun;
+            s.Resolve(sceneSun, _sceneSunCasts, _sceneSunStrength, _sceneSunDistance, out bool cast, out float strength, out float distance);
+            VortexAPI.SetDirectionalLightParams(s.DirX, s.DirY, s.DirZ, s.R, s.G, s.B, s.Intensity, cast, strength, sceneSun ? _sceneSunBias : 0.0008f, distance);
+            float l = (float)Math.Sqrt(s.DirX * s.DirX + s.DirY * s.DirY + s.DirZ * s.DirZ);
+            if (l > 1e-6f) { _sunDirX = s.DirX / l; _sunDirY = s.DirY / l; _sunDirZ = s.DirZ / l; }
+            _sunR = s.R; _sunG = s.G; _sunB = s.B; _sunIntensity = s.Intensity;
+            _hasDirectionalLight = true;
         }
 
         /// <summary>The sky a script asked for (#349): its texture through the sky pass, or its gradient.</summary>
@@ -3109,8 +3538,7 @@ namespace Editor.Core.Services
         public void ClearSkyboxMeshCache()
         {
             _skyboxMeshCache.Clear();
-            _cachedSkyboxTexturePath = null; // Force reload of texture
-            _skyboxTextureId = -1;
+            _skyTextureIds.Clear(); // Force reload of the sky pictures
             Log("[SceneRenderService] Skybox cache cleared");
         }
 

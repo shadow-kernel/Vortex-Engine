@@ -27,6 +27,11 @@ namespace Editor.DllWrapper
         private static extern void StepRuntime(float deltaTime);
 
         [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void StepRuntimeScaled(float deltaTime, float timeScale);
+
+        private static bool _scaledStepMissing;
+
+        [DllImport(_dllName, CallingConvention = _cc)]
         private static extern float GetGameTime();
 
         [DllImport(_dllName, CallingConvention = _cc)]
@@ -40,6 +45,20 @@ namespace Editor.DllWrapper
         /// frame in play mode / from the standalone player, before rendering.
         /// </summary>
         public static void StepEngineRuntime(float deltaTime) => StepRuntime(deltaTime);
+
+        /// <summary>As <see cref="StepEngineRuntime(float)"/> with the game's time scale (#425): <paramref name="deltaTime"/> real
+        /// seconds; the engine's fallback physics (the bodies of a build without Jolt) and its game clock advance by
+        /// deltaTime × <paramref name="timeScale"/> — 0 holds them —, its audio by the real seconds. An engine library without
+        /// the export steps everything in real time, as before.</summary>
+        public static void StepEngineRuntime(float deltaTime, float timeScale)
+        {
+            if (!_scaledStepMissing)
+            {
+                try { StepRuntimeScaled(deltaTime, timeScale); return; }
+                catch (EntryPointNotFoundException) { _scaledStepMissing = true; }
+            }
+            StepRuntime(deltaTime);
+        }
 
         /// <summary>Elapsed in-game seconds since play started (fixed-timestep game clock).</summary>
         public static float GameTime() => GetGameTime();

@@ -28,8 +28,20 @@ namespace VortexEditor.Claude
         {
             if (EditorViewportSession.Main == null || !EditorViewportSession.Main.IsInitialized)
                 throw new ToolError("The editor viewport is not running (no project open, or the editor is still starting).");
+            // a viewport at rest renders no frame: a capture asked for now would be written whenever it wakes up — a full-size
+            // file nobody reads (#411 review). Say why instead of waiting for it.
+            if (Tools.PlayerTools.IsRunning)
+                throw new ToolError("run_player is running the game: the editor's viewport rests until it has answered — capture after that.");
+            if (EditorViewportSession.ActivePreviewDialogs > 0 && PlayModeService.Instance.State != PlayState.Playing)
+                throw new ToolError("A preview dialog is open and pauses the main viewport: close it, then capture.");
             string bmp = Path.Combine(Path.GetTempPath(), "vortex-capture-" + Guid.NewGuid().ToString("N") + ".bmp");
             bool gizmos = VortexAPI.AreGizmosVisible;
+            if (PlayModeService.Instance.IsPlaying)
+            {
+                // #361: the captured frame shows every character in its current pose, whatever the level of detail skipped
+                Editor.Core.Animation.AnimationService.FullDetailFor(1f);
+                if (!clean) await Task.Delay(50);   // a tick that poses them before the frame is taken (clean waits below)
+            }
             try
             {
                 if (clean)
@@ -47,8 +59,10 @@ namespace VortexEditor.Claude
                 {
                     if ((DateTime.UtcNow - start).TotalMilliseconds > timeoutMs)
                     {
-                        string why = EditorViewportSession.ActivePreviewDialogs > 0 ? " — a preview dialog is open and pauses the main viewport; close it"
+                        string why = Tools.PlayerTools.IsRunning ? " — run_player is running the game and the viewport rests meanwhile; capture after it answered"
+                                   : EditorViewportSession.ActivePreviewDialogs > 0 ? " — a preview dialog is open and pauses the main viewport; close it"
                                    : " — is the editor window minimised or hidden?";
+                        RemoveWhenWritten(bmp);   // the frame asked for may still come: it must not stay behind
                         throw new ToolError("The viewport did not render a frame within " + timeoutMs / 1000 + " s" + why);
                     }
                     await Task.Delay(30);
@@ -66,6 +80,23 @@ namespace VortexEditor.Claude
                     EditorViewportSession.RequestResubmit();
                 }
             }
+        }
+
+        /// <summary>A capture that timed out stays asked for: the renderer writes it with its next frame, maybe minutes later. Watch
+        /// for the file a while and delete it then.</summary>
+        private static void RemoveWhenWritten(string bmp)
+        {
+            _ = Task.Run(async () =>
+            {
+                for (int i = 0; i < 600; i++)
+                {
+                    await Task.Delay(1000);
+                    if (!File.Exists(bmp)) continue;
+                    await Task.Delay(1000);   // the writer finishes the file first
+                    try { File.Delete(bmp); } catch { }
+                    return;
+                }
+            });
         }
 
         /// <summary>BGRA BMP (top-down or bottom-up, 32 bpp, as the engine writes it) → resized opaque JPEG/PNG.</summary>

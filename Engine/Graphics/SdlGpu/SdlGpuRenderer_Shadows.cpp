@@ -1,6 +1,7 @@
 #include "SdlGpuRenderer.h"
 #include "SdlGpuResources.h"
 #include "../../Common/Platform.h"
+#include "../Lighting/CascadeSplits.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -245,6 +246,7 @@ namespace vortex::graphics::sdlgpu
 	{
 		using namespace DirectX;
 		(void)view;
+		instancing::ScopedMs timed(m_cpu_stats.shadow_ms);
 		m_shadow_spot_count = 0; m_csm_count = 0; m_shadow_point_count = 0;
 		m_shadow_segs.clear(); m_shadow_tiles_spot.clear(); m_shadow_tiles_csm.clear(); m_shadow_tiles_point.clear();
 		m_shadow_staging.clear();
@@ -255,7 +257,7 @@ namespace vortex::graphics::sdlgpu
 		for (auto& m : L.point_face_vp) m = ident;
 		L.point_shadows[0] = L.point_shadows[1] = { -1.0f, 0.0f, 0.0f, 0.0f };
 		L.dir_shadow_params = { m_dir_shadow_strength, m_dir_shadow_bias, 0.0f, m_dir_shadow_softness };
-		L.cascade_splits = { 0.0f, 0.0f, 0.0f, m_dir_shadow_distance };
+		L.cascade_bias = { 1.0f, 1.0f, 1.0f, 0.0f };
 		fill_sky_light(L);
 		for (u32 i = 0; i < MAX_SPOT_LIGHTS; ++i) { L.spot_lights[i].shadow_slot = -1.0f; L.spot_lights[i].shadow_strength = 0.0f; L.spot_lights[i].shadow_bias = 0.0f; }
 		if (!m_shadows_ready) return;
@@ -289,8 +291,10 @@ namespace vortex::graphics::sdlgpu
 				lightDir = XMVector3Normalize(lightDir);
 				XMVECTOR lightUp = fabsf(XMVectorGetY(lightDir)) > 0.99f ? XMVectorSet(0, 0, 1, 0) : XMVectorSet(0, 1, 0, 0);
 				XMMATRIX lightView = XMMatrixLookToLH(XMVectorZero(), lightDir, lightUp);
-				const float nearZ = 0.1f, farZ = m_dir_shadow_distance, lambda = 0.6f;
-				float splitNear = nearZ;
+				// the split scheme adapts to the distance (#466): the classic 0.6 blend up to 80 m, towards the logarithmic split beyond
+				float splits[CSM_CASCADES];
+				lighting::cascade_splits(m_dir_shadow_distance, CSM_CASCADES, splits);
+				float splitNear = lighting::CASCADE_NEAR_Z;
 				XMVECTOR eye = XMLoadFloat3(&m_camera_position);
 				XMVECTOR fwd = XMVectorSubtract(XMLoadFloat3(&m_camera_target), eye);
 				if (XMVectorGetX(XMVector3LengthSq(fwd)) > 1e-6f)
@@ -304,10 +308,7 @@ namespace vortex::graphics::sdlgpu
 					const float tanHalfX = tanHalfY * aspect;
 					for (u32 c = 0; c < CSM_CASCADES; ++c)
 					{
-						const float f = (float)(c + 1) / (float)CSM_CASCADES;
-						const float logSplit = nearZ * powf(farZ / nearZ, f);
-						const float uniSplit = nearZ + (farZ - nearZ) * f;
-						const float splitFar = uniSplit + lambda * (logSplit - uniSplit);
+						const float splitFar = splits[c];
 						XMVECTOR corners[8]; int k = 0;
 						for (int d = 0; d < 2; ++d)
 						{
@@ -331,6 +332,8 @@ namespace vortex::graphics::sdlgpu
 						float cx = floorf(XMVectorGetX(cLS) / worldPerTexel) * worldPerTexel;
 						float cy = floorf(XMVectorGetY(cLS) / worldPerTexel) * worldPerTexel;
 						const float cz = XMVectorGetZ(cLS);
+						// the box reaches back towards the light by the whole shadow distance, for casters outside the slice (a
+						// tower off-screen throwing its shadow over the camera); the depth bias follows the texel, not this range (#466)
 						XMMATRIX proj = XMMatrixOrthographicOffCenterLH(cx - radius, cx + radius, cy - radius, cy + radius, cz - radius - m_dir_shadow_distance, cz + radius);
 						XMStoreFloat4x4(&m_csm_vp[c], lightView * proj);
 						m_csm_splits[c] = splitFar;
@@ -339,7 +342,11 @@ namespace vortex::graphics::sdlgpu
 					}
 					m_csm_count = CSM_CASCADES;
 					for (u32 c = 0; c < CSM_CASCADES; ++c) L.cascade_vp[c] = m_csm_vp[c];
-					L.cascade_splits = { m_csm_splits[0], m_csm_splits[1], m_csm_splits[2], m_dir_shadow_distance };
+					// the depth bias beyond 80 m: per texel and slope instead of a fraction of the deeper boxes (#466, lighting/CascadeSplits.h)
+					float bias_scale[CSM_CASCADES], bias_slope = 0.0f;
+					lighting::cascade_bias(m_dir_shadow_distance, CSM_CASCADES, m_csm_radius, tanHalfX, tanHalfY, SHADOW_TILE_SIZE,
+						m_dir_shadow_bias, m_dir_shadow_softness, bias_scale, bias_slope);
+					L.cascade_bias = { bias_scale[0], bias_scale[1], bias_scale[2], bias_slope };
 					L.dir_shadow_params = { m_dir_shadow_strength, m_dir_shadow_bias, (float)m_csm_count, m_dir_shadow_softness };
 				}
 			}
@@ -414,16 +421,16 @@ namespace vortex::graphics::sdlgpu
 
 		// ---- pack casters per tile (own culling per light frustum; the scene pack is keyed to the camera) ----
 		u32 vb_used = 0, dropped = 0;
-		auto pack = [&](const XMFLOAT4X4& vp, u32 x, u32 y, u32 size, std::vector<ShadowTile>& tiles)
+		auto pack = [&](const XMFLOAT4X4& vp, u32 x, u32 y, u32 size, std::vector<ShadowTile>& tiles, u32 limit)
 		{
 			const ShadowFrustum fr = extract_shadow_frustum(vp);
 			const float min_r = shadow_min_caster_radius(vp, size);
 			auto& casters = m_shadow_tile_casters; casters.clear();
 			for (const auto& c : all)
 				if (c.r >= min_r && sphere_in_shadow_frustum(fr, c.cx, c.cy, c.cz, c.r)) casters.push_back(c);
-			// The tiles share one instance buffer. A tile over budget keeps its LARGEST casters (the shadows one sees from
-			// afar) instead of the first in queue order, and the drop is reported below.
-			const u32 room = vb_used < MAX_SHADOW_INSTANCES ? MAX_SHADOW_INSTANCES - vb_used : 0;
+			// The tiles share one instance buffer, up to `limit` for this tile. A tile over budget keeps its LARGEST casters
+			// (the shadows one sees from afar) instead of the first in queue order, and the drop is reported below.
+			const u32 room = vb_used < limit ? limit - vb_used : 0;
 			if (casters.size() > room)
 			{
 				std::nth_element(casters.begin(), casters.begin() + room, casters.end(), [](const ShadowCaster& a, const ShadowCaster& b) { return a.r > b.r; });
@@ -458,17 +465,19 @@ namespace vortex::graphics::sdlgpu
 			tiles.push_back(tile);
 		};
 
-		// cascades first: the sun's shadows must never lose casters to the spot tiles packed before them (#363)
-		for (u32 c = 0; c < m_csm_count; ++c)
-			pack(m_csm_vp[c], (c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_csm);
+		// the spot and point tiles first, together at most a quarter of the buffer; the cascades get the rest — at least three
+		// quarters, all of it when the local lights need less (#363, #466; lighting/CascadeSplits.h)
+		const u32 local_cap = lighting::local_shadow_instance_cap(MAX_SHADOW_INSTANCES);
 		for (u32 t = 0; t < m_shadow_spot_count; ++t)
-			pack(m_shadow_spots[t].vp, (t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_spot);
+			pack(m_shadow_spots[t].vp, (t & 1) * SHADOW_TILE_SIZE, ((t >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_spot, local_cap);
 		for (u32 p = 0; p < m_shadow_point_count; ++p)
 			for (u32 f = 0; f < 6; ++f)
 			{
 				const u32 tile = p * 6 + f;
-				pack(m_shadow_points[p].face_vp[f], (tile % POINT_ATLAS_COLS) * POINT_SHADOW_TILE, (tile / POINT_ATLAS_COLS) * POINT_SHADOW_TILE, POINT_SHADOW_TILE, m_shadow_tiles_point);
+				pack(m_shadow_points[p].face_vp[f], (tile % POINT_ATLAS_COLS) * POINT_SHADOW_TILE, (tile / POINT_ATLAS_COLS) * POINT_SHADOW_TILE, POINT_SHADOW_TILE, m_shadow_tiles_point, local_cap);
 			}
+		for (u32 c = 0; c < m_csm_count; ++c)
+			pack(m_csm_vp[c], (c & 1) * SHADOW_TILE_SIZE, ((c >> 1) & 1) * SHADOW_TILE_SIZE, SHADOW_TILE_SIZE, m_shadow_tiles_csm, MAX_SHADOW_INSTANCES);
 		if (dropped > 0)
 		{
 			const auto now = std::chrono::steady_clock::now();
@@ -476,7 +485,7 @@ namespace vortex::graphics::sdlgpu
 			{
 				m_shadow_drop_logged = now;
 				log("shadows: " + std::to_string(dropped) + " caster(s) dropped this frame — the shared shadow instance budget of "
-					+ std::to_string(MAX_SHADOW_INSTANCES) + " is full (cascades packed first, largest casters kept) (#363)");
+					+ std::to_string(MAX_SHADOW_INSTANCES) + " is full (spot / point tiles at most a quarter of it, the cascades the rest; largest casters kept) (#363, #466)");
 			}
 		}
 	}

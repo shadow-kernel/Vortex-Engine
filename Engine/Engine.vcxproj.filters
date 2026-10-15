@@ -21,6 +21,7 @@
     <ClInclude Include="Graphics\ViewFrustum.h" />
     <ClInclude Include="Graphics\Lighting\LightSelection.h" />
     <ClInclude Include="Graphics\Skinning\BonePalettes.h" />
+    <ClInclude Include="Graphics\Instancing\RenderQueue.h" />
     <ClInclude Include="Navigation\NavigationWorld.h" />
     <ClInclude Include="Navigation\NavigationFormat.h" />
     <ClInclude Include="Runtime\Systems\AudioSystem.h" />

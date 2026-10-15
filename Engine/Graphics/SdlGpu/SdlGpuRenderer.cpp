@@ -491,7 +491,7 @@ namespace vortex::graphics::sdlgpu
 		m_vs_grid = create_shader("grid", "GridVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
 		m_fs_grid = create_shader("grid", "GridPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 1);
 		m_vs_sky = create_shader("skybox", "SkyVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 1);
-		m_fs_sky = create_shader("skybox", "SkyPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 1);   // sampler 0: the equirect sky (#326)
+		m_fs_sky = create_shader("skybox", "SkyPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 0, 1);   // sampler 0: the equirect sky (#326), 1 / 2: the cross-fade pictures (#464)
 		m_vs_blit = create_shader("postfx", "BlitVS", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0, 0);
 		m_fs_blit = create_shader("postfx", "BlitPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0, 0);
 		m_fs_postfx = create_shader("postfx", "PostFxPS", SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 1);
@@ -816,6 +816,7 @@ namespace vortex::graphics::sdlgpu
 	{
 		if (!m_device) return;
 		wait_idle();
+		m_cull_pool.shutdown();   // the cull workers (#361)
 		destroy_postfx_resources();
 		destroy_shadow_resources();
 		m_overlay.shutdown();
@@ -831,6 +832,7 @@ namespace vortex::graphics::sdlgpu
 			std::lock_guard<std::mutex> lock(m_queue_mutex);
 			m_render_queue.clear(); m_submit_queue.clear();
 		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
+			m_retained.clear(); m_frame_scratch.clear(); m_queue_retained = 0; m_queue_retained_valid = false;
 			m_gizmo_render.clear(); m_gizmo_submit.clear(); m_gizmo_wire_render.clear(); m_gizmo_wire_submit.clear();
 		}
 		m_custom_shaders.clear();
@@ -893,6 +895,8 @@ namespace vortex::graphics::sdlgpu
 		// ParticleService callback, or the automatic world-0 update) step it before anything is gathered.
 		m_particles.begin_frame();
 		::vortex::particles::begin_frame();
+		// the queue's CPU time of the frame that just finished (incl. any offscreen view rendered since) (#361)
+		m_cpu_stats.next_frame(m_cpu_stats_last);
 		swap_render_queue();
 
 		m_frame_count++;
@@ -1081,6 +1085,8 @@ namespace vortex::graphics::sdlgpu
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		m_render_queue.clear(); m_submit_queue.clear();
 		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
+		// the retained instances go too (#361): the scene sees the new epoch and sends what it still shows
+		m_retained.clear(); m_frame_scratch.clear(); m_queue_retained = 0; m_queue_retained_valid = false; m_frame_submitted = false;
 		m_bone_submit.clear(); m_bone_render.clear();
 		m_bone_upload_pending = false;
 		m_queue_dirty = true;

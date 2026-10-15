@@ -319,6 +319,58 @@ namespace vortex::runtime
 		update_client_size();
 	}
 
+	namespace
+	{
+		// The game window's display, or the main one (the editor has no game window); 0 without SDL video.
+		SDL_DisplayID host_display()
+		{
+			if (!SDL_WasInit(SDL_INIT_VIDEO)) return 0;
+			SDL_DisplayID d = g_window ? SDL_GetDisplayForWindow(g_window) : 0;
+			return d != 0 ? d : SDL_GetPrimaryDisplay();
+		}
+
+		// SDL measures a mode in points with a pixel density; the options menu works in pixels (#462).
+		void mode_in_pixels(const SDL_DisplayMode& m, int& w, int& h, float& hz, float& density)
+		{
+			density = m.pixel_density > 0.0f ? m.pixel_density : 1.0f;
+			w = (int)((float)m.w * density + 0.5f);
+			h = (int)((float)m.h * density + 0.5f);
+			hz = m.refresh_rate > 0.0f ? m.refresh_rate : 0.0f;
+		}
+	}
+
+	int GameHost::display_modes(int* widths, int* heights, float* refresh_hz, float* densities, int max)
+	{
+		SDL_DisplayID d = host_display();
+		if (d == 0) return 0;
+		int count = 0;
+		SDL_DisplayMode** modes = SDL_GetFullscreenDisplayModes(d, &count);   // largest first
+		if (!modes) return 0;
+		int n = 0;
+		for (int i = 0; i < count; ++i)
+		{
+			if (!modes[i]) continue;
+			int w, h; float hz, density;
+			mode_in_pixels(*modes[i], w, h, hz, density);
+			if (n < max && widths && heights && refresh_hz && densities)
+			{
+				widths[n] = w; heights[n] = h; refresh_hz[n] = hz; densities[n] = density;
+			}
+			++n;
+		}
+		SDL_free(modes);
+		return n;
+	}
+
+	bool GameHost::current_display_mode(int& width, int& height, float& refresh_hz, float& density)
+	{
+		SDL_DisplayID d = host_display();
+		const SDL_DisplayMode* m = d != 0 ? SDL_GetDesktopDisplayMode(d) : nullptr;
+		if (!m) return false;
+		mode_in_pixels(*m, width, height, refresh_hz, density);
+		return true;
+	}
+
 	bool GameHost::run_utf8(uint32_t width, uint32_t height, const char* title_utf8)
 	{
 		if (!SDL_WasInit(SDL_INIT_VIDEO) && !SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))

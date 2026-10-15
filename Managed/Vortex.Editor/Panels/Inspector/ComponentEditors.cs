@@ -97,6 +97,14 @@ namespace VortexEditor.Panels.Inspector
 
         internal static void Dirty() { SceneRenderService.RuntimeDirty = true; }
 
+        /// <summary>An inspector edit changed <paramref name="e"/>: its scene has unsaved changes (#411 review) — rows set values
+        /// directly, without an undo step. Not while playing (Stop puts the scenes back) and not for a prefab template.</summary>
+        internal static void MarkUnsaved(GameEntity e)
+        {
+            if (e?.Scene == null || PlayModeService.Instance.IsPlaying || !IsSceneEntity(e)) return;
+            e.Scene.IsDirty = true;
+        }
+
         /// <summary>True when the entity lives in a scene; false for an isolated prefab template (the Prefab Editor).</summary>
         public static bool IsSceneEntity(GameEntity e) => e != null && Shell.Prefab.PrefabWorkflow.IsInScene(e);
 
@@ -301,12 +309,15 @@ namespace VortexEditor.Panels.Inspector
             var bias = Row("Bias", SliderRow(() => l.ShadowBias, v => { l.ShadowBias = v; D(); }, 0, 0.2, "0.###", 0f, null), "Higher = less shadow acne, but shadows detach from objects (peter-panning)");
             var nbias = Row("Normal bias", SliderRow(() => l.ShadowNormalBias, v => { l.ShadowNormalBias = v; D(); }, 0, 3, "0.##", 0f, null), "Offset along the surface normal — fixes acne on slopes");
             var res = Row("Resolution", Choice(() => ResIndex(l.ShadowResolution), v => { l.ShadowResolution = new[] { 512, 1024, 2048, 4096 }[v]; D(); }, "512", "1024", "2048", "4096"));
-            rows.Add(strength); rows.Add(bias); rows.Add(nbias); rows.Add(res);
+            var distance = Row("Distance", SliderRow(() => l.ShadowDistance, v => { l.ShadowDistance = v; D(); }, 20, 1000, "0", 5f, 10000f),
+                "How far from the camera the sun's shadows reach (m) — 80 by default, 200–500 for roads, cities and flights. The near cascade stays sharp; the last one stretches out (#466)");
+            rows.Add(strength); rows.Add(bias); rows.Add(nbias); rows.Add(res); rows.Add(distance);
             updateVis = () =>
             {
                 bool dir = l.LightType == LightType.Directional, isSpot = l.LightType == LightType.Spot, sh = l.ShadowType != ShadowType.None;
                 range.IsVisible = !dir; spot.IsVisible = isSpot; inner.IsVisible = isSpot;
                 strength.IsVisible = sh; bias.IsVisible = sh; nbias.IsVisible = sh; res.IsVisible = sh;
+                distance.IsVisible = sh && dir;
             };
             updateVis();
             return rows;
@@ -320,8 +331,8 @@ namespace VortexEditor.Panels.Inspector
             void D() => Dirty();
             void Reload() { try { SceneRenderService.Instance.ClearSkyboxMeshCache(); } catch { } D(); }
             Action updateVis = null;
-            // Skybox hides Component.IsEnabled with its own flag (the renderer reads that one) — edit it here too
-            rows.Add(Row("Visible", Bool(() => s.IsEnabled, v => { s.IsEnabled = v; D(); }), "Draw this sky (the renderer's own switch)"));
+            // the component's own switch (Component.IsEnabled) — the renderer draws the sky while it is on
+            rows.Add(Row("Visible", Bool(() => s.IsEnabled, v => { s.IsEnabled = v; D(); }), "Draw this sky (the component's switch)"));
             rows.Add(Row("Type", Enum<SkyboxType>(() => s.SkyboxType, v => { s.SkyboxType = v; Reload(); updateVis?.Invoke(); }, new[] { "Solid Color", "Gradient", "Cubemap", "Texture (HDR)" })));
             rows.Add(Row("Ambient", SliderRow(() => s.AmbientIntensity, v => { s.AmbientIntensity = v; D(); }, 0, 2, "0.##", 0f, 2f), "Ambient light intensity"));
             rows.Add(Row("Exposure", SliderRow(() => s.Exposure, v => { s.Exposure = v; D(); }, 0.1, 4, "0.#", 0.1f, 4f)));
@@ -333,6 +344,14 @@ namespace VortexEditor.Panels.Inspector
             var mesh = Row("Mesh (opt.)", AssetPath(() => s.SkyboxMeshPath, v => { s.SkyboxMeshPath = v ?? ""; Reload(); }, "Model", ModelPatterns, () => AssetPickerDialog.Pick("Models", ModelPatterns)), "Optional custom sky mesh — empty uses the built-in sphere");
             var info = Hint("Select a texture (PNG, JPG, HDR) for the sky. A built-in sphere is used automatically.");
             rows.Add(sky); rows.Add(horizon); rows.Add(ground); rows.Add(cube); rows.Add(tex); rows.Add(mesh); rows.Add(info);
+            // the sun's disc at the scene's Directional Light (#499)
+            var sunHead = Section("Sun");
+            var sunDisc = Row("Disc", Enum<SkySunDisc>(() => s.SunDisc, v => { s.SunDisc = v; D(); }, new[] { "Auto", "On", "Off" }),
+                "A disc where the Directional Light comes from, in its colour. Auto: on a gradient sky; a picture sky shows it with On (a picture may carry its own sun)");
+            var sunSize = Row("Size", SliderRow(() => s.SunSize, v => { s.SunSize = v; D(); }, 0.1, 5, "0.##", 0.05f, 20f), "Angular diameter in degrees — the real sun is 0.53");
+            var sunIntensity = Row("Intensity", SliderRow(() => s.SunIntensity, v => { s.SunIntensity = v; D(); }, 0, 4, "0.##", 0f, 100f), "1 = a white-hot disc that blooms; below ~0.1 it keeps the light's colour");
+            var sunGlow = Row("Glow", SliderRow(() => s.SunGlow, v => { s.SunGlow = v; D(); }, 0, 4, "0.##", 0f, 10f), "The corona and aureole around the disc (0 = a bare disc)");
+            rows.Add(sunHead); rows.Add(sunDisc); rows.Add(sunSize); rows.Add(sunIntensity); rows.Add(sunGlow);
             updateVis = () =>
             {
                 var t = s.SkyboxType;
@@ -342,6 +361,7 @@ namespace VortexEditor.Panels.Inspector
                 cube.IsVisible = t == SkyboxType.Cubemap;
                 tex.IsVisible = info.IsVisible = t == SkyboxType.Texture;
                 mesh.IsVisible = t == SkyboxType.Cubemap || t == SkyboxType.Texture;
+                sunHead.IsVisible = sunDisc.IsVisible = sunSize.IsVisible = sunIntensity.IsVisible = sunGlow.IsVisible = t != SkyboxType.SolidColor;
             };
             updateVis();
             return rows;

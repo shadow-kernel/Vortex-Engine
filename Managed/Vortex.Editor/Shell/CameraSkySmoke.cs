@@ -159,8 +159,10 @@ namespace VortexEditor.Shell
         internal static Task<(int r, int g, int b)> Centre(string file) => Sample(file, 0.5, 0.5);
 
         /// <summary>The average colour of a 9×9 block of the next presented frame at (fx, fy) in 0..1 — captured by the
-        /// renderer itself (CaptureFrame writes the real back buffer as a 32-bit BMP).</summary>
-        internal static async Task<(int r, int g, int b)> Sample(string file, double fx, double fy, bool capture = true)
+        /// renderer itself (CaptureFrame writes the real back buffer as a 32-bit BMP). <paramref name="half"/> sets the block's
+        /// half size in pixels (4: 9×9) — a small target needs a small block where the viewport has few pixels (the Windows
+        /// CI viewport is 460×286, a Retina Mac's four times as many per degree).</summary>
+        internal static async Task<(int r, int g, int b)> Sample(string file, double fx, double fy, bool capture = true, int half = 4)
         {
             string dir = SmokeRegistry.CaptureDir;
             if (string.IsNullOrEmpty(dir)) dir = Path.Combine(Path.GetTempPath(), "vortex-smoke-capture");
@@ -174,10 +176,44 @@ namespace VortexEditor.Shell
                 for (int i = 0; i < 60 && !File.Exists(path); i++) await Task.Delay(50);
                 await Task.Delay(150);
             }
-            return ReadBmp(path, fx, fy);
+            return ReadBmp(path, fx, fy, half);
         }
 
-        private static (int r, int g, int b) ReadBmp(string path, double fx, double fy)
+        /// <summary>Where pixels of a colour are in a captured frame (<paramref name="file"/> in the capture folder, as
+        /// <see cref="Sample"/> wrote it): how many (every 2nd pixel of every 2nd row), their centre in 0..1, and the frame's
+        /// size — a check's diagnostics when the colour is not at the spot it expected (drawn elsewhere, or not at all).
+        /// <paramref name="x0"/>..<paramref name="y1"/> (0..1) limit the search, e.g. away from the play view's overlay text.</summary>
+        internal static (int count, double fx, double fy, int w, int h) Find(string file, Func<(int r, int g, int b), bool> match,
+            double x0 = 0, double y0 = 0, double x1 = 1, double y1 = 1)
+        {
+            string dir = SmokeRegistry.CaptureDir;
+            if (string.IsNullOrEmpty(dir)) dir = Path.Combine(Path.GetTempPath(), "vortex-smoke-capture");
+            try
+            {
+                var d = File.ReadAllBytes(Path.Combine(dir, file));
+                if (d.Length < 54 || d[0] != (byte)'B' || d[1] != (byte)'M') return (0, -1, -1, 0, 0);
+                int off = BitConverter.ToInt32(d, 10), w = BitConverter.ToInt32(d, 18), h = BitConverter.ToInt32(d, 22);
+                int bytes = BitConverter.ToInt16(d, 28) / 8;
+                bool bottomUp = h > 0; h = Math.Abs(h);
+                if (bytes < 3) return (0, -1, -1, w, h);
+                int stride = ((w * bytes + 3) / 4) * 4;
+                long sx = 0, sy = 0; int n = 0;
+                int ya = Math.Max(0, (int)(h * y0)), yb = Math.Min(h, (int)Math.Ceiling(h * y1));
+                int xa = Math.Max(0, (int)(w * x0)), xb = Math.Min(w, (int)Math.Ceiling(w * x1));
+                for (int y = ya; y < yb; y += 2)
+                    for (int x = xa; x < xb; x += 2)
+                    {
+                        int i = off + (bottomUp ? h - 1 - y : y) * stride + x * bytes;
+                        if (i + 2 >= d.Length) continue;
+                        if (!match((d[i + 2], d[i + 1], d[i]))) continue;
+                        sx += x; sy += y; n++;
+                    }
+                return n == 0 ? (0, -1, -1, w, h) : (n, (double)sx / n / w, (double)sy / n / h, w, h);
+            }
+            catch { return (0, -1, -1, 0, 0); }
+        }
+
+        private static (int r, int g, int b) ReadBmp(string path, double fx, double fy, int half = 4)
         {
             try
             {
@@ -190,8 +226,8 @@ namespace VortexEditor.Shell
                 int stride = ((w * bytes + 3) / 4) * 4;
                 int cx = (int)(w * fx), cy = (int)(h * fy);
                 long r = 0, g = 0, b = 0; int n = 0;
-                for (int dy = -4; dy <= 4; dy++)
-                    for (int dx = -4; dx <= 4; dx++)
+                for (int dy = -half; dy <= half; dy++)
+                    for (int dx = -half; dx <= half; dx++)
                     {
                         int x = cx + dx, y = cy + dy;
                         if (x < 0 || y < 0 || x >= w || y >= h) continue;

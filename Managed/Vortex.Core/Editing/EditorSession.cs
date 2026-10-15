@@ -18,6 +18,7 @@ namespace Editor.Core.Editing
         public static EditorSession Instance { get; } = new EditorSession();
 
         private bool _engineUp;
+        private static bool _swept;
 
         public SceneHierarchyViewModel Hierarchy { get; } = new SceneHierarchyViewModel();
         public ProjectData Project => ProjectData.Current;
@@ -41,6 +42,7 @@ namespace Editor.Core.Editing
 
         public void ShutdownEngine()
         {
+            try { SceneDataFiles.Clear(removeFolder: true); } catch { }   // the copies a revert would have put back go with the editor (#411)
             if (!_engineUp) return;
             _engineUp = false;
             try { if (PlayModeService.Instance.IsPlaying) Stop(); } catch { }
@@ -65,6 +67,12 @@ namespace Editor.Core.Editing
         {
             if (project == null) return false;
             EnsureEngine();
+            SceneDirtyTracker.Install();   // every undo step marks the scenes it touches unsaved (#411)
+            if (!_swept)
+            {
+                _swept = true;   // what a crashed or killed editor left in the temp folder (#411 review)
+                System.Threading.Tasks.Task.Run(() => { try { SceneDataFiles.SweepStale(); } catch { } });
+            }
             if (ProjectData.Current != null && !ReferenceEquals(ProjectData.Current, project)) CloseProject(keepLastProject: true);
             ProjectData.Current = project;
             try { Editor.Core.Assets.AssetTagService.Instance.Initialize(project.Path); } catch { }
@@ -127,6 +135,7 @@ namespace Editor.Core.Editing
                     try { s.DeactivateEntities(); s.ReleaseEngineScene(); } catch { }
                 }
             project?.Unload();
+            try { SceneDataFiles.Clear(); } catch { }   // the copies a revert would have put back (#411)
             ProjectData.Current = null;
             Hierarchy.SetProject(null);
             if (!keepLastProject) EditorStateService.Instance.ClearLastProject();

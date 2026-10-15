@@ -68,6 +68,35 @@ namespace VortexEditor.Claude
 
         internal static void FileWritten(FileChange f) => Files.Add(f);
 
+        /// <summary>A tool call is running (between Begin and End).</summary>
+        internal static bool Running => _running;
+
+        /// <summary>The running call's context, set aside while other calls run (<see cref="ToolHost.Unlocked{T}"/>).</summary>
+        internal sealed class Saved
+        {
+            internal string Origin, UndoLabel;
+            internal HashSet<Guid> Touched;
+            internal List<FileChange> Files;
+            internal HashSet<Scene> Scenes;
+            internal bool DryRun, Running;
+            internal List<(string Key, Action Run)> After;
+        }
+
+        internal static Saved Save() => new Saved
+        {
+            Origin = Origin, UndoLabel = UndoLabel, Touched = Touched, Files = Files, Scenes = TouchedScenes,
+            DryRun = DryRun, Running = _running, After = _afterSuccess.ToList(),
+        };
+
+        internal static void Restore(Saved s)
+        {
+            if (s == null) return;
+            Origin = s.Origin; UndoLabel = s.UndoLabel; Touched = s.Touched; Files = s.Files; TouchedScenes = s.Scenes;
+            DryRun = s.DryRun; _running = s.Running;
+            _afterSuccess.Clear();
+            _afterSuccess.AddRange(s.After);
+        }
+
         internal static void Begin(string origin, bool dryRun)
         {
             Reset(origin);
@@ -187,15 +216,9 @@ namespace VortexEditor.Claude
 
         /// <summary>For a tool that waits for the running game (send_input): <paramref name="wait"/> runs without the
         /// one-call-at-a-time lock, so exit_play_mode, get_script_state and the rest are not queued behind a sequence that
-        /// plays for a minute (#457 review). The lock is taken again before the tool goes on, also when the wait throws.
-        /// Only for a tool without an undo group (ManagesUndo) that leaves ToolContext alone afterwards — another call's
-        /// context comes and goes meanwhile.</summary>
-        internal static async Task WaitOutsideLock(Func<Task> wait)
-        {
-            Gate.Release();
-            try { await wait(); }
-            finally { await Gate.WaitAsync(); }
-        }
+        /// plays for a minute (#457 review). The lock is taken again before the tool goes on, also when the wait throws — see
+        /// <see cref="Unlocked{T}"/>, which this is for a wait without a result.</summary>
+        internal static Task WaitOutsideLock(Func<Task> wait) => Unlocked(async () => { await wait(); return true; });
 
         public static Task<ToolResult> CallAsync(string name, IReadOnlyDictionary<string, JsonElement> args, string origin, CancellationToken ct = default)
             => CallAsync(name, args?.ToDictionary(kv => kv.Key, kv => (object)kv.Value), origin, ct);
@@ -211,6 +234,25 @@ namespace VortexEditor.Claude
                 return await Dispatcher.UIThread.InvokeAsync(() => RunAsync(def, args ?? new Dictionary<string, object>(), origin, ct));
             }
             finally { Gate.Release(); }
+        }
+
+        /// <summary>
+        /// Run <paramref name="wait"/> — a wait on something outside the editor: the standalone player, a bake on a worker thread —
+        /// with the gate open, so other calls (the Claude panel's too) run meanwhile instead of queueing behind it for minutes
+        /// (#463 review). Only for a tool without an undo group of its own (ManagesUndo or ReadOnly); it re-checks what it relies on
+        /// (play mode, the project, the scene) when this returns. The call's context is set aside meanwhile and put back.
+        /// </summary>
+        internal static async Task<T> Unlocked<T>(Func<Task<T>> wait)
+        {
+            if (!ToolContext.Running) return await wait();   // not inside a gated call (a smoke check calling the method itself)
+            var saved = ToolContext.Save();
+            Gate.Release();
+            try { return await wait(); }
+            finally
+            {
+                await Gate.WaitAsync();
+                ToolContext.Restore(saved);
+            }
         }
 
         /// <summary>The error for argument keys the tool's schema does not know (null when all are known), with the
@@ -331,6 +373,10 @@ namespace VortexEditor.Claude
             // while the game runs every change says what Stop does with it — set here, once, for every tool (#423)
             if (playingAtStart && PlayModeService.Instance.IsPlaying && !def.ReadOnly && !dryRun && !result.IsError)
                 result = PlayModeNote(result, startUtc);
+            // a value a tool set directly makes no undo step to mark the scene: the scenes of the entities the call touched are
+            // unsaved now (#411 review) — undo steps mark theirs themselves (SceneDirtyTracker)
+            if (!def.ReadOnly && !dryRun && !result.IsError && !PlayModeService.Instance.IsPlaying)
+                foreach (var s in ToolContext.TouchedScenes) if (s != null && s.IsLoaded) s.IsDirty = true;
             op.Entities = ToolContext.Touched;
             op.Files = dryRun || result.IsError ? new List<FileChange>() : ToolContext.Files;
             op.Result = result.Summary();

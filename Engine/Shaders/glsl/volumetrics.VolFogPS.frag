@@ -94,7 +94,7 @@ float cascade_shadow(vec3 wp)
 		float texel = f.params2.w;
 		suv = clamp(suv, vec2(texel * 1.5), vec2(1.0 - texel * 1.5)) * 0.5;
 		suv += vec2((c & 1) != 0 ? 0.5 : 0.0, (c & 2) != 0 ? 0.5 : 0.0);
-		float bias = lights.dir_shadow_params.y * (1.0 + float(c));
+		float bias = lights.dir_shadow_params.y * (1.0 + float(c)) * lights.cascade_bias[c];   // the slope term needs a surface; fog has none (#466)
 		float lit = texture(u_csm_shadow, vec3(suv, ndc.z - bias));
 		return mix(1.0, lit, saturate(lights.dir_shadow_params.x));
 	}

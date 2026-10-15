@@ -181,6 +181,8 @@ namespace VortexEditor.Panels.Inspector
             rows.Add(Row("Speed", SliderRow(() => an.Speed, v => an.Speed = v, 0, 3, "0.##", 0f, 10f), "Playback rate multiplier (1 = authored speed)"));
             rows.Add(Row("Apply root motion", Bool(() => an.ApplyRootMotion, v => an.ApplyRootMotion = v), "The root bone's travel in the clip moves the entity through character collision (#113); the pose stays in place. In-place clips move nothing; a Nav Agent then follows the entity and keeps steering."));
             rows.Add(Row("Root bone", Text(() => an.RootMotionBone, v => an.RootMotionBone = v), "Bone carrying the travel (empty = hips / pelvis, else the first skinned node under the model root)"));
+            rows.Add(Row("Ignore time scale", Bool(() => an.IgnoreTimeScale, v => an.IgnoreTimeScale = v), "Play in real time whatever Time.TimeScale says (#425) — a menu character, or the player's body while the world runs in slow motion. Off = the animation slows, pauses and speeds up with the game."));
+            rows.Add(Row("Always animate", Bool(() => an.AlwaysAnimate, v => an.AlwaysAnimate = v), "Pose every frame even off-screen or far away (#361). Off = beyond 20 m a character nobody sees keeps its clock, events and root motion but skips its pose until it is in view again, and far ones pose 30 times a second — see Animation.SetLod."));
 
             var open = new Button { Content = "Open Keyframe Editor…", Classes = { "ghost" } };
             open.Click += async (s, e) =>

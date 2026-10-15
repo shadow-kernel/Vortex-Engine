@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using Editor.Core.Data;
@@ -53,6 +54,48 @@ namespace Editor.Core.Services.AI
         public byte[] BoxAreas;
         public int TriangleCount, BoxCount, EntityCount;
         public readonly List<string> Notes = new List<string>();
+        /// <summary>Each entity the geometry came from, with what it contributed (#449: the stale check).</summary>
+        public readonly List<NavGeometryOwner> Owners = new List<NavGeometryOwner>();
+    }
+
+    /// <summary>
+    /// One entity's part of a bake's input (#449 review), to tell later whether it changed. What the scene stores and the bake
+    /// reads in bulk — the content of the model files it uses, terrain heights and holes, foliage trunks — is hashed exactly into
+    /// <see cref="Signature"/>: stored bits read back the same on every machine. What the bake computes from transforms —
+    /// <see cref="Pose"/> and <see cref="Extent"/> — is compared within a tolerance (<c>NavigationService.SameInput</c>), so
+    /// float noise from another machine or evaluation order never reads as a change.
+    /// </summary>
+    public sealed class NavGeometryOwner
+    {
+        public Guid Id;
+        /// <summary>The entity's name when the geometry was collected (not stored in the file).</summary>
+        public string Name;
+        /// <summary>Exact hash of the stored data its geometry comes from: model file content, terrain resolution, heights and
+        /// holes, foliage trunks.</summary>
+        public ulong Signature;
+        /// <summary>Triangles and solid boxes it added.</summary>
+        public int Triangles, Boxes;
+        /// <summary>The transform the bake applied: the rotation-and-scale rows (3 × 3), then the translation.</summary>
+        public readonly float[] Pose = new float[12];
+        /// <summary>What it added, in world space: bounds min (x, y, z) and max, the mean of its triangle and box centres, and
+        /// its triangle area plus box volume.</summary>
+        public readonly float[] Extent = new float[10];
+    }
+
+    /// <summary>A scene's .vnav as its header describes it (#449) — see <see cref="NavigationService.ReadFileInfo"/>.</summary>
+    public sealed class NavMeshFileInfo
+    {
+        public string Path;
+        public long Size;
+        /// <summary>When the file was written (the bake), UTC.</summary>
+        public DateTime BakedUtc;
+        /// <summary>The format version; -1 when the file is no navmesh this engine knows.</summary>
+        public int Version;
+        public NavBakeSettings Settings;
+        public NavBakeStats Stats;
+        /// <summary>The entities it was baked from (<see cref="NavGeometryOwner"/>, without names); null for a navmesh baked
+        /// before bakes recorded them.</summary>
+        public List<NavGeometryOwner> Inputs;
     }
 
     /// <summary>Outcome of a bake.</summary>
@@ -297,7 +340,7 @@ namespace Editor.Core.Services.AI
             int got = VortexAPI.NavGetBakeResult(data, size);
             try { VortexAPI.NavClearBakeResult(); } catch { }
             if (got != size) { r.Error = -4; r.Message = "Bake result could not be read back."; return r; }
-            r.Data = data;
+            r.Data = StampInputs(data, geometry);   // what it was baked from: navmesh_info tells a stale one (#449)
             r.Success = true;
             r.Message = string.Format(System.Globalization.CultureInfo.InvariantCulture,
                 "{0} polygons in {1} tiles, {2:0.0} ms ({3} triangles + {4} solid boxes from {5} entities)",
@@ -356,6 +399,232 @@ namespace Editor.Core.Services.AI
                 case -8: return "Another bake is still running.";
                 default: return "Bake failed (see the Console / log).";
             }
+        }
+
+        // ================================================================================================ the baked file (#449)
+
+        // The .vnav header (Engine/Navigation/NavigationFormat.h): magic, version, settings (23 × 4 bytes), stats (16 × 4),
+        // twelve more words, the last four reserved. Behind the engine's blob the editor appends what a bake read — one record
+        // per entity (NavGeometryOwner) — and notes it in reserved words 0–2: the record's length, its entity count, "VNE1".
+        // The engine reads its tiles by count and never looks behind them, so such a navmesh loads everywhere.
+        internal const int HeaderSize = 212;
+        private const int SettingsOffset = 8, StatsOffset = 100, ReservedOffset = 196;
+        private const uint NavMagic = 0x56414E56u, InputsTag = 0x31454E56u, InputsMagic = 0x4E494E56u;   // "VNAV", "VNE1", "VNIN"
+        // The record: magic, version, entity count, bytes per entity; then per entity its id (16 bytes), signature (8), triangle
+        // and box counts (2 × 4), pose (12 floats) and extent (10 floats).
+        private const int InputsVersion = 1, InputsHead = 16, InputSize = 16 + 8 + 8 + 12 * 4 + 10 * 4;
+
+        /// <summary>The navmesh blob with what the bake read appended behind it (#449 review): every entity's id, the exact
+        /// signature of its stored input and its pose and extent — see <see cref="NavGeometryOwner"/>.</summary>
+        internal static byte[] StampInputs(byte[] blob, NavBakeGeometry g)
+        {
+            if (blob == null || blob.Length < HeaderSize || g == null || BitConverter.ToUInt32(blob, 0) != NavMagic) return blob;
+            var owners = g.Owners;
+            int length = InputsHead + owners.Count * InputSize;
+            var data = new byte[blob.Length + length];
+            Buffer.BlockCopy(blob, 0, data, 0, blob.Length);
+            var t = data.AsSpan(blob.Length);
+            BinaryPrimitives.WriteUInt32LittleEndian(t, InputsMagic);
+            BinaryPrimitives.WriteInt32LittleEndian(t.Slice(4), InputsVersion);
+            BinaryPrimitives.WriteInt32LittleEndian(t.Slice(8), owners.Count);
+            BinaryPrimitives.WriteInt32LittleEndian(t.Slice(12), InputSize);
+            for (int i = 0; i < owners.Count; i++)
+            {
+                var o = owners[i];
+                var r = t.Slice(InputsHead + i * InputSize, InputSize);
+                o.Id.TryWriteBytes(r);
+                BinaryPrimitives.WriteUInt64LittleEndian(r.Slice(16), o.Signature);
+                BinaryPrimitives.WriteInt32LittleEndian(r.Slice(24), o.Triangles);
+                BinaryPrimitives.WriteInt32LittleEndian(r.Slice(28), o.Boxes);
+                for (int k = 0; k < 12; k++) BinaryPrimitives.WriteSingleLittleEndian(r.Slice(32 + 4 * k), o.Pose[k]);
+                for (int k = 0; k < 10; k++) BinaryPrimitives.WriteSingleLittleEndian(r.Slice(80 + 4 * k), o.Extent[k]);
+            }
+            BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(ReservedOffset), length);
+            BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(ReservedOffset + 4), owners.Count);
+            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(ReservedOffset + 8), InputsTag);
+            return data;
+        }
+
+        /// <summary>What a .vnav says (null when it is none): version, settings, stats — and, given the whole file, what it was
+        /// baked from.</summary>
+        internal static NavMeshFileInfo ParseHeader(byte[] data)
+        {
+            if (data == null || data.Length < HeaderSize || BitConverter.ToUInt32(data, 0) != NavMagic) return null;
+            var info = new NavMeshFileInfo { Version = BitConverter.ToInt32(data, 4) };
+            info.Settings = Read<NavBakeSettings>(data, SettingsOffset);
+            info.Stats = Read<NavBakeStats>(data, StatsOffset);
+            if (info.Settings.SourceFlags == 0) info.Settings.SourceFlags = (int)NavGeometrySource.Default;
+            int length = InputsLength(data);
+            if (length > 0 && length <= data.Length - HeaderSize) info.Inputs = ParseInputs(data.AsSpan(data.Length - length, length));
+            return info;
+        }
+
+        /// <summary>The length of the record behind the blob, from the header; 0 when there is none.</summary>
+        private static int InputsLength(byte[] header)
+            => BitConverter.ToUInt32(header, ReservedOffset + 8) == InputsTag ? Math.Max(0, BitConverter.ToInt32(header, ReservedOffset)) : 0;
+
+        private static List<NavGeometryOwner> ParseInputs(ReadOnlySpan<byte> t)
+        {
+            if (t.Length < InputsHead || BinaryPrimitives.ReadUInt32LittleEndian(t) != InputsMagic) return null;
+            if (BinaryPrimitives.ReadInt32LittleEndian(t.Slice(4)) != InputsVersion) return null;
+            int count = BinaryPrimitives.ReadInt32LittleEndian(t.Slice(8)), size = BinaryPrimitives.ReadInt32LittleEndian(t.Slice(12));
+            if (count < 0 || size < InputSize || InputsHead + (long)count * size > t.Length) return null;
+            var list = new List<NavGeometryOwner>(count);
+            for (int i = 0; i < count; i++)
+            {
+                var r = t.Slice(InputsHead + i * size, InputSize);
+                var o = new NavGeometryOwner
+                {
+                    Id = new Guid(r.Slice(0, 16)),
+                    Signature = BinaryPrimitives.ReadUInt64LittleEndian(r.Slice(16)),
+                    Triangles = BinaryPrimitives.ReadInt32LittleEndian(r.Slice(24)),
+                    Boxes = BinaryPrimitives.ReadInt32LittleEndian(r.Slice(28)),
+                };
+                for (int k = 0; k < 12; k++) o.Pose[k] = BinaryPrimitives.ReadSingleLittleEndian(r.Slice(32 + 4 * k));
+                for (int k = 0; k < 10; k++) o.Extent[k] = BinaryPrimitives.ReadSingleLittleEndian(r.Slice(80 + 4 * k));
+                list.Add(o);
+            }
+            return list;
+        }
+
+        private static T Read<T>(byte[] data, int offset) where T : struct
+        {
+            var h = System.Runtime.InteropServices.GCHandle.Alloc(data, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try { return System.Runtime.InteropServices.Marshal.PtrToStructure<T>(new IntPtr(h.AddrOfPinnedObject().ToInt64() + offset)); }
+            finally { h.Free(); }
+        }
+
+        /// <summary>The scene's navmesh file as its header describes it, with what it was baked from — or null when the scene has
+        /// none (#449). Reads the header and the record at the end of the file only; no navmesh is loaded.</summary>
+        public static NavMeshFileInfo ReadFileInfo(Scene scene)
+        {
+            string path = NavMeshPathFor(scene);
+            if (path == null || !File.Exists(path)) return null;
+            NavMeshFileInfo info = null;
+            try
+            {
+                using var fs = File.OpenRead(path);
+                var header = new byte[HeaderSize];
+                int got = 0;
+                for (int n; got < header.Length && (n = fs.Read(header, got, header.Length - got)) > 0;) got += n;
+                if (got == HeaderSize) info = ParseHeader(header);
+                int length = info != null ? InputsLength(header) : 0;
+                if (length > 0 && length <= fs.Length - HeaderSize)
+                {
+                    var tail = new byte[length];
+                    fs.Seek(-length, SeekOrigin.End);
+                    int read = 0;
+                    for (int n; read < length && (n = fs.Read(tail, read, length - read)) > 0;) read += n;
+                    if (read == length) info.Inputs = ParseInputs(tail);
+                }
+            }
+            catch (Exception ex) { Log("[Navigation] could not read " + path + ": " + ex.Message, true); return null; }
+            if (info == null) info = new NavMeshFileInfo { Version = -1 };   // there, but no navmesh this engine knows
+            var fi = new FileInfo(path);
+            info.Path = path;
+            info.Size = fi.Length;
+            info.BakedUtc = fi.LastWriteTimeUtc;
+            return info;
+        }
+
+        /// <summary>
+        /// Whether a scene's navmesh no longer matches the scene (#449): the entities a bake would read now — with the sources the
+        /// navmesh was baked with — against those it was baked from, by id, so the entity order does not matter: one whose input
+        /// changed (moved, turned, resized, sculpted, another model), one added, one gone. Within a tolerance (see
+        /// <see cref="SameInput"/>): float noise from another machine or evaluation order never reads as a change. Null when that
+        /// cannot be told: a navmesh baked before bakes recorded their input. Collects the geometry like a bake (UI / game thread).
+        /// </summary>
+        public static bool? IsStale(Scene scene, NavMeshFileInfo file, out string reason)
+        {
+            reason = null;
+            if (scene == null || file == null) return null;
+            if (file.Inputs == null)
+            {
+                reason = "unknown: this navmesh was baked before bakes recorded what they read — bake it again and the next check can tell";
+                return null;
+            }
+            return IsStale(file, CollectGeometry(scene, file.Settings.SourceFlags), out reason);
+        }
+
+        internal static bool? IsStale(NavMeshFileInfo file, NavBakeGeometry now, out string reason)
+        {
+            reason = null;
+            if (file?.Inputs == null || now == null) return null;
+            // by id — and, should a scene hold an id twice, by its occurrence in the tree, which a bake walks in order
+            var baked = new Dictionary<(Guid, int), NavGeometryOwner>();
+            var seen = new Dictionary<Guid, int>();
+            (Guid, int) Key(NavGeometryOwner o) { seen.TryGetValue(o.Id, out int n); seen[o.Id] = n + 1; return (o.Id, n); }
+            foreach (var o in file.Inputs) baked[Key(o)] = o;
+            seen.Clear();
+            var changed = new List<string>();
+            var added = new List<string>();
+            foreach (var o in now.Owners)
+            {
+                var key = Key(o);
+                if (!baked.TryGetValue(key, out var b)) { added.Add(o.Name); continue; }
+                if (!SameInput(b, o)) changed.Add(o.Name);
+                baked.Remove(key);
+            }
+            int removed = baked.Count;
+            if (changed.Count == 0 && added.Count == 0 && removed == 0) return false;
+            string Few(List<string> names) => string.Join(", ", System.Linq.Enumerable.Select(System.Linq.Enumerable.Take(names, 5), n => "'" + n + "'")) + (names.Count > 5 ? " and " + (names.Count - 5) + " more" : "");
+            var parts = new List<string>();
+            if (changed.Count > 0) parts.Add("changed since the bake: " + Few(changed));
+            if (added.Count > 0) parts.Add("new: " + Few(added));
+            if (removed > 0) parts.Add(removed + (removed == 1 ? " entity is" : " entities are") + " gone or no longer static geometry");
+            reason = string.Join("; ", parts) + " — bake again";
+            return true;
+        }
+
+        /// <summary>
+        /// Whether two records of one entity describe the same input (#449 review). The signature is compared exactly: it hashes
+        /// values the scene stores (model files, terrain heights, foliage trunks), which read back bit for bit everywhere. What a
+        /// bake computes from transforms is compared within a tolerance: positions — the pose's translation, the bounds, the
+        /// centre — within a millimetre plus a millionth of their distance from the origin (a few float steps far out); rotation
+        /// and scale within 1e-5 (about a thousandth of a degree); the area plus volume within 0.01 %. Smaller differences are
+        /// float noise or far below a navmesh cell.
+        /// </summary>
+        internal static bool SameInput(NavGeometryOwner a, NavGeometryOwner b)
+        {
+            if (a == null || b == null || a.Signature != b.Signature) return false;
+            for (int k = 0; k < 9; k++) if (!Near(a.Pose[k], b.Pose[k], 1e-5, 1e-5)) return false;
+            for (int k = 9; k < 12; k++) if (!Near(a.Pose[k], b.Pose[k], 1e-3, 1e-6)) return false;
+            for (int k = 0; k < 9; k++) if (!Near(a.Extent[k], b.Extent[k], 1e-3, 1e-6)) return false;
+            return Near(a.Extent[9], b.Extent[9], 1e-4, 1e-4);
+        }
+
+        private static bool Near(float a, float b, double absolute, double relative)
+        {
+            if (a == b) return true;
+            if (float.IsNaN(a) || float.IsNaN(b)) return float.IsNaN(a) && float.IsNaN(b);
+            return Math.Abs((double)a - b) <= absolute + relative * Math.Max(Math.Abs((double)a), Math.Abs((double)b));
+        }
+
+        private static readonly Dictionary<string, (long Length, DateTime Time, ulong Hash)> _modelHashes = new Dictionary<string, (long, DateTime, ulong)>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>A model file's content as a number — another export of the model is another input (#449 review); cached while
+        /// the file keeps its size and time. 0 for primitives and files that are not there.</summary>
+        private static ulong ModelHash(string meshPath)
+        {
+            if (string.IsNullOrEmpty(meshPath) || meshPath.StartsWith("Primitive:", StringComparison.OrdinalIgnoreCase)) return 0;
+            string actual = meshPath;
+            int cut = actual.LastIndexOf('#');
+            if (cut > 0) actual = actual.Substring(0, cut);
+            string root = ProjectData.Current?.Path;
+            string abs = Path.IsPathRooted(actual) || root == null ? actual : Path.Combine(root, actual);
+            try
+            {
+                var fi = new FileInfo(abs);
+                if (!fi.Exists) return 0;
+                lock (_modelHashes)
+                    if (_modelHashes.TryGetValue(abs, out var known) && known.Length == fi.Length && known.Time == fi.LastWriteTimeUtc) return known.Hash;
+                byte[] sha;
+                using (var s = File.OpenRead(abs)) sha = System.Security.Cryptography.SHA256.HashData(s);
+                ulong v = BitConverter.ToUInt64(sha, 0);
+                lock (_modelHashes) _modelHashes[abs] = (fi.Length, fi.LastWriteTimeUtc, v);
+                return v;
+            }
+            catch { return 0; }
         }
 
         // ================================================================================================ queries
@@ -503,12 +772,18 @@ namespace Editor.Core.Services.AI
             IsRunning = false;
         }
 
+        /// <summary>The longest crowd update (game seconds), and how many of them one frame may run while fast-forwarding (#425).</summary>
+        internal const float CrowdStep = 0.1f, MaxCrowdSteps = 8f;
+
         /// <summary>One frame: register new / re-activated agents, update the crowd, move the entities.</summary>
         public static void Tick(float dt)
         {
             if (!IsRunning || !Available) return;
             if (dt < 0f) dt = 0f;
-            if (dt > 0.1f) dt = 0.1f;
+            // a hitch counts as one crowd step of game time — more while fast-forwarding (#425: up to MaxCrowdSteps, stepped
+            // below), so the crowd keeps up with the clock to a time scale of about 48 at 60 fps
+            float cap = CrowdStep * Math.Min(MaxCrowdSteps, Math.Max(1f, GameTime.EffectiveScale));
+            if (dt > cap) dt = cap;
             _rescanTimer -= dt;
             if (_rescanTimer <= 0f) { _rescanTimer = 0.5f; Rescan(); }
             if (!IsLoaded) return;
@@ -549,8 +824,12 @@ namespace Editor.Core.Services.AI
                 }
             }
 
-            // 2) the crowd: path requests, corridor following, avoidance
-            VortexAPI.NavCrowdUpdate(dt);
+            // the game is paused (time scale 0, #425): the crowd holds still — nothing to step, nothing to write back
+            if (dt <= 0f) return;
+
+            // 2) the crowd: path requests, corridor following, avoidance — in steps of at most CrowdStep (fast-forward)
+            int sub = Math.Max(1, (int)Math.Ceiling(dt / CrowdStep - 1e-4f));
+            for (int s = 0; s < sub; s++) VortexAPI.NavCrowdUpdate(dt / sub);
 
             // 3) crowd -> entities
             bool moved = false;
@@ -1068,6 +1347,9 @@ namespace Editor.Core.Services.AI
             private readonly HashSet<GameEntity> _contributors = new HashSet<GameEntity>();
             private readonly NavBakeGeometry _out = new NavBakeGeometry();
             private readonly Dictionary<string, float[]> _modelCache = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
+            // whose geometry is being added, and what each entity added — the stale check's records (#449)
+            private GameEntity _owner;
+            private readonly Dictionary<GameEntity, Part> _parts = new Dictionary<GameEntity, Part>(ReferenceEqualityComparer.Instance);
 
             public GeometryBuilder(NavGeometrySource src) { _src = src; }
 
@@ -1075,6 +1357,7 @@ namespace Editor.Core.Services.AI
             {
                 if (e == null || !e.IsActive) return;
                 if (Excluded(e)) return;
+                _owner = e;   // its own geometry comes before its children's
                 var terrain = e.GetComponent<Editor.ECS.Components.Rendering.Terrain>();
                 if (terrain != null && terrain.IsEnabled && terrain.Collision && terrain.Navigation)
                 {
@@ -1088,6 +1371,7 @@ namespace Editor.Core.Services.AI
                         SysMat tworld = SysMat.CreateFromQuaternion(trot) * SysMat.CreateTranslation(tpos);
                         for (int i = 0; i + 8 < raw.Length; i += 9)
                             AddTriangle(tworld, new SysVec(raw[i], raw[i + 1], raw[i + 2]), new SysVec(raw[i + 3], raw[i + 4], raw[i + 5]), new SysVec(raw[i + 6], raw[i + 7], raw[i + 8]));
+                        if (_parts.TryGetValue(e, out var part)) part.Terrain = true;
                         _contributors.Add(e);
                     }
                     if (e.Children != null) foreach (var c in e.Children) Visit(c);
@@ -1111,6 +1395,7 @@ namespace Editor.Core.Services.AI
                     {
                         foreach (var c in cols)
                             AddBox(SysMat.Identity, new SysVec(c.Base.X, c.Base.Y + c.Height * 0.5f, c.Base.Z), new SysVec(c.Radius, c.Height * 0.5f, c.Radius), SysQuat.Identity);
+                        if (_parts.TryGetValue(e, out var part)) part.Foliage = true;
                         _contributors.Add(e);
                     }
                     if (e.Children != null) foreach (var c in e.Children) Visit(c);
@@ -1225,6 +1510,7 @@ namespace Editor.Core.Services.AI
                 }
                 var tris = ModelTriangles(meshPath);
                 if (tris == null || tris.Length < 9) { Note(e, "no triangles for '" + meshPath + "' — skipped"); return false; }
+                Current(world)?.Models.Add(meshPath);
                 for (int i = 0; i + 8 < tris.Length; i += 9)
                 {
                     AddTriangle(world,
@@ -1235,9 +1521,19 @@ namespace Editor.Core.Services.AI
                 return true;
             }
 
+            /// <summary>The record of the entity whose geometry is being added; the first transform applied is its pose.</summary>
+            private Part Current(SysMat world)
+            {
+                if (_owner == null) return null;
+                if (!_parts.TryGetValue(_owner, out var p)) _parts[_owner] = p = new Part();
+                if (!p.Posed) { p.Pose = world; p.Posed = true; }
+                return p;
+            }
+
             private void AddTriangle(SysMat world, SysVec a, SysVec b, SysVec c)
             {
                 var wa = SysVec.Transform(a, world); var wb = SysVec.Transform(b, world); var wc = SysVec.Transform(c, world);
+                Current(world)?.Triangle(wa, wb, wc);
                 bool mirrored = Det3(world) < 0f;   // a mirroring transform flips the winding: keep the walkable side up
                 int i0 = _verts.Count / 3;
                 Push(wa); Push(mirrored ? wc : wb); Push(mirrored ? wb : wc);
@@ -1252,6 +1548,7 @@ namespace Editor.Core.Services.AI
                 var wc = SysVec.Transform(localCenter, world);
                 var half = new SysVec(Math.Max(0.005f, localHalf.X * sc.X), Math.Max(0.005f, localHalf.Y * sc.Y), Math.Max(0.005f, localHalf.Z * sc.Z));
                 var q = SysQuat.Normalize(SysQuat.Concatenate(localRot, rot));
+                Current(world)?.Box(wc, half, q);
                 _boxes.Add(wc.X); _boxes.Add(wc.Y); _boxes.Add(wc.Z);
                 _boxes.Add(half.X); _boxes.Add(half.Y); _boxes.Add(half.Z);
                 _boxes.Add(q.X); _boxes.Add(q.Y); _boxes.Add(q.Z); _boxes.Add(q.W);
@@ -1262,6 +1559,7 @@ namespace Editor.Core.Services.AI
             {
                 var rot = RotationOf(world);
                 var wc = SysVec.Transform(localCenter, world);
+                Current(world)?.Box(wc, new SysVec(Math.Max(0.005f, worldHalf.X), Math.Max(0.005f, worldHalf.Y), Math.Max(0.005f, worldHalf.Z)), rot);
                 _boxes.Add(wc.X); _boxes.Add(wc.Y); _boxes.Add(wc.Z);
                 _boxes.Add(Math.Max(0.005f, worldHalf.X)); _boxes.Add(Math.Max(0.005f, worldHalf.Y)); _boxes.Add(Math.Max(0.005f, worldHalf.Z));
                 _boxes.Add(rot.X); _boxes.Add(rot.Y); _boxes.Add(rot.Z); _boxes.Add(rot.W);
@@ -1305,7 +1603,114 @@ namespace Editor.Core.Services.AI
                 _out.Boxes = _boxes.ToArray();
                 _out.BoxCount = _boxes.Count / 10;
                 _out.EntityCount = _contributors.Count;
+                foreach (var kv in _parts)
+                {
+                    var p = kv.Value;
+                    if (p.Triangles == 0 && p.Boxes == 0) continue;
+                    var o = new NavGeometryOwner { Id = kv.Key.Id, Name = kv.Key.Name, Signature = Signature(kv.Key, p), Triangles = p.Triangles, Boxes = p.Boxes };
+                    p.WriteTo(o);
+                    _out.Owners.Add(o);
+                }
                 return _out;
+            }
+
+            /// <summary>The exact part of an entity's record (#449 review): the stored data its geometry comes from in bulk — the
+            /// content of the model files it used, terrain resolution, heights and holes, foliage trunks. Stored bits, so no float
+            /// noise; whatever the bake computes from them (and from transforms) is in the pose and extent, compared within a
+            /// tolerance — a primitive, a collider's size or a water's depth is in there too.</summary>
+            private static ulong Signature(GameEntity e, Part p)
+            {
+                var h = new Fnv(0);
+                foreach (var m in p.Models) h.Int((long)ModelHash(m));
+                if (p.Terrain && Editor.Core.Services.Terrain.TerrainService.TryGetData(e, out var data, out _) && data != null)
+                {
+                    h.Int(data.Resolution);
+                    if (data.Heights != null) h.Bulk(System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.Heights.AsSpan()));
+                    if (data.HasHoles) h.Bulk(data.Holes);
+                }
+                if (p.Foliage)
+                {
+                    var cols = Editor.Core.Services.Foliage.FoliageService.Collidables(e);
+                    var v = new float[cols.Count * 5];
+                    for (int i = 0; i < cols.Count; i++)
+                    {
+                        v[i * 5] = cols[i].Base.X; v[i * 5 + 1] = cols[i].Base.Y; v[i * 5 + 2] = cols[i].Base.Z;
+                        v[i * 5 + 3] = cols[i].Radius; v[i * 5 + 4] = cols[i].Height;
+                    }
+                    h.Int(cols.Count);
+                    h.Bulk(System.Runtime.InteropServices.MemoryMarshal.AsBytes(v.AsSpan()));
+                }
+                return h.Value;
+            }
+
+            /// <summary>FNV-1a over stored values; a bulk array goes in as its SHA-256.</summary>
+            private struct Fnv
+            {
+                public ulong Value;
+                public Fnv(int _) { Value = 14695981039346656037UL; }
+                private void Byte(byte b) { Value ^= b; Value *= 1099511628211UL; }
+                public void Int(long v) { for (int i = 0; i < 8; i++) Byte((byte)(v >> (8 * i))); }
+                public void Bulk(ReadOnlySpan<byte> b) { Int(b.Length); Int(BitConverter.ToInt64(System.Security.Cryptography.SHA256.HashData(b), 0)); }
+            }
+
+            /// <summary>What one entity added (#449 review): its counts, the transform the bake applied, the world bounds, the sum
+            /// of its triangle and box centres, its area plus volume, and the stored data it was read from.</summary>
+            private sealed class Part
+            {
+                public int Triangles, Boxes;
+                public bool Posed, Terrain, Foliage;
+                public SysMat Pose;
+                public readonly List<string> Models = new List<string>(1);
+                private double _minX = double.MaxValue, _minY = double.MaxValue, _minZ = double.MaxValue;
+                private double _maxX = double.MinValue, _maxY = double.MinValue, _maxZ = double.MinValue;
+                private double _sumX, _sumY, _sumZ, _measure;
+
+                public void Triangle(SysVec a, SysVec b, SysVec c)
+                {
+                    Triangles++;
+                    Include(a.X, a.Y, a.Z); Include(b.X, b.Y, b.Z); Include(c.X, c.Y, c.Z);
+                    _sumX += ((double)a.X + b.X + c.X) / 3.0;
+                    _sumY += ((double)a.Y + b.Y + c.Y) / 3.0;
+                    _sumZ += ((double)a.Z + b.Z + c.Z) / 3.0;
+                    double ux = (double)b.X - a.X, uy = (double)b.Y - a.Y, uz = (double)b.Z - a.Z;
+                    double vx = (double)c.X - a.X, vy = (double)c.Y - a.Y, vz = (double)c.Z - a.Z;
+                    double cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+                    _measure += 0.5 * Math.Sqrt(cx * cx + cy * cy + cz * cz);
+                }
+
+                /// <summary>A solid box: world centre, half extents and rotation.</summary>
+                public void Box(SysVec centre, SysVec half, SysQuat rotation)
+                {
+                    Boxes++;
+                    var m = SysMat.CreateFromQuaternion(rotation);   // row i: where the box's local axis i points
+                    double ex = Math.Abs(m.M11) * half.X + Math.Abs(m.M21) * half.Y + Math.Abs(m.M31) * half.Z;
+                    double ey = Math.Abs(m.M12) * half.X + Math.Abs(m.M22) * half.Y + Math.Abs(m.M32) * half.Z;
+                    double ez = Math.Abs(m.M13) * half.X + Math.Abs(m.M23) * half.Y + Math.Abs(m.M33) * half.Z;
+                    Include(centre.X - ex, centre.Y - ey, centre.Z - ez);
+                    Include(centre.X + ex, centre.Y + ey, centre.Z + ez);
+                    _sumX += centre.X; _sumY += centre.Y; _sumZ += centre.Z;
+                    _measure += 8.0 * half.X * half.Y * half.Z;
+                }
+
+                private void Include(double x, double y, double z)
+                {
+                    if (x < _minX) _minX = x; if (y < _minY) _minY = y; if (z < _minZ) _minZ = z;
+                    if (x > _maxX) _maxX = x; if (y > _maxY) _maxY = y; if (z > _maxZ) _maxZ = z;
+                }
+
+                public void WriteTo(NavGeometryOwner o)
+                {
+                    var m = Pose;
+                    o.Pose[0] = m.M11; o.Pose[1] = m.M12; o.Pose[2] = m.M13;
+                    o.Pose[3] = m.M21; o.Pose[4] = m.M22; o.Pose[5] = m.M23;
+                    o.Pose[6] = m.M31; o.Pose[7] = m.M32; o.Pose[8] = m.M33;
+                    o.Pose[9] = m.M41; o.Pose[10] = m.M42; o.Pose[11] = m.M43;
+                    double n = Math.Max(1, Triangles + Boxes);
+                    o.Extent[0] = (float)_minX; o.Extent[1] = (float)_minY; o.Extent[2] = (float)_minZ;
+                    o.Extent[3] = (float)_maxX; o.Extent[4] = (float)_maxY; o.Extent[5] = (float)_maxZ;
+                    o.Extent[6] = (float)(_sumX / n); o.Extent[7] = (float)(_sumY / n); o.Extent[8] = (float)(_sumZ / n);
+                    o.Extent[9] = (float)_measure;
+                }
             }
 
             private static SysVec ScaleOf(SysMat m)

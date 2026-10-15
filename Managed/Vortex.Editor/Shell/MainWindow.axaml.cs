@@ -728,7 +728,28 @@ namespace VortexEditor.Shell
             var c = new MenuItem { Header = "Game View (without playing)" }; c.Click += (x, y) => PlayModeService.Instance.SetGameView(true);
             var d = new MenuItem { Header = "Release Mode (hide the play banner)", ToggleType = MenuItemToggleType.CheckBox, IsChecked = PlayModeService.Instance.IsReleaseMode }; d.Click += (x, y) => EditorCommands.ToggleReleaseMode();
             m.Items.Add(a); m.Items.Add(b); m.Items.Add(new Separator()); m.Items.Add(c); m.Items.Add(d);
+            m.Items.Add(new Separator()); m.Items.Add(TimeScaleMenu());
             m.ShowAt(PlayMenuButton);
+        }
+
+        /// <summary>Play options ▸ Time Scale (#425): the whole game in the viewport runs slower or faster for testing — on top of
+        /// whatever Time.TimeScale the game sets, which it does not see. For this editor session; the exported game is untouched.</summary>
+        private static MenuItem TimeScaleMenu()
+        {
+            var menu = new MenuItem { Header = "Time Scale (testing)" };
+            foreach (var s in new[] { 0.1f, 0.25f, 0.5f, 1f, 2f, 4f })
+            {
+                float scale = s;
+                var item = new MenuItem
+                {
+                    Header = scale.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "×" + (scale == 1f ? "  (normal)" : ""),
+                    ToggleType = MenuItemToggleType.Radio, GroupName = "timescale",
+                    IsChecked = Math.Abs(Editor.Core.Services.GameTime.EditorScale - scale) < 1e-4f
+                };
+                item.Click += (x, y) => Editor.Core.Services.GameTime.EditorScale = scale;
+                menu.Items.Add(item);
+            }
+            return menu;
         }
         private void OnBuildClick(object s, RoutedEventArgs e) => EditorCommands.Build();
         private void OnGitClick(object s, RoutedEventArgs e) => EditorCommands.GitWindow();
@@ -1032,6 +1053,7 @@ namespace VortexEditor.Shell
                 var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
                 psi.ArgumentList.Add("--project=" + p.Path);
                 if (p.ActiveScene != null) psi.ArgumentList.Add("--scene=" + p.ActiveScene.Name);
+                Editor.Core.Services.Build.PlayerRun.PassNativeLocation(psi.Environment);   // the editor's engine, also in an installed layout
                 Process.Start(psi);
                 // a separate PROCESS: the editor itself is not playing, so it must not switch into its external-window
                 // play state (that disabled script hot-reload in the editor until Stop) (#346)
@@ -1040,11 +1062,21 @@ namespace VortexEditor.Shell
             catch (Exception ex) { EditorCommands.Fail("Could not start the player", ex); }
         }
 
-        private static string FindPlayerExecutable()
+        /// <summary>The engine's own player next to the editor (an app bundle's Resources/Player, a dev build's Vortex.Player bin) —
+        /// the only program Build and Run and run_player (#463) start.</summary>
+        internal static string FindPlayerExecutable()
         {
             string baseDir = AppContext.BaseDirectory;
             string[] names = OperatingSystem.IsWindows() ? new[] { "Vortex.Player.exe" } : new[] { "Vortex.Player" };
-            foreach (var dir in new[] { baseDir, Path.Combine(baseDir, "..", "Resources", "Player"), Path.Combine(baseDir, "player"), Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", "Debug", "net10.0"), Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", "Release", "net10.0") })
+            // a development tree: the player built in the editor's own configuration first — the other one may be days old (#463 review)
+#if DEBUG
+            string mine = "Debug", other = "Release";
+#else
+            string mine = "Release", other = "Debug";
+#endif
+            foreach (var dir in new[] { baseDir, Path.Combine(baseDir, "..", "Resources", "Player"), Path.Combine(baseDir, "player"),
+                                         Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", mine, "net10.0"),
+                                         Path.Combine(baseDir, "..", "..", "..", "..", "Vortex.Player", "bin", other, "net10.0") })
                 foreach (var n in names) { var f = Path.GetFullPath(Path.Combine(dir, n)); if (File.Exists(f)) return f; }
             return null;
         }

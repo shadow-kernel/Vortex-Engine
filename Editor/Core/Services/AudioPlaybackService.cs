@@ -41,6 +41,8 @@ namespace Editor.Core.Services
             /// push must keep multiplying these in or the variation gets stomped.</summary>
             public float RolledVolumeScale = 1f;
             public float RolledPitchScale = 1f;
+            /// <summary>Paused because the game's time stands still (#425, pitch follows the time scale) — resumed when it runs.</summary>
+            public bool TimePaused;
             /// <summary>#465: seconds into the clip the next start begins at (AudioSource.Time set while stopped); -1 = the
             /// beginning. Consumed by the start; Stop() forgets it, as Unity's Stop rewinds.</summary>
             public double StartAt = -1;
@@ -140,6 +142,13 @@ namespace Editor.Core.Services
 
             try
             {
+                // #425: the game's time scale on the sound (off by default) — this tick's pitch factor, and whether its voices
+                // stand still (time scale 0)
+                _timePitch = TimePitch(_pitchFollowsTime, GameTime.EffectiveScale, _minTimePitch, out bool timeStopped);
+                bool timeChanged = _timePitch != _lastTimePitch || timeStopped != _timeStopped;
+                _timeStopped = timeStopped;
+                _lastTimePitch = _timePitch;
+
                 if (_occlusionPending)
                 {
                     _occlusionPending = false;
@@ -178,7 +187,16 @@ namespace Editor.Core.Services
                     if (b.Handle != VortexAudio.InvalidVoice)
                     {
                         PushProperties(b);
+                        // #425: a following voice stands still while the game's time does (a script's Pause() stays its own)
+                        bool hold = _timeStopped && FollowsTimeScale(b.Source.OutputBus);
+                        if (hold != b.TimePaused)
+                        {
+                            b.TimePaused = hold;
+                            if (hold) VortexAudio.PauseVoice(b.Handle);
+                            else if (!b.ScriptPaused) VortexAudio.ResumeVoice(b.Handle);
+                        }
                     }
+                    else b.TimePaused = false;
                     b.FreshStart = false;   // pushed (or not playing): a later fade is no longer part of a start (#404)
                 }
 
@@ -189,6 +207,8 @@ namespace Editor.Core.Services
                     var s = _oneShots[i];
                     if (!VortexAudio.IsVoiceValid(s.Handle)) { _oneShots.RemoveAt(i); continue; }
                     if (s.ReverbMix > 0f) VortexAudio.SetVoiceReverbSend(s.Handle, s.ReverbMix * _zoneWeight);
+                    if (timeChanged && s.Positional) ApplyTimeScale(ref s);   // #425: positional one-shots are sounds of the world
+                    _oneShots[i] = s;
                 }
             }
             catch (Exception ex)
@@ -219,11 +239,12 @@ namespace Editor.Core.Services
             _paused = false;
             foreach (var b in _bindings)
             {
-                if (!b.ScriptPaused) VortexAudio.ResumeVoice(b.Handle); // a script's Pause() survives editor un-pause
+                // a script's Pause() survives editor un-pause, and so does a hold for time scale 0 (#425)
+                if (!b.ScriptPaused && !b.TimePaused) VortexAudio.ResumeVoice(b.Handle);
             }
             VortexAudio.ResumeVoice(_musicCurrent);
             VortexAudio.ResumeVoice(_musicPrevious);
-            foreach (var s in _oneShots) VortexAudio.ResumeVoice(s.Handle);
+            foreach (var s in _oneShots) if (!s.TimePaused) VortexAudio.ResumeVoice(s.Handle);   // a hold for time scale 0 stays (#425)
             // the pause is not a tick: the first tick after it must not count it (#437 review — the beat delivery would
             // expect the next tick that far ahead and deliver the beats up to there early)
             _lastTickSeconds = _tickClock.Elapsed.TotalSeconds;
@@ -253,6 +274,7 @@ namespace Editor.Core.Services
             _musicAdaptive = null;
             foreach (var s in _oneShots) VortexAudio.StopVoice(s.Handle);
             _oneShots.Clear();
+            _timeStopped = false; _timePitch = _lastTimePitch = 1f;   // #425
             _warnedInaudibleFades.Clear();
             _notedScaledZones.Clear();
             _zones.Clear();
@@ -293,6 +315,50 @@ namespace Editor.Core.Services
                 for (int i = before; i < _bindings.Count; i++) _bindings[i].WantsPlay = _bindings[i].Source.PlayOnAwake;
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] AddEntity failed: " + ex.Message); }
+        }
+
+        /// <summary>#421: a component added to a running entity — an Audio Source gets its binding (Play On Awake starts it on
+        /// the next tick, a script's Play() at once), a Reverb Zone joins the zones, an Audio Listener the ears. Nothing for one
+        /// the service knows already (the entity's first Audio Source is the one that plays).</summary>
+        public void AddComponent(GameEntity e, ECS.Component c)
+        {
+            if (!_active || e == null || c == null) return;
+            try
+            {
+                if (c is AudioSource src && !_bindings.Exists(b => ReferenceEquals(b.Source, src)) && ReferenceEquals(e.GetComponent<AudioSource>(), src))
+                {
+                    var b = new SourceBinding { Source = src, Entity = e };
+                    SnapshotBinding(b);
+                    b.WantsPlay = src.PlayOnAwake;
+                    _bindings.Add(b);
+                }
+                else if (c is ReverbZone zone && !_zones.Exists(z => ReferenceEquals(z.Zone, zone))) _zones.Add(new ZoneBinding { Zone = zone, Entity = e });
+                else if (c is AudioListener && !_listeners.Contains(e)) _listeners.Add(e);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] AddComponent failed: " + ex.Message); }
+        }
+
+        /// <summary>#421: a component taken off a running entity — an Audio Source's voice stops and its binding goes, a Reverb
+        /// Zone or an Audio Listener leaves.</summary>
+        public void RemoveComponent(GameEntity e, ECS.Component c)
+        {
+            if (c == null) return;
+            try
+            {
+                if (c is AudioSource src)
+                {
+                    for (int i = _bindings.Count - 1; i >= 0; i--)
+                    {
+                        if (!ReferenceEquals(_bindings[i].Source, src)) continue;
+                        VortexAudio.StopVoice(_bindings[i].Handle);
+                        RestoreBinding(_bindings[i]);
+                        _bindings.RemoveAt(i);
+                    }
+                }
+                else if (c is ReverbZone zone) _zones.RemoveAll(z => ReferenceEquals(z.Zone, zone));
+                else if (c is AudioListener && e != null && e.GetComponent<AudioListener>() == null) _listeners.Remove(e);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Audio] RemoveComponent failed: " + ex.Message); }
         }
 
         /// <summary>An entity that left the running game (Scene.Destroy): its sounds stop and its sources and zones
@@ -404,7 +470,7 @@ namespace Editor.Core.Services
             var b = FindBinding(source);
             if (b == null) return;
             b.ScriptPaused = false;
-            if (!_paused) VortexAudio.ResumeVoice(b.Handle);
+            if (!_paused && !b.TimePaused) VortexAudio.ResumeVoice(b.Handle);   // held for time scale 0 (#425): the tick resumes it
         }
 
         /// <summary>Diagnostics (smoke checks): the running game manages this source and means to play it.</summary>
@@ -627,8 +693,55 @@ namespace Editor.Core.Services
         }
 
         /// <summary>An in-flight one-shot: its voice and its own reverb mix (#496) — the per-frame send is that mix x the
-        /// listener's zone weight, exactly like a component voice's ReverbZoneMix.</summary>
-        private struct OneShot { public ulong Handle; public float ReverbMix; }
+        /// listener's zone weight, exactly like a component voice's ReverbZoneMix. A positional one follows the time scale when
+        /// that is on (#425): its own pitch × the factor, held while time stands still.</summary>
+        private struct OneShot { public ulong Handle; public float ReverbMix; public float BasePitch; public bool Positional; public bool TimePaused; }
+
+        // ---- the game's time scale on the sound (#425) ----
+        private bool _pitchFollowsTime;
+        private float _minTimePitch = DefaultMinTimeScalePitch;
+        private float _timePitch = 1f, _lastTimePitch = 1f;   // this tick's factor / the one last pushed to the one-shots
+        private bool _timeStopped;                            // time scale 0 with the option on: following voices hold
+
+        /// <summary>The lowest pitch factor slow motion gives a sound unless a script picks another (#425).</summary>
+        public const float DefaultMinTimeScalePitch = 0.5f;
+
+        /// <summary>True while sounds follow the game's time scale (Audio.SetPitchFollowsTimeScale, #425). Off by default.</summary>
+        public bool PitchFollowsTimeScale => _pitchFollowsTime;
+        /// <summary>The lowest pitch factor slow motion gives a following sound.</summary>
+        public float MinTimeScalePitch => _minTimePitch;
+
+        /// <summary>#425: on, the pitch of every Audio Source outside the Music and UI buses and of every positional one-shot is
+        /// multiplied by the time scale (never below <paramref name="minPitch"/>, at most 4), and at time scale 0 those voices
+        /// hold until time runs again. Off (the default), sounds ignore the time scale. Applies from the next tick.</summary>
+        public void SetPitchFollowsTimeScale(bool on, float minPitch = DefaultMinTimeScalePitch)
+        {
+            _pitchFollowsTime = on;
+            _minTimePitch = float.IsNaN(minPitch) ? DefaultMinTimeScalePitch : Math.Max(0.05f, Math.Min(1f, minPitch));
+        }
+
+        /// <summary>The pitch factor of a following voice for a time scale (#425) — 1 when the option is off — and whether such a
+        /// voice holds (the option on and time standing still). Pure: the audio tests use it.</summary>
+        internal static float TimePitch(bool on, float timeScale, float minPitch, out bool stopped)
+        {
+            stopped = on && !(timeScale > 0f);
+            if (!on || float.IsNaN(timeScale)) return 1f;
+            return Math.Min(4f, Math.Max(minPitch, timeScale));
+        }
+
+        /// <summary>Does a voice on this mixer bus follow the time scale? Every bus but Music and UI (#425).</summary>
+        internal static bool FollowsTimeScale(int bus) => bus != VortexAudio.BusMusic && bus != VortexAudio.BusUi;
+
+        /// <summary>A positional one-shot takes this tick's time-scale pitch and hold (#425).</summary>
+        private void ApplyTimeScale(ref OneShot s)
+        {
+            VortexAudio.SetVoicePitch(s.Handle, s.BasePitch * _timePitch);
+            if (_timeStopped != s.TimePaused)
+            {
+                s.TimePaused = _timeStopped;
+                if (_timeStopped) VortexAudio.PauseVoice(s.Handle); else VortexAudio.ResumeVoice(s.Handle);
+            }
+        }
 
         /// <summary>In-flight one-shots: tracked so Pause/Stop/scene switches silence them with everything else and
         /// their reverb send follows the listener, pruned as they finish. Scripts still never see a handle.</summary>
@@ -643,7 +756,7 @@ namespace Editor.Core.Services
         /// auto-returns to the pool when finished; no handle leaks to scripts.</summary>
         public void PlayOneShot(string clip, float x, float y, float z, float volume, float pitch, float reverbMix = DefaultOneShotReverbMix)
         {
-            var h = StartOneShot(clip, volume, pitch, reverbMix);
+            var h = StartOneShot(clip, volume, pitch, reverbMix, positional: true);
             if (h != VortexAudio.InvalidVoice)
             {
                 VortexAudio.SetVoiceSpatial(h, 1f, 1f, 500f, 0, 1f, 0f);
@@ -653,7 +766,7 @@ namespace Editor.Core.Services
 
         public void PlayOneShot2D(string clip, float volume, float pitch, float reverbMix = DefaultOneShot2DReverbMix)
         {
-            StartOneShot(clip, volume, pitch, reverbMix);
+            StartOneShot(clip, volume, pitch, reverbMix, positional: false);
         }
 
         /// <summary>Diagnostics (smoke checks): the live one-shots' voices with their reverb mix, and the listener's
@@ -667,7 +780,7 @@ namespace Editor.Core.Services
 
         internal float ListenerZoneWeight => _zoneWeight;
 
-        private ulong StartOneShot(string clip, float volume, float pitch, float reverbMix)
+        private ulong StartOneShot(string clip, float volume, float pitch, float reverbMix, bool positional)
         {
             if (!_active || string.IsNullOrEmpty(clip) || _failedPaths.Contains(clip))
                 return VortexAudio.InvalidVoice;
@@ -695,8 +808,15 @@ namespace Editor.Core.Services
             }
             // The send starts with the voice: a shot or a step is often over before the next tick could set it (#496).
             float mix = reverbMix > 0f ? Math.Min(1f, reverbMix) : 0f;   // NaN -> dry
-            var h = VortexAudio.PlayVoice(path, volume, pitch, 0f, false, 128, reverbSend: mix * _zoneWeight);
-            if (h != VortexAudio.InvalidVoice) _oneShots.Add(new OneShot { Handle = h, ReverbMix = mix });
+            // a positional one-shot is a sound of the world: it starts at the time scale's pitch, held while time stands still (#425)
+            float timePitch = positional ? _timePitch : 1f;
+            var h = VortexAudio.PlayVoice(path, volume, pitch * timePitch, 0f, false, 128, reverbSend: mix * _zoneWeight);
+            if (h != VortexAudio.InvalidVoice)
+            {
+                var s = new OneShot { Handle = h, ReverbMix = mix, BasePitch = pitch, Positional = positional };
+                if (positional && _timeStopped) { VortexAudio.PauseVoice(h); s.TimePaused = true; }
+                _oneShots.Add(s);
+            }
             return h;
         }
 
@@ -1047,7 +1167,8 @@ namespace Editor.Core.Services
         {
             var s = b.Source;
             VortexAudio.SetVoiceVolume(b.Handle, (s.Mute ? 0f : s.Volume) * b.RolledVolumeScale);
-            VortexAudio.SetVoicePitch(b.Handle, s.Pitch * b.RolledPitchScale);
+            // × the time scale's factor when sounds follow it (#425; 1 otherwise) — never on the Music and UI buses
+            VortexAudio.SetVoicePitch(b.Handle, s.Pitch * b.RolledPitchScale * (FollowsTimeScale(s.OutputBus) ? _timePitch : 1f));
             VortexAudio.SetVoicePan(b.Handle, s.StereoPan);
             VortexAudio.SetVoiceSpatial(b.Handle, s.SpatialBlend, s.MinDistance, s.MaxDistance,
                 (int)s.RolloffMode, s.DopplerLevel, s.Spread);

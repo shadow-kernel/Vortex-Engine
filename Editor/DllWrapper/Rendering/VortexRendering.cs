@@ -280,8 +280,16 @@ namespace Editor.DllWrapper
         // Vertical FOV (degrees) of the live view camera — set from the game's FOV setting.
         public static void SetViewFOV(float fovDegrees)
         {
+            if (fovDegrees > 0f && fovDegrees < 180f) _viewFov = fovDegrees;
             SetViewFieldOfView(fovDegrees);
         }
+
+        private static volatile float _viewFov = float.NaN;
+
+        /// <summary>The vertical field of view (degrees) the live view last got through <see cref="SetViewFOV"/> — the main
+        /// camera's, or a script's zoom (Camera.SetFieldOfView); NaN before the first call. The animators' level of detail
+        /// scales its far distances by it (#361: through a scope, a far character is as big as a near one).</summary>
+        public static float ViewFov => _viewFov;
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void SetViewClipPlanes(float nearClip, float farClip);
@@ -423,6 +431,69 @@ namespace Editor.DllWrapper
             try { EndStaticScene(); } catch { }
         }
 
+        /// <summary>One change of a retained render instance (#361) — the layout of instancing::InstanceOp in
+        /// Engine/Graphics/Instancing/RenderQueue.h, 112 bytes.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public unsafe struct RenderInstanceOp
+        {
+            public int Handle;        // the scene's id of the instance: small, dense, reused after a remove
+            public int Kind;          // InstanceSet / InstanceMove / InstanceRemove
+            public long Mesh;
+            public long Material;
+            public int Layer;         // 0 world, 1 first-person viewmodel (#175)
+            public int Reserved;
+            public fixed float World[16];   // row-major, row 3 = translation
+            public fixed float Color[4];    // the per-instance tint (#331)
+
+            public float WorldAt(int i) => World[i];
+            public float ColorAt(int i) => Color[i];
+        }
+
+        /// <summary>Create or replace an instance (mesh, material, layer, matrix, tint).</summary>
+        public const int InstanceSet = 0;
+        /// <summary>Matrix and tint only: the instance keeps its draw run.</summary>
+        public const int InstanceMove = 1;
+        public const int InstanceRemove = 2;
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ApplyRenderInstances")]
+        private static extern unsafe uint ApplyRenderInstancesNative(RenderInstanceOp* ops, int count);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "RenderInstancesEpoch")]
+        private static extern uint RenderInstancesEpochNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ClearRenderInstances")]
+        private static extern void ClearRenderInstancesNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "MarkFrameSubmit")]
+        private static extern void MarkFrameSubmitNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetRenderInstancesVisible")]
+        private static extern void SetRenderInstancesVisibleNative([MarshalAs(UnmanagedType.I1)] bool visible);
+
+        /// <summary>Retained instances (#361): the scene's persistent rigid meshes, changed by handle in one call per frame —
+        /// a moved instance is updated in place, the renderer re-sorts only when the set of (mesh, material, layer) changes.
+        /// <paramref name="epoch"/> counts up whenever the renderer dropped every instance (scene switch, a mesh they drew was
+        /// destroyed): the scene then sends them all again. False with an engine library older than the retained instances.</summary>
+        public static unsafe bool TryApplyRenderInstances(RenderInstanceOp[] ops, int count, out uint epoch)
+        {
+            epoch = 0;
+            try
+            {
+                // by pointer: the array grows to the largest batch (a whole scene) and must never be marshalled per call
+                if (ops == null || count <= 0) { epoch = RenderInstancesEpochNative(); return true; }
+                fixed (RenderInstanceOp* p = ops) epoch = ApplyRenderInstancesNative(p, System.Math.Min(count, ops.Length));
+                return true;
+            }
+            catch (System.EntryPointNotFoundException) { return false; }
+            catch (System.DllNotFoundException) { return false; }
+        }
+
+        /// <summary>Drop every retained instance (the scene's renderables were cleared).</summary>
+        public static void ClearRenderInstances() { try { ClearRenderInstancesNative(); } catch { } }
+
+        /// <summary>The frame's own submits (skinned characters, terrain, foliage, water …) replace the last frame's at the next
+        /// swap even when this frame submitted none — called by every scene submit.</summary>
+        public static void MarkFrameSubmit() { try { MarkFrameSubmitNative(); } catch { } }
+
+        /// <summary>Previews render their own items only: hidden, the retained instances stay out of the render queue.</summary>
+        public static void SetRenderInstancesVisible(bool visible) { try { SetRenderInstancesVisibleNative(visible); } catch { } }
+
         #endregion
 
         #region Grid & Gizmos Visibility
@@ -536,6 +607,20 @@ namespace Editor.DllWrapper
         public static int InstancesTested { get { try { return GetInstancesTested(); } catch { return 0; } } }
         /// <summary>Instances that survived culling and were drawn this frame.</summary>
         public static int InstancesDrawn { get { try { return GetInstancesDrawn(); } catch { return 0; } } }
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetRenderCpuStats")]
+        private static extern int GetRenderCpuStatsNative(float[] values, int count);
+
+        /// <summary>What the scene queue cost the CPU in the last frame (#361): [0] swap ms, [1] sort + draw-run build ms,
+        /// [2] cull + instance pack ms (all views), [3] shadow caster ms, [4] items sorted, [5] items in the render queue,
+        /// [6] the frame's index (counts up). False with an older engine library.</summary>
+        public static bool TryGetRenderCpuStats(float[] values)
+        {
+            if (values == null || values.Length == 0) return false;
+            try { return GetRenderCpuStatsNative(values, values.Length) > 0; }
+            catch (System.EntryPointNotFoundException) { return false; }
+            catch (System.DllNotFoundException) { return false; }
+        }
         /// <summary>Generic render-distance cull in world units (0 = disabled). From the game's graphics settings.</summary>
         public static void RenderDistance(float distance) { try { SetRenderDistance(distance); } catch { } }
         /// <summary>Density LOD: thin distant instances (1/2 beyond mid, 1/4 beyond far world units).</summary>
@@ -991,6 +1076,29 @@ namespace Editor.DllWrapper
             try { ClearLights(); } catch { }
         }
 
+        /// <summary>The sun as the renderer last got it (<see cref="SetDirectionalLightParams"/> — the scene's Directional Light,
+        /// the default sun, a script's): direction the light travels, intensity, its shadows. The animators' level of detail
+        /// keeps a character posed whose shadow may fall into the view (#361). Immutable; replaced when a value changes.</summary>
+        public sealed class SunLight
+        {
+            public readonly float DirX, DirY, DirZ, Intensity, ShadowStrength, ShadowDistance;
+            public readonly bool CastShadows;
+
+            public SunLight(float dirX, float dirY, float dirZ, float intensity, bool castShadows, float shadowStrength, float shadowDistance)
+            {
+                DirX = dirX; DirY = dirY; DirZ = dirZ; Intensity = intensity;
+                CastShadows = castShadows; ShadowStrength = shadowStrength; ShadowDistance = shadowDistance;
+            }
+
+            /// <summary>Does it throw shadows anyone can see: on, lit and dark enough, reaching somewhere.</summary>
+            public bool ShadowsVisible => CastShadows && Intensity > 0f && ShadowStrength > 0f && ShadowDistance > 0f;
+        }
+
+        private static volatile SunLight _sun;
+
+        /// <summary>The sun as last set — null before the first <see cref="SetDirectionalLightParams"/>.</summary>
+        public static SunLight LastSun => _sun;
+
         /// <summary>
         /// Set the primary directional light (sun light). Shadow params (#24): castShadows renders
         /// cascaded shadow maps for the sun — 3 stabilized ortho cascades out to shadowDistance world
@@ -1003,6 +1111,10 @@ namespace Editor.DllWrapper
             bool castShadows = false, float shadowStrength = 1.0f,
             float shadowBias = 0.0008f, float shadowDistance = 80.0f)
         {
+            var last = _sun;
+            if (last == null || last.DirX != dirX || last.DirY != dirY || last.DirZ != dirZ || last.Intensity != intensity
+                || last.CastShadows != castShadows || last.ShadowStrength != shadowStrength || last.ShadowDistance != shadowDistance)
+                _sun = new SunLight(dirX, dirY, dirZ, intensity, castShadows, shadowStrength, shadowDistance);
             try
             {
                 SetDirectionalLight(dirX, dirY, dirZ, colorR, colorG, colorB, intensity,
@@ -1300,6 +1412,27 @@ namespace Editor.DllWrapper
         {
             try { SetSkyboxTextureHdr(textureId, exposure, rotationDegrees, hdrMode); }
             catch (System.EntryPointNotFoundException) { ApplySkyboxTexture(textureId, exposure, rotationDegrees); }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetSkyboxBlendLayer")]
+        private static extern void SetSkyboxBlendLayerNative(int index, long textureId, float exposure, float rotationDegrees, int hdr, float amount);
+
+        /// <summary>The sky cross-fade (#464): picture <paramref name="index"/> (0 / 1) blended over the sky by <paramref name="amount"/>
+        /// (0 = off: the sky pass does not sample it); exposure, yaw in degrees and HDR mode as for the sky's own picture.</summary>
+        public static void ApplySkyboxBlendLayer(int index, long textureId, float exposure, float rotationDegrees, int hdr, float amount)
+        {
+            try { SetSkyboxBlendLayerNative(index, textureId, exposure, rotationDegrees, hdr, amount); } catch { }
+        }
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetSkySun")]
+        private static extern void SetSkySunNative(int mode, float sizeDegrees, float intensity, float glow);
+
+        /// <summary>The sun's disc in the sky (#499) at the scene's directional light: mode 0 = auto (a gradient sky and an 8-bit
+        /// picture draw it, a float .hdr picture — it carries its own sun — and a solid colour do not), 1 = always, 2 = never;
+        /// the angular diameter in degrees, the disc's intensity and its glow.</summary>
+        public static void ApplySkySun(int mode, float sizeDegrees, float intensity, float glow)
+        {
+            try { SetSkySunNative(mode, sizeDegrees, intensity, glow); } catch { }
         }
 
         private static bool _skyboxEnabled = false;

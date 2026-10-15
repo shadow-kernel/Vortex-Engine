@@ -43,6 +43,14 @@ namespace Vortex.Player
         private static Editor.Core.Data.Scene _sceneToStart;   // the scripts start in the first tick, once the window exists
 
         private static int _gc0Last, _gc2Last;   // GC counts at the last FPS line
+        // per-frame sums over the FPS line's window (#361): scene submit (all / meshes), the renderer's queue CPU time,
+        // and the bytes the main thread allocated per frame
+        private static double _sumSubmitAll, _sumSubmitMesh, _maxSubmitAll, _sumSwap, _sumSort, _sumCull, _sumShadow;
+        private static long _sumSubmitAlloc, _allocLast = -1, _sumFrameAlloc;
+        private static int _statFrames;
+        private static readonly float[] _cpu = new float[6];
+        private static StreamWriter _frameTimes;   // --frame-times (#463): each frame's duration in ms, one per line
+        private static long _lastTickStamp;
 
         public static int Run(PlayerOptions options)
         {
@@ -51,7 +59,18 @@ namespace Vortex.Player
             _logPath = Path.Combine(Path.GetTempPath(), "vortex_player.log");
             try { File.Delete(_logPath); } catch { }
             Console.WriteLine("log: " + _logPath);
+            if (options.ParentPid > 0) WatchParent(options.ParentPid);
+            // the game's own arguments reach the scripts (#463) — before anything can read them
+            Vortex.Application.SetArgs(options.Args);
+            if (options.Args.Count > 0)
+            {
+                var shown = new System.Collections.Generic.List<string>();
+                foreach (var kv in options.Args) shown.Add(kv.Key + "=" + kv.Value);
+                Log("args: " + string.Join(", ", shown));
+            }
 
+            // the player saves no scene: no need to note what each scene file holds as it is read (the editor's unsaved state)
+            Editor.Core.Data.Scene.TrackFileContent = false;
             // Native engine + host input wiring before the first engine call.
             NativeLoader.Register();
             if (!string.IsNullOrEmpty(options.InputScriptPath))
@@ -60,6 +79,7 @@ namespace Vortex.Player
                 string capDir = options.CaptureDir ?? (!string.IsNullOrEmpty(options.CapturePath) ? Path.GetDirectoryName(Path.GetFullPath(options.CapturePath)) : Path.GetTempPath());
                 Directory.CreateDirectory(capDir);
                 _captureDir = capDir;
+                _plainCaptures = options.CaptureDir != null;   // run_player's own folder: plain file names only (#463 review)
                 // the editor's send_input plays the same commands (#457): one parser, one simulated input layer
                 var problems = new System.Collections.Generic.List<string>();
                 var warnings = new System.Collections.Generic.List<string>();
@@ -199,8 +219,15 @@ namespace Vortex.Player
             }
             _fullscreenApplied = !(shipped && settings != null && settings.FullscreenByDefault);
             if (shipped && settings != null) { try { VortexAPI.SetVSyncEnabled(settings.VSync); } catch { } }
+            if (!string.IsNullOrEmpty(options.FrameTimesPath))
+            {
+                try { _frameTimes = new StreamWriter(options.FrameTimesPath, false); }
+                catch (Exception fx) { Log("frame times: " + fx.Message); }
+            }
             bool ok = VortexAPI.RunGameHost(winW, winH, title);   // blocks until the window closes
             PlayModeService.Instance.NativeGameHostRunning = false;
+            try { _frameTimes?.Dispose(); } catch { }
+            _frameTimes = null;
             Log("game host returned " + ok);
 
             // --dump-scene: a second dump with the FINAL transforms (physics-moved props, script-moved entities)
@@ -218,10 +245,51 @@ namespace Vortex.Player
             return ok ? 0 : 3;
         }
 
+        private static volatile bool _parentGone;
+        private static bool _parentExit;
+
+        /// <summary>--parent-pid (#463 review): the run closes itself when the process that started it is gone — run_player's
+        /// editor, killed or crashed — so no player outlives it. A game loop that does not close within 5 s is ended.</summary>
+        private static void WatchParent(int pid)
+        {
+            DateTime? started = null;
+            try { using var p = System.Diagnostics.Process.GetProcessById(pid); started = p.StartTime; } catch { }
+            var watch = new System.Threading.Thread(() =>
+            {
+                while (true)
+                {
+                    System.Threading.Thread.Sleep(500);
+                    bool alive;
+                    // there and the same process (a reused id has another start time)
+                    try { using var p = System.Diagnostics.Process.GetProcessById(pid); alive = started == null || p.StartTime == started; }
+                    catch { alive = false; }
+                    if (alive) continue;
+                    _parentGone = true;
+                    System.Threading.Thread.Sleep(5000);
+                    Environment.Exit(4);
+                }
+            }) { IsBackground = true, Name = "Vortex parent watch" };
+            watch.Start();
+        }
+
         private static void Tick(float dt)
         {
             try
             {
+                if (_parentGone && !_parentExit)
+                {
+                    _parentExit = true;
+                    Log("the editor that started this run is gone — closing");
+                    VortexAPI.RequestGameHostExit();
+                }
+                if (_frameTimes != null)
+                {
+                    // the time between two ticks, unclamped (the host clamps dt at 100 ms, which would hide a hitch)
+                    long stamp = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (_lastTickStamp != 0)
+                        _frameTimes.WriteLine(((stamp - _lastTickStamp) * 1000.0 / System.Diagnostics.Stopwatch.Frequency).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    _lastTickStamp = stamp;
+                }
                 var sr = ScriptRuntime.Instance;
                 if (!_init)
                 {
@@ -326,7 +394,9 @@ namespace Vortex.Player
 
                 // the window's client size and mouse are in points (SDL) / client units (Win32) — the UI's point space, as in
                 // the editor's play view; the pixel density turns them into pixels (UI.Scale, #454)
-                sr.SetUIFrame(cw, ch, mx, my, down, pressed, VortexAPI.GameHostPixelDensity());
+                float density = VortexAPI.GameHostPixelDensity();
+                sr.SetUIFrame(cw, ch, mx, my, down, pressed, density);
+                sr.SetScreenPixels((int)Math.Round(cw * density), (int)Math.Round(ch * density));   // the window's drawable (#462)
                 VortexAPI.UIBegin(cw, ch);
                 if (_sceneToStart != null)
                 {
@@ -342,18 +412,28 @@ namespace Vortex.Player
                 {
                     var p = ProjectData.Current;
                     int gc0 = GC.CollectionCount(0), gc2 = GC.CollectionCount(2);
+                    var ci = System.Globalization.CultureInfo.InvariantCulture;
+                    double n = Math.Max(1, _statFrames);
                     Log("FPS=" + _frames / 2 + " scene=" + (p != null && p.ActiveScene != null ? p.ActiveScene.Name : "?")
-                        + " draws=" + VortexAPI.DrawCalls + " drawn=" + VortexAPI.InstancesDrawn + "/" + VortexAPI.InstancesTested
-                        // where the CPU time goes (#364 E): the last scene submit, and how often the GC ran since the last line
-                        + " submit=" + SceneRenderService.LastSubmitMs.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "ms/" + SceneRenderService.LastSubmitMeshes
+                        + " draws=" + VortexAPI.DrawCalls + " main=" + (VortexAPI.DrawCalls - VortexAPI.DrawCallsShadow - VortexAPI.DrawCallsPost)
+                        + " drawn=" + VortexAPI.InstancesDrawn + "/" + VortexAPI.InstancesTested
+                        // where the CPU time goes (#364 E, #361): the scene submit per frame (all phases / the meshes, averaged over
+                        // the line's frames, and the worst), the renderer's queue (swap, sort, cull + pack, shadow casters) and the
+                        // bytes allocated per frame (by the submit / by the whole main thread), and how often the GC ran
+                        + " submit=" + (_sumSubmitAll / n).ToString("0.00", ci) + "ms(max " + _maxSubmitAll.ToString("0.0", ci) + ") meshes=" + (_sumSubmitMesh / n).ToString("0.00", ci) + "ms/" + SceneRenderService.LastSubmitMeshes
+                        + " native: swap=" + (_sumSwap / n).ToString("0.00", ci) + " sort=" + (_sumSort / n).ToString("0.00", ci)
+                        + " cull=" + (_sumCull / n).ToString("0.00", ci) + " shadow=" + (_sumShadow / n).ToString("0.00", ci) + "ms"
+                        + " alloc=" + (_sumSubmitAlloc / n / 1024.0).ToString("0.0", ci) + "KB/" + (_sumFrameAlloc / n / 1024.0).ToString("0.0", ci) + "KB"
                         + " gc=" + (gc0 - _gc0Last) + "/" + (gc2 - _gc2Last));
                     _gc0Last = gc0; _gc2Last = gc2;
                     _frames = 0; _fpsT0 = now;
+                    _sumSubmitAll = _sumSubmitMesh = _maxSubmitAll = _sumSwap = _sumSort = _sumCull = _sumShadow = 0; _sumSubmitAlloc = _sumFrameAlloc = 0; _statFrames = 0;
+                    try { _frameTimes?.Flush(); } catch { }   // a run killed later keeps what was measured
                 }
 
                 if (playing)
                 {
-                    VortexAPI.StepEngineRuntime(dt);
+                    VortexAPI.StepEngineRuntime(dt, Editor.Core.Services.GameTime.EffectiveScale);   // the fallback physics on game time (#425)
                     sr.Update(dt);
                     GameRuntime.ProcessPendingSceneSwitch();
                     AudioPlaybackService.Instance.Tick();
@@ -380,15 +460,42 @@ namespace Vortex.Player
                     WorldService.ClearDirty();
                     SceneRenderService.RuntimeDirty = false;
                     _submittedScene = scene;
+                    _sumSubmitAll += SceneRenderService.LastSceneSubmitMs; _sumSubmitMesh += SceneRenderService.LastSubmitMs;
+                    _maxSubmitAll = Math.Max(_maxSubmitAll, SceneRenderService.LastSceneSubmitMs);
+                    _sumSubmitAlloc += SceneRenderService.LastSceneSubmitAllocBytes;
                 }
+                // the renderer's queue time of the frame rendered last, and this thread's allocations since the last tick
+                if (VortexAPI.TryGetRenderCpuStats(_cpu)) { _sumSwap += _cpu[0]; _sumSort += _cpu[1]; _sumCull += _cpu[2]; _sumShadow += _cpu[3]; }
+                long alloc = GC.GetAllocatedBytesForCurrentThread();
+                if (_allocLast >= 0) _sumFrameAlloc += alloc - _allocLast;
+                _allocLast = alloc;
+                _statFrames++;
             }
             catch (Exception ex) { Log("[Tick] " + ex); }
         }
 
-        /// <summary>A <c>capture</c> command of the --input file: a frame into the capture directory.</summary>
+        /// <summary>At most this many captures in a run given its capture folder (#463 review).</summary>
+        private const int MaxScriptCaptures = 200;
+        private static bool _plainCaptures;
+        private static int _captures;
+
+        /// <summary>A <c>capture</c> command of the --input file: a frame into the capture directory. A run given its capture
+        /// folder (--capture-dir, as run_player starts it) takes plain file names only — no folder, no rooted path, no ".." — and
+        /// at most <see cref="MaxScriptCaptures"/>, so a script writes nowhere else and cannot fill the disk (#463 review).</summary>
         private static void CaptureTo(string file)
         {
-            string path = Path.IsPathRooted(file) ? file : Path.Combine(_captureDir ?? Path.GetTempPath(), file);
+            string path;
+            if (_plainCaptures)
+            {
+                if (!Editor.Core.Services.Build.PlayerRun.IsPlainFileName(file)) { Console.Error.WriteLine("[WARN] capture refused: '" + file + "' is no plain file name"); return; }
+                if (++_captures > MaxScriptCaptures)
+                {
+                    if (_captures == MaxScriptCaptures + 1) Console.Error.WriteLine("[WARN] capture refused: more than " + MaxScriptCaptures + " captures");
+                    return;
+                }
+                path = Path.Combine(_captureDir, file);
+            }
+            else path = Path.IsPathRooted(file) ? file : Path.Combine(_captureDir ?? Path.GetTempPath(), file);
             VortexAPI.CaptureFrame(path);
             Log("capture -> " + path);
         }

@@ -17,6 +17,7 @@
 #include "../Decals/Decals.h"
 #include "../Skinning/BonePalettes.h"   // the palette stage + per-view budget shared with the SDL GPU backend (#415)
 #include "../Lighting/LightSelection.h"  // the light budget shared with the SDL GPU backend (#416)
+#include "../Instancing/RenderQueue.h"     // the scene queue's CPU stats, shared with the SDL GPU backend (#361)
 #include "DX12UpscalePipeline.h"
 #include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
@@ -24,7 +25,7 @@
 #include "DX12RenderTarget.h"
 #include "DX12Streamline.h"   // DLSS SR + Frame Generation (inline set_fg_mode/fg_presented_fps below)
 #include "DX12Geometry.h"
-#include "CullWorkerPool.h"
+#include "../Instancing/CullWorkerPool.h"   // shared with the SDL GPU backend (#361)
 #include "UIOverlay.h"
 #include "../Resources/Mesh.h"
 #include <d3d12.h>
@@ -173,6 +174,17 @@ namespace vortex::graphics::dx12
 		void clear_render_queue();
 		void begin_static_scene();
 		void end_static_scene();
+		// Retained instances (#361): the scene's persistent rigid meshes, changed by handle — see Instancing/RenderQueue.h.
+		void apply_instance_ops(const instancing::InstanceOp* ops, u32 count);
+		// Counts up whenever the renderer dropped them all (scene switch, a mesh they drew was destroyed): the scene sends
+		// its instances again when it sees a new value.
+		u32 instance_epoch();
+		void clear_instances();
+		// The next swap replaces the frame's own submits even when this frame submitted none (the scene has nothing that is
+		// submitted per frame any more).
+		void mark_frame_submit();
+		// Previews draw their own items only: hidden, the retained instances stay out of the render queue.
+		void set_instances_visible(bool visible);
 
 		// Camera
 		void set_camera(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT3& target, const DirectX::XMFLOAT3& up);
@@ -362,6 +374,23 @@ namespace vortex::graphics::dx12
 		void set_skybox_solid_color(const DirectX::XMFLOAT3& color);
 		void set_sky_light(const float* sh27, bool on) { if (sh27) memcpy(m_sky_sh, sh27, sizeof(m_sky_sh)); m_sky_sh_on = on && sh27 != nullptr; }
 		void set_skybox_sun(const DirectX::XMFLOAT3& direction, const DirectX::XMFLOAT3& color, float intensity);
+		// The sky cross-fade (#464): pictures blended over the sky — see SdlGpuRenderer::set_skybox_blend_layer.
+		void set_skybox_blend_layer(int index, id::id_type texture, float exposure, float rotation_radians, int hdr, float amount)
+		{
+			if (index < 0 || index > 1) return;
+			SkyBlendLayer& l = m_sky_blend[index];
+			l.texture = texture; l.exposure = exposure; l.rotation = rotation_radians; l.hdr = hdr < 0 ? 0 : (hdr > 2 ? 2 : hdr);
+			l.amount = amount > 0.0f ? (amount < 1.0f ? amount : 1.0f) : 0.0f;
+		}
+		// The sun's disc in the sky (#499) at the scene's directional light — see SdlGpuRenderer::set_sky_sun.
+		void set_sky_sun(int mode, float size_degrees, float intensity, float glow)
+		{
+			m_sky_sun_mode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
+			const float d = size_degrees > 0.01f ? (size_degrees < 60.0f ? size_degrees : 60.0f) : 0.01f;
+			m_sky_sun_radius = d * 0.5f * 0.01745329252f;
+			m_sky_sun_intensity = intensity > 0.0f ? intensity : 0.0f;
+			m_sky_sun_glow = glow > 0.0f ? glow : 0.0f;
+		}
 
 		// Camera projection settings
 		void set_projection(float fov_degrees, float aspect, float near_clip, float far_clip);
@@ -457,6 +486,8 @@ namespace vortex::graphics::dx12
 		// Cull stats (per frame): instances examined vs actually drawn — proves cull effectiveness on big maps.
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
+		// What the scene queue cost the CPU in the last frame (#361): swap, sort + draw runs, cull + pack, shadow casters.
+		const instancing::CpuStats& cpu_stats() const { return m_cpu_stats_last; }
 		// The frame budgets of the main view: bone matrices in the GPU palette buffer / its capacity, and the skinned draws in
 		// view that had no room for their palette (drawn in the bind pose, #415); the point / spot lights submitted and holding
 		// a shader slot, and the lights that got or gave up a slot in the last frame (#416).
@@ -569,6 +600,9 @@ namespace vortex::graphics::dx12
 		void render_fallback_triangle();
 		void render_grid();
 		void render_skybox();
+		// the sky pass's pictures at root parameters 1..3 (the sky, the two cross-fade pictures; white where unused) and the
+		// constants that go with them — the main view and the offscreen previews draw the sky alike
+		void prepare_skybox();
 
 		DX12CommandQueue m_command_queue;
 		DX12Swapchain m_swapchain;
@@ -820,6 +854,25 @@ namespace vortex::graphics::dx12
 		std::vector<RenderItem> m_static_submit, m_static_render;
 		bool m_static_pending{ false };
 		int m_submit_target{ 0 };   // 0 = dynamic (per frame), 1 = static (retained)
+		// Retained instances (#361). The render queue is [the retained instances, sorted][the frame's own submits, sorted]:
+		// m_queue_retained of them lead it, and m_queue_retained_valid says they match the store (else the next swap copies
+		// them again). m_frame_scratch carries a kept frame part across a re-copy of the retained part.
+		instancing::RetainedInstances<RenderItem> m_retained;
+		std::vector<RenderItem> m_frame_scratch;
+		size_t m_queue_retained{ 0 };
+		bool m_queue_retained_valid{ false };
+		bool m_frame_submitted{ false };
+		bool m_frame_sort_pending{ false };       // the queue's frame part arrived unsorted: render_3d_scene sorts it
+		bool m_retained_visible{ true };
+		bool m_retained_drop{ false };            // render_3d_scene found a destroyed mesh among them: the next swap drops those instances
+		u32 m_retained_mesh_generation{ 0 };
+		u32 m_seen_mesh_generation{ 0 };          // ResourceRegistry::mesh_generation() the cached draw runs were built against
+		DirectX::XMFLOAT3 m_retained_eye{};       // where the distances inside the retained runs were measured
+		u32 m_retained_refresh_frame{ 0 };
+		instancing::Sync sync_retained();
+		// the draw runs over [begin, end) of the sorted render queue, appended to m_draw_runs; items whose key one of the
+		// runs [join_first, join_last) has join it
+		void build_runs(size_t begin, size_t end, size_t join_first, size_t join_last);
 		// Separate double-buffered queue for editor gizmos so the optimized scene path never touches them; they draw
 		// in render_gizmos() after the scene with the depth-disabled gizmo PSO (always on top).
 		std::vector<RenderItem> m_gizmo_render;
@@ -878,6 +931,7 @@ namespace vortex::graphics::dx12
 		int  m_mt_threshold{ 2048 };          // min instances before parallelizing
 		u32  m_worker_count{ 0 };             // lazily computed = clamp(hw_concurrency-1, 1, 8)
 		CullWorkerPool m_cull_pool;           // persistent workers (NEVER spawn threads per frame — debugger death)
+		instancing::CpuStats m_cpu_stats, m_cpu_stats_last;   // this frame's (accumulating) and the last finished frame's (#361)
 
 		// Camera
 		DirectX::XMFLOAT3 m_camera_position{ 0.0f, 3.0f, -8.0f };
@@ -916,6 +970,12 @@ namespace vortex::graphics::dx12
 		float m_sky_exposure{ 1.0f };
 		int m_sky_hdr{ 0 };   // 0 = 8-bit sky, 1 = float sky shown the classic way, 2 = float sky through exposure + tonemapper
 		float m_sky_rotation{ 0.0f };
+		// the sun's disc in the sky (#499): auto, the real sun's 0.53°, intensity / glow 1
+		int m_sky_sun_mode{ 0 };
+		float m_sky_sun_radius{ 0.53f * 0.5f * 0.01745329252f }, m_sky_sun_intensity{ 1.0f }, m_sky_sun_glow{ 1.0f };
+		// the sky cross-fade (#464): pictures blended over the sky, off at amount 0
+		struct SkyBlendLayer { id::id_type texture{ id::invalid_id }; float exposure{ 1.0f }; float rotation{ 0.0f }; int hdr{ 0 }; float amount{ 0.0f }; };
+		SkyBlendLayer m_sky_blend[2];
 		// last gradient colours (the skybox pipeline keeps its own copy) -> PerFrame env for metal reflections
 		DirectX::XMFLOAT3 m_env_sky{ 0.3f, 0.5f, 0.85f };
 		DirectX::XMFLOAT3 m_env_horizon{ 0.7f, 0.8f, 0.9f };
@@ -1016,6 +1076,7 @@ namespace vortex::graphics::dx12
 		DirectX::XMFLOAT4X4 m_csm_vp[CSM_CASCADES]{};
 		float m_csm_radius[CSM_CASCADES]{};                 // each cascade's half extent (m): the bounce gather needs metres per tile uv
 		float m_csm_splits[CSM_CASCADES]{};                 // far view-distance of each cascade
+		float m_csm_bias[4]{ 1.0f, 1.0f, 1.0f, 0.0f };      // the shaders' CascadeBias: xyz scale the classic depth bias per cascade, w = the slope term's texels (#466)
 		u32 m_csm_count{ 0 };                               // 0 = no directional shadows this frame
 		// Directional shadow authoring state (set_directional_light_full).
 		bool m_dir_cast_shadows{ false };

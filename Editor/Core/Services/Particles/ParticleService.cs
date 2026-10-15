@@ -168,8 +168,11 @@ namespace Editor.Core.Services.Particles
             Sync(scene, playing, paused ? 0f : dt);
             PruneSpawned();
             SyncSpawnedLayers();
-            try { VortexAPI.ParticleUpdate(0, paused ? 0f : dt); } catch { }
-            Editor.Core.Services.Decals.DecalService.Tick(paused ? 0f : dt);   // #120: lifetimes + fade-outs of spawned decals
+            // the game's particles and decal fades run on game time (#425): slow motion slows them, time scale 0 holds them;
+            // the edit-mode preview keeps real time
+            float simDt = paused ? 0f : (playing ? dt * GameTime.EffectiveScale : dt);
+            try { VortexAPI.ParticleUpdate(0, simDt); } catch { }
+            Editor.Core.Services.Decals.DecalService.Tick(simDt);   // #120: lifetimes + fade-outs of spawned decals
         }
 
         /// <summary>Create / follow / drop the emitters of every ParticleSystem in the scene.</summary>

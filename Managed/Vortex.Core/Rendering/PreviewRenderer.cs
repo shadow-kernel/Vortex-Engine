@@ -144,6 +144,8 @@ namespace Editor.Core.Services.Rendering
                 }
                 if (scene.SubmitGizmos != null) { try { scene.SubmitGizmos(); } catch { } }
 
+                // the scene's retained instances (#361) stay in the renderer between frames: out of this render, back after it
+                VortexAPI.SetRenderInstancesVisible(false);
                 VortexAPI.SwapRenderQueue();
                 if (scene.BeforeTargetRender != null) { try { scene.BeforeTargetRender(); } catch { } }
                 VortexAPI.RenderToSecondaryTarget(rt, desc, false, scene.RenderGizmos);
@@ -153,6 +155,7 @@ namespace Editor.Core.Services.Rendering
             catch { return null; }
             finally
             {
+                try { VortexAPI.SetRenderInstancesVisible(true); } catch { }
                 // The preview used the SHARED render queue: the main viewport must re-submit its scene next frame.
                 try { EditorViewportSession.RequestResubmit(); } catch { }
                 try { SceneRenderService.RuntimeDirty = true; } catch { }

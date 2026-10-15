@@ -55,9 +55,22 @@ namespace Editor.Core.Data
         [DataMember(Name = "entities", Order = 2)]
         public ObservableCollection<GameEntity> Entities
         {
-            get => _entities ?? (_entities = new ObservableCollection<GameEntity>());
-            set => _entities = value ?? new ObservableCollection<GameEntity>();
+            get
+            {
+                if (_entities == null) { _entities = new ObservableCollection<GameEntity>(); _entities.CollectionChanged += OnRootsChanged; }
+                return _entities;
+            }
+            set
+            {
+                if (_entities != null) _entities.CollectionChanged -= OnRootsChanged;
+                _entities = value ?? new ObservableCollection<GameEntity>();
+                _entities.CollectionChanged += OnRootsChanged;
+                GameEntity.BumpHierarchy();
+            }
         }
+
+        // #361: a root added, removed or moved changes what Scene.Find finds and which animators run — their caches rebuild
+        private static void OnRootsChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => GameEntity.BumpHierarchy();
 
         /// <summary>
         /// Per-scene environment (fog + post-FX). Optional in the file: scenes saved before v2.7.0
@@ -85,10 +98,13 @@ namespace Editor.Core.Data
         public bool EnsureAuthoredActiveFlags()
         {
             if (ActiveFlagsVersion >= 1) return false;
+            // part of reading an old file, not an edit: a scene that was its file still is (#411 review)
+            bool asRead = _baseline != null && MatchesBaseline();
             ActiveFlagsVersion = 1;
             void On(GameEntity e) { e.SetActiveFlagOnly(true); if (e.Children != null) foreach (var c in e.Children) On(c); }
             if (_entities != null)
                 foreach (var entity in _entities) On(entity);   // the caller syncs the engine right after
+            if (asRead) _baseline = ContentHash();
             return true;
         }
 
@@ -167,7 +183,7 @@ namespace Editor.Core.Data
         public Scene()
         {
             _id = Guid.NewGuid();
-            _entities = new ObservableCollection<GameEntity>();
+            Entities = new ObservableCollection<GameEntity>();   // hooked: a root change counts as a hierarchy change (#361)
             _engineHandle = SceneHandle.Invalid;
 			_isActive = false;
             ActiveFlagsVersion = 1;   // a new scene's flags are authored (deserialization skips constructors)
@@ -196,7 +212,7 @@ namespace Editor.Core.Data
                 try
                 {
                     var loadedScene = Serialization.DataSerializer.LoadFromBinary<Scene>(FilePath);
-                    _entities = loadedScene._entities ?? new ObservableCollection<GameEntity>();
+                    Entities = loadedScene._entities ?? new ObservableCollection<GameEntity>();
                     _settings = loadedScene._settings;   // per-scene environment (null on pre-v2.7 files -> defaults)
                     
                     // Setze Referenzen
@@ -209,7 +225,7 @@ namespace Editor.Core.Data
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"Fehler beim Laden der Szene: {ex.Message}");
-                    _entities = new ObservableCollection<GameEntity>();
+                    Entities = new ObservableCollection<GameEntity>();
                 }
             }
 
@@ -243,6 +259,40 @@ namespace Editor.Core.Data
         }
 
         /// <summary>
+        /// Take over what a freshly read copy of this scene's file holds — entities, environment, name and the active-flag
+        /// marker — keeping this object (#411): the project, the hierarchy and every service that holds the scene go on
+        /// working with it. The old entities leave the engine and the renderer first; when the scene is active the new ones
+        /// are registered and the file's environment applies. Returns the old top-level entities.
+        /// </summary>
+        internal List<GameEntity> ReplaceContent(Scene file)
+        {
+            if (file == null)
+                throw new ArgumentNullException(nameof(file));
+
+            var old = _entities != null ? new List<GameEntity>(_entities) : new List<GameEntity>();
+            bool active = IsActive;
+            // the old entities' native twins and renderer resources go: the reloaded ones carry the same ids (#358)
+            if (active) DeactivateEntities();
+            else foreach (var entity in old) entity.SyncEngineStateRecursive(false);
+            foreach (var entity in old) { try { Services.SceneRenderService.Instance.RemoveEntityTree(entity); } catch { } }
+
+            _entities = file._entities ?? new ObservableCollection<GameEntity>();
+            _settings = file._settings;
+            ActiveFlagsVersion = file.ActiveFlagsVersion;
+            if (!string.IsNullOrEmpty(file._name)) SetProperty(ref _name, file._name, nameof(Name));
+            if (file._id != Guid.Empty) Id = file._id;   // the file's identity too: everything of the scene is the file's now
+            foreach (var entity in _entities)
+                SetEntityReferencesRecursive(entity);
+            SelectedEntity = null;
+            OnPropertyChanged(nameof(Entities));   // the hierarchy binds the list itself
+            OnPropertyChanged(nameof(Settings));
+
+            if (active) ActivateEntities();
+            NoteFileState();
+            return old;
+        }
+
+        /// <summary>
         /// Speichert die Szene als Bin�rdatei
         /// </summary>
         public void Save()
@@ -257,11 +307,13 @@ namespace Editor.Core.Data
                 Directory.CreateDirectory(directory);
             }
 
+            RaiseSaving(this);   // terrain / foliage data first: a data path assigned now is saved with the scene
             // the editor's view travels with the scene: whoever opens it next starts where it was saved from
             try { if (ReferenceEquals(ProjectData.Current?.ActiveScene, this)) Services.EditorViewState.Capture(this); } catch { }
             bool created = !File.Exists(FilePath);
-            Serialization.DataSerializer.SaveAsBinary(this, FilePath);
-            IsDirty = false;
+            var data = Serialization.DataSerializer.ToBinary(this);
+            File.WriteAllBytes(FilePath, data);
+            NoteFileState(data);
             Services.PlaySession.NoteWrite(FilePath, created);   // a scene saved while playing may refer to data files play created (#423)
         }
 
@@ -520,6 +572,86 @@ namespace Editor.Core.Data
             IsLoaded = true;
 			_engineHandle = SceneHandle.Invalid;
 			_isActive = false;
+            // reading the name went through its setter, which marks an edit: a scene just read has nothing unsaved (#411)
+            _isDirty = false;
+        }
+
+        /// <summary>Raised before a scene is written to its file (by any save path): the terrain and foliage data are written
+        /// first, so a data path they assign is in the file (#411 review).</summary>
+        internal static event Action<Scene> Saving;
+
+        internal static void RaiseSaving(Scene scene)
+        {
+            var handlers = Saving;
+            if (handlers == null || scene == null) return;
+            foreach (Action<Scene> h in handlers.GetInvocationList())
+            {
+                try { h(scene); } catch (Exception ex) { Debug.WriteLine("[Scene] before-save hook failed: " + ex.Message); }
+            }
+        }
+
+        private long _stampLength = -1;
+        private DateTime _stampTimeUtc;
+        private byte[] _baseline;   // SHA-256 of the content as this engine writes it, at the last read, save or revert
+
+        /// <summary>How often the scene was read from or written to its file in this session — a save while playing shows here
+        /// (<see cref="Services.PlaySnapshot"/>).</summary>
+        internal int FileStateVersion { get; private set; }
+
+        /// <summary>Whether scenes note what their file holds when they are read or written, for <see cref="MatchesBaseline"/>
+        /// (the editor's unsaved state, #411) — one serialization per read. The standalone player has nothing to save and turns it
+        /// off before it reads the project.</summary>
+        public static bool TrackFileContent { get; set; } = true;
+
+        /// <summary>The scene was just read from or written to its file (#411): nothing is unsaved, the file's size and time are
+        /// what <see cref="FileChangedOnDisk"/> compares with, its content as this engine writes it is what
+        /// <see cref="MatchesBaseline"/> compares with (<paramref name="written"/>: the bytes just written), and its data files
+        /// are the baseline of a revert now.</summary>
+        internal void NoteFileState(byte[] written = null)
+        {
+            IsDirty = false;
+            FileStateVersion++;
+            try
+            {
+                var fi = string.IsNullOrEmpty(FilePath) ? null : new FileInfo(FilePath);
+                if (fi != null && fi.Exists) { _stampLength = fi.Length; _stampTimeUtc = fi.LastWriteTimeUtc; }
+                else _stampLength = -1;
+            }
+            catch { _stampLength = -1; }
+            try { _baseline = !TrackFileContent ? null : written != null ? System.Security.Cryptography.SHA256.HashData(written) : ContentHash(); }
+            catch { _baseline = null; }
+            try { Services.SceneDataFiles.Forget(this); } catch { }
+        }
+
+        private byte[] ContentHash() => System.Security.Cryptography.SHA256.HashData(Serialization.DataSerializer.ToBinary(this));
+
+        /// <summary>Whether the scene knows the content of its file: it was read from or written to it in this session.</summary>
+        internal bool HasBaseline => _baseline != null;
+
+        /// <summary>
+        /// Whether the scene in memory is what it was when the editor last read, saved or reverted it (#411 review) — compared as
+        /// this engine writes it, so a file written by an older engine and not touched since matches, and an edit taken back by
+        /// hand matches again. Exact for every edit, whichever way it came: an inspector row, a gizmo, a tool, a script. False
+        /// when the scene was never read from or written to a file.
+        /// </summary>
+        internal bool MatchesBaseline()
+        {
+            if (_baseline == null) return false;
+            try { return ContentHash().AsSpan().SequenceEqual(_baseline); }
+            catch { return false; }
+        }
+
+        /// <summary>Whether the scene's file was changed on disk (a git checkout, another program) since the editor read or wrote
+        /// it — the scene in memory does not show that version. False when the editor never read or wrote it.</summary>
+        internal bool FileChangedOnDisk()
+        {
+            if (_stampLength < 0 || string.IsNullOrEmpty(FilePath)) return false;
+            try
+            {
+                var fi = new FileInfo(FilePath);
+                return !fi.Exists || fi.Length != _stampLength || fi.LastWriteTimeUtc != _stampTimeUtc;
+            }
+            catch { return false; }
         }
     }
 

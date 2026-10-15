@@ -46,6 +46,8 @@ namespace Editor.Core.Viewport
         private GizmoAxis _activeGizmoAxis = GizmoAxis.None;
         private double _lastDragX, _lastDragY;
         private Vector3 _dragRawPos, _dragRawRot, _dragRawScale;
+        private Vector3 _dragStartPos, _dragStartRot, _dragStartScale;   // where the drag began: its undo step goes back there
+        private GameEntity _dragEntity;
 
         // play-mode simulation (non-destructive)
         private bool _simActive;
@@ -267,7 +269,7 @@ namespace Editor.Core.Viewport
                     VortexAPI.UIBegin((float)uw, (float)uh);   // the same point space the scripts see (#454)
                 }
 
-                VortexAPI.StepEngineRuntime(dt);
+                VortexAPI.StepEngineRuntime(dt, GameTime.EffectiveScale);   // the fallback physics on game time (#425)
                 ReadbackPhysics();
                 // this tick's wheel notches, 0 on a tick without any (#319): the wheel event used to set ScrollDelta and
                 // nothing reset it, so a zoom or weapon-switch script kept scrolling after one notch
@@ -372,6 +374,9 @@ namespace Editor.Core.Viewport
             {
                 float t = VortexAPI.GameTime();
                 status += $"   ·   ▶ {((int)t) / 60:00}:{((int)t) % 60:00}";
+                // the game's slow motion / pause and the play menu's test multiplier (#425), when they are not 1
+                float scale = GameTime.EffectiveScale;
+                if (Math.Abs(scale - 1f) > 1e-4f) status += "   ·   Time ×" + scale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
                 status += _mouseCaptured ? "   ·   Esc releases the mouse" : "   ·   Click to capture the mouse";
             }
             else if (_gameViewMode)
@@ -426,12 +431,15 @@ namespace Editor.Core.Viewport
                     var axis = RaycastService.Instance.PickGizmoAxis(nx, ny, gizmoPos, aspect, gizmoScale);
                     if (axis != GizmoAxis.None)
                     {
+                        if (_isDraggingGizmo) EndGizmoDrag();   // a drag whose button-up never came
                         _isDraggingGizmo = true;
                         _activeGizmoAxis = axis;
                         _lastDragX = x; _lastDragY = y;
                         _dragRawPos = transform.LocalPosition;
                         _dragRawRot = transform.LocalRotation;
                         _dragRawScale = transform.LocalScale;
+                        _dragEntity = selected;
+                        _dragStartPos = _dragRawPos; _dragStartRot = _dragRawRot; _dragStartScale = _dragRawScale;
                         VortexAPI.IsDraggingGizmo = true;
                         VortexAPI.DraggingAxis = axis;
                         return;
@@ -458,13 +466,43 @@ namespace Editor.Core.Viewport
                 _foliageStroke = false;
                 Editor.Core.Services.Foliage.FoliageToolService.EndStroke();
             }
-            if (_isDraggingGizmo && button == 0)
+            if (_isDraggingGizmo && button == 0) EndGizmoDrag();
+        }
+
+        /// <summary>
+        /// The gizmo drag is over: what it did becomes one undo step (#411 review) — "Move Crate", undone in one go, and the scene
+        /// is unsaved through it like after every other edit. The values are already in place; the step only records them.
+        /// </summary>
+        private void EndGizmoDrag()
+        {
+            _isDraggingGizmo = false;
+            _activeGizmoAxis = GizmoAxis.None;
+            VortexAPI.IsDraggingGizmo = false;
+            VortexAPI.DraggingAxis = GizmoAxis.None;
+            var entity = _dragEntity;
+            _dragEntity = null;
+            var step = GizmoStep(entity, _dragStartPos, _dragStartRot, _dragStartScale);
+            if (step == null) return;
+            try { UndoRedoManager.Instance.Execute(step, execute: false); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[Viewport] gizmo undo step: " + ex.Message); }
+        }
+
+        /// <summary>The undo step of a gizmo drag that began at <paramref name="p0"/> / <paramref name="r0"/> /
+        /// <paramref name="s0"/> and ended where the entity's transform is now (null when it did not change): redo puts the end
+        /// values, undo the start values.</summary>
+        internal static IUndoableCommand GizmoStep(GameEntity entity, Vector3 p0, Vector3 r0, Vector3 s0)
+        {
+            var t = entity?.Transform;
+            if (t == null) return null;
+            Vector3 p1 = t.LocalPosition, r1 = t.LocalRotation, s1 = t.LocalScale;
+            if (p0 == p1 && r0 == r1 && s0 == s1) return null;
+            string what = s0 != s1 ? "Scale " : r0 != r1 ? "Rotate " : "Move ";
+            void Put(Vector3 p, Vector3 r, Vector3 s)
             {
-                _isDraggingGizmo = false;
-                _activeGizmoAxis = GizmoAxis.None;
-                VortexAPI.IsDraggingGizmo = false;
-                VortexAPI.DraggingAxis = GizmoAxis.None;
+                t.LocalPosition = p; t.LocalRotation = r; t.LocalScale = s;
+                SelectionService.Instance.NotifyTransformChanged();
             }
+            return new Editor.Core.UndoRedo.Commands.ActionCommand(what + entity.Name, () => Put(p1, r1, s1), () => Put(p0, r0, s0));
         }
 
         public void OnPointerMove(double x, double y)
@@ -809,6 +847,7 @@ namespace Editor.Core.Viewport
                 _navPrev[i] = held;
             }
             ScriptRuntime.Instance.SetUIFrame(f.W, f.H, mx, my, down, pressed, f.Scale);
+            ScriptRuntime.Instance.SetScreenPixels((int)_pixelW, (int)_pixelH);   // the play view's drawable (#462)
         }
 
         private void BeginPlaySimulation()
@@ -839,6 +878,8 @@ namespace Editor.Core.Viewport
             // the per-tick feed comes one frame later, so Start() saw zeros (first play) or the last session's size (#454)
             var f = UiFrame(_host, _pointerX, _pointerY);
             ScriptRuntime.Instance.SetUIFrame(f.W, f.H, f.MouseX, f.MouseY, false, false, f.Scale);
+            ScriptRuntime.Instance.SetScreenPixels((int)_pixelW, (int)_pixelH);   // Screen.PixelWidth is real in Start too (#462)
+            _renderScaleAtPlay = VortexAPI.GetRenderScale();                      // a script's render resolution ends with play
             ScriptRuntime.Instance.BeginPlaySession(scene);   // a new session reads the saves from disk again (#452)
         }
 
@@ -943,12 +984,16 @@ namespace Editor.Core.Viewport
                 foreach (var c in e.Children) SnapshotTransformRecursive(c);
         }
 
+        private float _renderScaleAtPlay = 1f;
+
         private void EndPlaySimulation()
         {
             if (!_simActive) return;
             _simActive = false;
             AudioPlaybackService.Instance.EndPlay();
             ScriptRuntime.Instance.End();
+            // Settings.SetRenderScale / SetRenderResolution (#462) set the shared renderer's scale: the edit view gets its own back
+            if (Math.Abs(VortexAPI.GetRenderScale() - _renderScaleAtPlay) > 1e-4f) VortexAPI.SetRenderScale(_renderScaleAtPlay);
             ScriptRuntime.Instance.ConsumeQuitRequest();   // play is stopping anyway: no quit may carry over (#410)
             HostInput.Simulated.Clear();                   // no simulated key stays held into editing (#457)
             Vortex.Input.SetSimulated(0f, 0f, 0f);
