@@ -53,6 +53,17 @@ namespace VortexEditor.Shell
             finally { Running = false; }
         }
 
+        /// <summary>Removes <paramref name="dir"/> (and its .vmeta) when a check created it — it did not exist before
+        /// (<paramref name="existedBefore"/>) — and left it empty: a check that writes Assets/Audio/x.wav into a project
+        /// without an Assets/Audio must not leave an empty folder behind (#437 review). (Saving a project creates the
+        /// default folders — Assets/Audio among them — anyway; this only undoes what the check itself made.)</summary>
+        internal static void RemoveIfCreated(string dir, bool existedBefore)
+        {
+            if (existedBefore || string.IsNullOrEmpty(dir)) return;
+            try { if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).GetEnumerator().MoveNext()) Directory.Delete(dir); } catch { }
+            try { if (!Directory.Exists(dir) && File.Exists(dir + ".vmeta")) File.Delete(dir + ".vmeta"); } catch { }
+        }
+
         /// <summary>Save a PNG of a window / control into <see cref="CaptureDir"/> (no-op without a folder).</summary>
         public static bool Capture(Visual visual, string fileName)
         {

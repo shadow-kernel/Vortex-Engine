@@ -66,6 +66,13 @@ namespace VortexEditor.Panels.AssetBrowser
             catch { return "Sound Container · double-click to edit"; }
         }
 
+        /// <summary>Tooltip of an adaptive music tile ("Adaptive Music · 120 BPM 4/4 · 3 stems · 2 states · double-click to edit", #437).</summary>
+        public static string MusicTip(string fullPath)
+        {
+            try { return "Adaptive Music · " + Editor.Core.Audio.AdaptiveMusic.Load(fullPath).Describe() + " · double-click to edit"; }
+            catch { return "Adaptive Music · double-click to edit"; }
+        }
+
         /// <summary>Centre-mirrored peak waveform as thin bars on a transparent background (reads on both themes):
         /// peaks are compressed so quiet passages stay visible and loud clips don't turn into a solid block.</summary>
         private static Bitmap Render(float[] peaks)

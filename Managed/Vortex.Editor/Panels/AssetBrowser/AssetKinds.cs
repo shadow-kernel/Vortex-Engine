@@ -7,7 +7,7 @@ namespace VortexEditor.Panels.AssetBrowser
     public enum AssetKind
     {
         Folder, ParentFolder, Primitive, Model, Texture, Material, Shader, Script, Scene, Prefab,
-        AudioClip, SoundContainer, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, BehaviorTree, Terrain, Foliage, Area, Other
+        AudioClip, SoundContainer, AdaptiveMusic, AnimationClip, UiScreen, Font, Text, BuiltInMaterial, BuiltInTexture, Vfx, BehaviorTree, Terrain, Foliage, Area, Other
     }
 
     /// <summary>
@@ -51,6 +51,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case ".vscene": return AssetKind.Scene;
                 case ".ventity": case ".vprefab": return AssetKind.Prefab;
                 case ".vsndc": return AssetKind.SoundContainer;
+                case ".vmusic": return AssetKind.AdaptiveMusic;
                 case ".vanim": return AssetKind.AnimationClip;
                 case ".vui": return AssetKind.UiScreen;
                 case ".vfx": return AssetKind.Vfx;
@@ -80,6 +81,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.Prefab: return "Prefab";
                 case AssetKind.AudioClip: return e + " Audio";
                 case AssetKind.SoundContainer: return "Sound Container";
+                case AssetKind.AdaptiveMusic: return "Adaptive Music";
                 case AssetKind.AnimationClip: return "Animation Clip";
                 case AssetKind.UiScreen: return "UI Screen";
                 case AssetKind.Font: return "Font";
@@ -110,6 +112,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.Prefab: return "Prefab";
                 case AssetKind.AudioClip: return "Audio";
                 case AssetKind.SoundContainer: return "Layers";
+                case AssetKind.AdaptiveMusic: return "Audio";
                 case AssetKind.AnimationClip: return "Play";
                 case AssetKind.UiScreen: return "LayoutSingle";
                 case AssetKind.Vfx: return "Sparkle";
@@ -134,7 +137,7 @@ namespace VortexEditor.Panels.AssetBrowser
                 case AssetKind.Script: return "VxOrangeBrush";
                 case AssetKind.Scene: return "VxYellowBrush";
                 case AssetKind.Prefab: return "VxPinkBrush";
-                case AssetKind.AudioClip: case AssetKind.SoundContainer: return "VxRedBrush";
+                case AssetKind.AudioClip: case AssetKind.SoundContainer: case AssetKind.AdaptiveMusic: return "VxRedBrush";
                 case AssetKind.UiScreen: return "VxTealBrush";
                 case AssetKind.Vfx: return "VxOrangeBrush";
                 case AssetKind.BehaviorTree: return "VxTealBrush";

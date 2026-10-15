@@ -54,7 +54,57 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern ulong AudioPlayVoice([MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus, int hrtf, int occlusion, float reverbSend);
+            float volume, float pitch, float pan, int loop, int priority, int stream, int outBus, int hrtf, int occlusion, float reverbSend,
+            ulong startTime, double startPosition);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern ulong AudioGetDspTime(out int sampleRate);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioGetVoicePosition(ulong handle, out ulong cursor, out ulong length, out int sampleRate);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioSeekVoice(ulong handle, double seconds);
+
+        // stems: UTF-8 path pointers (the classic marshaller has no UTF-8 string arrays — PlayMusic builds them)
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern ulong AudioPlayMusic(IntPtr[] stems, int count, float[] stateGains, float[] paramGains,
+            ulong loopStart, ulong loopEnd, ulong startFrame, int loop, int decode, int outBus, float volume, ulong startTime);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioMusicSchedule(ulong handle, int stage, float[] gains, int count, ulong atFrame, ulong rampFrames);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioMusicPlayStinger(ulong handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, float volume, ulong atFrame);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern int AudioMusicGetClock(ulong handle, out MusicClock clock);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern float AudioMusicGetStemGain(ulong handle, int stem);
+
+        /// <summary>The clock of a music voice (#437) — mirrors the native AudioMusicClockData field for field.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MusicClock
+        {
+            /// <summary>Frames the music has played: monotonic, the clock schedules run on.</summary>
+            public ulong Played;
+            /// <summary>Where in the stems it is (frames at SampleRate), wrapping in the loop region.</summary>
+            public ulong Position;
+            /// <summary>Completed passes through the loop region.</summary>
+            public ulong Loops;
+            public ulong LoopStart, LoopEnd, Length;
+            /// <summary>Played at which the last state schedule began; ulong.MaxValue = none yet.</summary>
+            public ulong LastStateFrame;
+            /// <summary>Wall time since the mixer last read the music.</summary>
+            public double SecondsSinceMix;
+            public int SampleRate;
+            /// <summary>1 = the last mix waited for a stream to refill (every stem waits together).</summary>
+            public int Stalled;
+        }
+
+        /// <summary>Gain stages of a music voice's stems (#437): the state's volumes and the parameter mapping's.</summary>
+        public const int MusicStageState = 0, MusicStageParameter = 1;
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioSteamSetEnabled(int enabled);
@@ -94,6 +144,9 @@ namespace Editor.DllWrapper
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern void AudioFadeVoice(ulong handle, float target, float seconds, int stopWhenDone);
+
+        [DllImport(_dllName, CallingConvention = _cc)]
+        private static extern void AudioFadeVoiceFrom(ulong handle, float from, float target, float seconds, int stopWhenDone);
 
         [DllImport(_dllName, CallingConvention = _cc)]
         private static extern int AudioRegisterClipData([MarshalAs(UnmanagedType.LPUTF8Str)] string name,
@@ -170,13 +223,80 @@ namespace Editor.DllWrapper
         /// or every pooled voice outranks this request (priority 0 = most important).
         /// stream = decode on demand (music/long ambience) instead of full pre-decode.
         /// bus routes the voice through a mixer bus (default SFX). reverbSend = the reverb send (0..1) from the
-        /// first sample on, before the per-frame SetVoiceReverbSend takes over (#496).</summary>
+        /// first sample on, before the per-frame SetVoiceReverbSend takes over (#496). startTime = the mixer frame
+        /// (<see cref="GetDspTime"/>) the voice starts on, sample-accurate, 0 = now; startPosition = seconds into the
+        /// clip playback begins at (#465).</summary>
         public static ulong PlayVoice(string path, float volume, float pitch, float pan, bool loop, int priority, bool stream = false, int bus = BusSfx,
-            bool hrtf = false, bool occlusion = false, float reverbSend = 0f)
+            bool hrtf = false, bool occlusion = false, float reverbSend = 0f, ulong startTime = 0, double startPosition = 0)
         {
             if (string.IsNullOrEmpty(path)) return InvalidVoice;
-            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus, hrtf ? 1 : 0, occlusion ? 1 : 0, reverbSend);
+            return AudioPlayVoice(path, volume, pitch, pan, loop ? 1 : 0, priority, stream ? 1 : 0, bus, hrtf ? 1 : 0, occlusion ? 1 : 0, reverbSend,
+                startTime, startPosition > 0 ? startPosition : 0);
         }
+
+        /// <summary>The mixer clock (#465): frames mixed since the audio engine started; its rate goes to
+        /// <paramref name="sampleRate"/> (0 without an audio engine). Advances in mixer blocks (~10 ms).</summary>
+        public static ulong GetDspTime(out int sampleRate) => AudioGetDspTime(out sampleRate);
+
+        /// <summary>A voice's mixer position and its clip's length (0 = unknown) in the voice's own frames at
+        /// <paramref name="sampleRate"/> (#465). False for a stale handle.</summary>
+        public static bool GetVoicePosition(ulong handle, out ulong cursor, out ulong length, out int sampleRate)
+        {
+            cursor = 0; length = 0; sampleRate = 0;
+            return handle != InvalidVoice && AudioGetVoicePosition(handle, out cursor, out length, out sampleRate) != 0;
+        }
+
+        /// <summary>Seek a voice to <paramref name="seconds"/> into its clip, decoded or streamed (#465) — the mixer
+        /// applies it before its next read; clamped to the clip, wrapped for a looping voice.</summary>
+        public static void SeekVoice(ulong handle, double seconds)
+        {
+            if (handle != InvalidVoice) AudioSeekVoice(handle, double.IsNaN(seconds) || seconds < 0 ? 0 : seconds);
+        }
+
+        /// <summary>Adaptive music (#437): plays stems (resolved clip paths) mixed sample-locked as ONE voice at priority 0,
+        /// never pitched. Frames are at the engine rate (<see cref="GetDspTime"/>): the loop region (end 0 = the longest
+        /// stem), the start frame, and the mixer frame the music begins on (0 = now). File stems stream unless
+        /// <paramref name="decode"/> (decoding suits short loops only: every Play decodes every stem). InvalidVoice when a
+        /// stem cannot be opened.</summary>
+        public static ulong PlayMusic(string[] stems, float[] stateGains, float[] paramGains, ulong loopStart, ulong loopEnd,
+            ulong startFrame, bool loop, bool decode, int bus, float volume, ulong startTime = 0)
+        {
+            if (stems == null || stems.Length == 0 || Array.Exists(stems, string.IsNullOrEmpty)) return InvalidVoice;
+            var utf8 = new IntPtr[stems.Length];
+            try
+            {
+                for (int i = 0; i < stems.Length; i++) utf8[i] = Marshal.StringToCoTaskMemUTF8(stems[i]);
+                return AudioPlayMusic(utf8, stems.Length, stateGains, paramGains, loopStart, loopEnd, startFrame,
+                    loop ? 1 : 0, decode ? 1 : 0, bus, volume, startTime);
+            }
+            finally
+            {
+                foreach (var p in utf8) if (p != IntPtr.Zero) Marshal.FreeCoTaskMem(p);
+            }
+        }
+
+        /// <summary>Ramp a gain stage (<see cref="MusicStageState"/> / <see cref="MusicStageParameter"/>) of every stem of a
+        /// music voice to <paramref name="gains"/> over <paramref name="rampFrames"/>, beginning exactly when the music has
+        /// played <paramref name="atFrame"/> frames (0 = its next mix). Replaces a schedule of that stage not begun yet.</summary>
+        public static void MusicSchedule(ulong handle, int stage, float[] gains, ulong atFrame, ulong rampFrames)
+        {
+            if (handle != InvalidVoice && gains != null && gains.Length > 0) AudioMusicSchedule(handle, stage, gains, gains.Length, atFrame, rampFrames);
+        }
+
+        /// <summary>Mix a clip once into a music voice from its frame <paramref name="atFrame"/> (a stinger). False when it
+        /// cannot be opened or four stingers already play.</summary>
+        public static bool MusicPlayStinger(ulong handle, string path, float volume, ulong atFrame)
+            => handle != InvalidVoice && !string.IsNullOrEmpty(path) && AudioMusicPlayStinger(handle, path, volume, atFrame) != 0;
+
+        public static bool GetMusicClock(ulong handle, out MusicClock clock)
+        {
+            clock = default;
+            return handle != InvalidVoice && AudioMusicGetClock(handle, out clock) != 0;
+        }
+
+        /// <summary>One stem's gain (state × parameter) after the last mix; -1 for no such stem / not a music voice.</summary>
+        public static float GetMusicStemGain(ulong handle, int stem)
+            => handle != InvalidVoice ? AudioMusicGetStemGain(handle, stem) : -1f;
 
         /// <summary>Steam Audio v2 (#21) project master switch. Off by default; turning it on lazily initializes
         /// HRTF + occlusion if phonon.dll is present next to the app. Safe no-op when the DLL is missing.</summary>
@@ -220,6 +340,14 @@ namespace Editor.DllWrapper
         public static void FadeVoice(ulong handle, float target, float seconds, bool stopWhenDone = false)
         {
             if (handle != InvalidVoice) AudioFadeVoice(handle, target, seconds, stopWhenDone ? 1 : 0);
+        }
+
+        /// <summary>The same fade from an explicit start level (a fade-in from silence): one request with both ends, so it
+        /// cannot collapse with a snap issued in the same frame — miniaudio keeps one pending fade per voice, and a snap to
+        /// 0 followed by a fade "from the current level" used to start at full volume.</summary>
+        public static void FadeVoiceFrom(ulong handle, float from, float target, float seconds, bool stopWhenDone = false)
+        {
+            if (handle != InvalidVoice) AudioFadeVoiceFrom(handle, from, target, seconds, stopWhenDone ? 1 : 0);
         }
 
         /// <summary>Hands an encoded audio blob (e.g. a .vpak entry) to the native engine;

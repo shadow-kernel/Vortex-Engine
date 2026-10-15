@@ -66,7 +66,7 @@ namespace VortexEditor.Shell
             new EditorEntry { Title = "Collision Editor (selection)", OpenEntity = EditorWindows.CollisionEditor },
             null,
             new EditorEntry { Title = "Stress Test…", AssetKind = "Model", Patterns = Models, OpenAsset = EditorWindows.StressTest },
-            new EditorEntry { Title = "Asset Tags…", AssetKind = "Asset", Patterns = Models.Concat(Textures).Concat(new[] { "*.vmat", "*.ventity", "*.wav", "*.mp3", "*.ogg", "*.vsndc", "*.vanim", "*.vui", "*.cs" }).ToArray(), OpenAsset = EditorWindows.AssetTags },
+            new EditorEntry { Title = "Asset Tags…", AssetKind = "Asset", Patterns = Models.Concat(Textures).Concat(new[] { "*.vmat", "*.ventity", "*.wav", "*.mp3", "*.ogg", "*.vsndc", "*.vmusic", "*.vanim", "*.vui", "*.cs" }).ToArray(), OpenAsset = EditorWindows.AssetTags },
             new EditorEntry { Title = "Import Assets…", OpenAsync = EditorCommands.ImportAssetsDialog },
             new EditorEntry { Title = "Color Picker…", OpenAsync = PickColorToClipboard },
         };

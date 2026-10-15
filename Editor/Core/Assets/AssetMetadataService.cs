@@ -130,6 +130,7 @@ namespace Editor.Core.Assets
                 case ".mp3":
                 case ".ogg":
             case ".vsndc":
+            case ".vmusic":
                     return AssetType.Audio;
 
                 case ".vshader":

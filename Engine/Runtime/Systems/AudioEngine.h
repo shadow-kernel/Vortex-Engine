@@ -20,6 +20,12 @@ namespace vortex::runtime::audio {
 	// A real output device is producing audio.
 	bool has_device();
 
+	// The mixer clock (#465): frames mixed since the engine started, at engine_sample_rate(). It advances
+	// in mixer blocks (one device period, ~10 ms) and is the clock scheduled starts (voice_params::start_time)
+	// run on — Unity's AudioSettings.dspTime. 0 / 0 while uninitialized.
+	u64 engine_time_frames();
+	u32 engine_sample_rate();
+
 	// Decode a sound file into the cache (wav/flac/mp3 via miniaudio, ogg via
 	// stb_vorbis). Safe to call again for a cached path. Returns false when the file
 	// is missing or no decoder accepts it.

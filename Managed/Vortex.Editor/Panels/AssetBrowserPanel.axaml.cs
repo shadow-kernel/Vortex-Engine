@@ -531,7 +531,7 @@ namespace VortexEditor.Panels
                     files = SafeScripts(root);
                     filter = f => true;
                     break;
-                case "Audio": filter = f => AssetKinds.Is(Ext(f), AssetKinds.AudioExt) || Ext(f) == ".vsndc"; break;
+                case "Audio": filter = f => AssetKinds.Is(Ext(f), AssetKinds.AudioExt) || Ext(f) == ".vsndc" || Ext(f) == ".vmusic"; break;
                 case "Prefabs": filter = f => Ext(f) == ".ventity" || Ext(f) == ".vprefab"; break;
                 case "Scenes": filter = f => Ext(f) == ".vscene"; break;
                 default: filter = f => false; break;
@@ -913,6 +913,9 @@ namespace VortexEditor.Panels
                     return;
                 case AssetKind.SoundContainer:
                     t.ToolTip = Path.GetFileName(t.FullPath) + "\n" + WaveformThumbs.ContainerTip(t.FullPath) + "\n" + t.RelPath;
+                    return;
+                case AssetKind.AdaptiveMusic:
+                    t.ToolTip = Path.GetFileName(t.FullPath) + "\n" + WaveformThumbs.MusicTip(t.FullPath) + "\n" + t.RelPath;
                     return;
                 case AssetKind.BuiltInMaterial:
                 case AssetKind.BuiltInTexture:
@@ -1650,6 +1653,7 @@ namespace VortexEditor.Panels
             yield return Mi("New UI Screen…", () => _ = CreateUiScreenAsync(), "LayoutSingle");
             yield return Mi("New Animation Clip…", () => _ = CreateAnimationClipAsync(), "Play");
             yield return Mi("New Sound Container", () => CreateSoundContainer(), "Layers");
+            yield return Mi("New Adaptive Music", () => CreateAdaptiveMusic(), "Audio");
             yield return Mi("New Visual Effect", () => CreateVfx(), "Sparkle");
             yield return Mi("New Behavior Tree", () => CreateBehaviorTree(), "Flow");
         }
@@ -1772,6 +1776,21 @@ namespace VortexEditor.Panels
             catch (Exception ex) { EditorCommands.Fail("Create visual effect", ex); return null; }
         }
 
+        /// <summary>New adaptive music (.vmusic, #437) in the browsed folder or Assets/Audio/Music — 120 BPM 4/4 with the
+        /// states "calm" and "intense" — opened in its editor to add the stems.</summary>
+        public string CreateAdaptiveMusic(bool open = true)
+        {
+            if (ProjectRoot == null) return null;
+            try
+            {
+                string path = VortexEditor.Shell.AdaptiveMusicEditorWindow.CreateNew(CreateFolderFor("Assets/Audio/Music"), "NewAdaptiveMusic");
+                Created(path, "Adaptive music created");
+                if (open) EditorWindows.AdaptiveMusicEditor(path);
+                return path;
+            }
+            catch (Exception ex) { EditorCommands.Fail("Create adaptive music", ex); return null; }
+        }
+
         public string CreateSoundContainer(bool open = true)
         {
             if (ProjectRoot == null) return null;
@@ -1836,7 +1855,7 @@ namespace VortexEditor.Panels
             var fs = sel.Where(t => t.IsFileSystemItem).ToList();
             bool multi = sel.Count > 1;
 
-            if (_tab == "Audio") { m.Items.Add(Mi("New Sound Container", () => CreateSoundContainer(), "Layers")); if (tile != null) m.Items.Add(new Separator()); }
+            if (_tab == "Audio") { m.Items.Add(Mi("New Sound Container", () => CreateSoundContainer(), "Layers")); m.Items.Add(Mi("New Adaptive Music", () => CreateAdaptiveMusic(), "Audio")); if (tile != null) m.Items.Add(new Separator()); }
 
             if (tile != null && !multi)
             {
@@ -1896,6 +1915,9 @@ namespace VortexEditor.Panels
                         m.Items.Add(Mi("Open Sound Container Editor", () => EditorWindows.SoundContainerEditor(p), "Layers"));
                         m.Items.Add(Mi("Play (random clip)", () => Actions.Audition(p), "Play"));
                         m.Items.Add(Mi("Stop", Actions.StopAudition, "Stop"));
+                        break;
+                    case AssetKind.AdaptiveMusic:
+                        m.Items.Add(Mi("Open Adaptive Music Editor", () => EditorWindows.AdaptiveMusicEditor(p), "Audio"));
                         break;
                     case AssetKind.AnimationClip:
                         m.Items.Add(Mi("Open in Animation Editor", () => EditorWindows.AnimationEditor(p), "Play"));
