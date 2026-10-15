@@ -133,7 +133,79 @@ namespace vortex::graphics::sdlgpu
 		m_submit_queue.clear();
 		m_bone_submit.clear();
 		m_static_submit.clear(); m_static_render.clear(); m_static_pending = false; m_submit_target = 0;
+		m_retained.clear(); m_queue_retained_valid = false;
 	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Retained instances (#361)
+	// ---------------------------------------------------------------------------------------------
+	void SdlGpuRenderer::apply_instance_ops(const instancing::InstanceOp* ops, u32 count)
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_retained.apply(ops, count);
+	}
+
+	u32 SdlGpuRenderer::instance_epoch()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		return m_retained.epoch();
+	}
+
+	void SdlGpuRenderer::clear_instances()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_retained.clear();
+		m_queue_retained_valid = false;
+	}
+
+	void SdlGpuRenderer::mark_frame_submit()
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_frame_submitted = true;
+	}
+
+	void SdlGpuRenderer::set_instances_visible(bool visible)
+	{
+		std::lock_guard<std::mutex> lock(m_queue_mutex);
+		m_retained_visible = visible;
+	}
+
+	instancing::Sync SdlGpuRenderer::sync_retained()
+	{
+		// a mesh was destroyed: the instances that drew it leave, the rest of the scene stays — a whole-store reset blanked
+		// the view until the next submit, and edit mode may not submit for a while
+		auto& reg = ResourceRegistry::instance();
+		const u32 gen = reg.mesh_generation();
+		if (m_retained_drop || gen != m_retained_mesh_generation)
+		{
+			m_retained_mesh_generation = gen;
+			if (m_retained.remove_dead([&reg](id::id_type m) { Mesh* p = reg.get_mesh(m); return p && p->is_valid(); }) > 0)
+				m_queue_retained_valid = false;
+			m_retained_drop = false;
+		}
+		const auto t_sort = instancing::Clock::now();
+		instancing::Sync sync = m_retained.settle(m_camera_position);
+		if (sync == instancing::Sync::Layout) { m_retained_eye = m_camera_position; m_retained_refresh_frame = m_cpu_stats.frame; }
+		else if (m_retained.count() > 1 && m_cpu_stats.frame - m_retained_refresh_frame > 30)
+		{
+			// the nearest-first order inside the runs follows the camera once it moved far (partial early-Z)
+			const float dx = m_camera_position.x - m_retained_eye.x, dy = m_camera_position.y - m_retained_eye.y, dz = m_camera_position.z - m_retained_eye.z;
+			if (dx * dx + dy * dy + dz * dz > 64.0f)
+			{
+				sync = m_retained.refresh_distance(m_camera_position);
+				m_retained_eye = m_camera_position;
+				m_retained_refresh_frame = m_cpu_stats.frame;
+			}
+		}
+		if (sync == instancing::Sync::Layout || sync == instancing::Sync::Reordered)
+		{
+			const float ms = instancing::ms_since(t_sort);
+			m_cpu_stats.sort_ms += ms; m_cpu_stats.swap_ms -= ms;
+			m_cpu_stats.sorted += (u32)m_retained.count();
+		}
+		return sync;
+	}
+
 
 	// #364 A: everything submitted between these two calls is RETAINED across frames (the static scene); an empty pass
 	// clears the retained set. Per-frame submits outside the pass are the dynamic entities, merged in at the swap.
@@ -153,23 +225,37 @@ namespace vortex::graphics::sdlgpu
 
 	void SdlGpuRenderer::swap_render_queue()
 	{
+		instancing::ScopedMs timed(m_cpu_stats.swap_ms);
 		std::lock_guard<std::mutex> lock(m_queue_mutex);
 		// Gizmos are re-submitted every frame by the editor: swap unconditionally (empty = no gizmo).
 		m_gizmo_render.swap(m_gizmo_submit); m_gizmo_submit.clear();
 		m_gizmo_wire_render.swap(m_gizmo_wire_submit); m_gizmo_wire_submit.clear();
 		bool staticChanged = false;
 		if (m_static_pending) { m_static_render.swap(m_static_submit); m_static_submit.clear(); m_static_pending = false; staticChanged = true; }
-		if (m_submit_queue.empty() && !staticChanged) return;   // nothing new -> keep last frame's scene (camera-only frames are free)
-		// the frame = the retained static set + this frame's dynamic submits (#364 A)
-		m_render_queue.clear();
-		m_render_queue.reserve(m_static_render.size() + m_submit_queue.size());
-		m_render_queue.insert(m_render_queue.end(), m_static_render.begin(), m_static_render.end());
-		m_render_queue.insert(m_render_queue.end(), m_submit_queue.begin(), m_submit_queue.end());
-		m_submit_queue.clear();
-		m_queue_dirty = true;
-		m_bone_render.swap(m_bone_submit);
-		m_bone_submit.clear();
-		m_bone_upload_pending = true;
+		const bool frameChanged = staticChanged || !m_submit_queue.empty() || m_frame_submitted;
+		m_frame_submitted = false;
+		const instancing::Sync sync = sync_retained();
+		// nothing new -> keep last frame's scene (camera-only frames are free) — unless the queue's retained part is not the
+		// store's any more (shrunk by the render pass, or hidden for a preview and shown again)
+		if (!frameChanged && sync == instancing::Sync::None && m_queue_retained_valid
+			&& m_queue_retained == (m_retained_visible ? m_retained.count() : 0)) return;
+		// the retained part first (moved instances in place); the frame part is the queue's tail, kept or replaced (#361)
+		if (instancing::assemble_retained(m_render_queue, m_retained, sync, frameChanged, m_retained_visible, m_queue_retained, m_queue_retained_valid, m_frame_scratch))
+			m_queue_dirty = true;
+		if (frameChanged)
+		{
+			// the frame's own submits: the static split's set (#364 A) + this frame's per-frame items — sorted on their own in
+			// prepare_scene, after the queue is capped (#361; the retained instances in front of them are sorted already)
+			m_render_queue.reserve(m_render_queue.size() + m_static_render.size() + m_submit_queue.size());
+			m_render_queue.insert(m_render_queue.end(), m_static_render.begin(), m_static_render.end());
+			m_render_queue.insert(m_render_queue.end(), m_submit_queue.begin(), m_submit_queue.end());
+			m_submit_queue.clear();
+			m_frame_sort_pending = true;
+			m_bone_render.swap(m_bone_submit);
+			m_bone_submit.clear();
+			m_bone_upload_pending = true;
+			m_queue_dirty = true;
+		}
 	}
 
 	// ---------------------------------------------------------------------------------------------
@@ -379,104 +465,161 @@ namespace vortex::graphics::sdlgpu
 	}
 
 	// ---------------------------------------------------------------------------------------------
-	// CPU side: sort, build runs, cull + pack instances (main-thread; MT cull is a follow-up here)
+	// CPU side: build runs, cull + pack instances
 	// ---------------------------------------------------------------------------------------------
+	void SdlGpuRenderer::build_runs(size_t begin, size_t end, size_t join_first, size_t join_last)
+	{
+		auto& reg = ResourceRegistry::instance();
+		size_t i = begin;
+		while (i < end)
+		{
+			const auto idMesh = m_render_queue[i].mesh_id;
+			const auto idMat = m_render_queue[i].material_id;
+			const u32 idLayer = m_render_queue[i].layer;
+			const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
+			const u32 idMirrored = m_render_queue[i].mirrored;
+			size_t j = i;
+			if (skinnedRun) j = i + 1;
+			else while (j < end && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
+				&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer
+				&& m_render_queue[j].mirrored == idMirrored) ++j;
+			// a key the layer's retained instances already have a run for: these items join it (#361) — the pack goes by
+			// m_item_run, so a run's items need not be adjacent in the queue
+			if (!skinnedRun && join_first < join_last)
+			{
+				const u32 hit = instancing::find_run(m_draw_runs, join_first, join_last, m_render_queue[i]);
+				if (hit != instancing::NO_RUN)
+				{
+					m_draw_runs[hit].count += (u32)(j - i);
+					for (size_t k = i; k < j; ++k) m_item_run[k] = hit;
+					i = j;
+					continue;
+				}
+			}
+			Mesh* meshp = reg.get_mesh(idMesh);
+			float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
+			if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
+			DrawRun run{};
+			run.layer = idLayer;
+			run.mirrored = idMirrored != 0;
+			run.start = i; run.count = (u32)(j - i); run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
+			run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
+			run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
+			float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
+			run.localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
+			if (skinnedRun)
+			{
+				run.skinned = true;
+				run.boneOffset = m_render_queue[i].bone_offset;
+				run.boneCount = m_render_queue[i].bone_count;
+				run.palette = m_render_queue[i].palette;
+				run.localR *= 2.0f;
+			}
+			if (m_geo_lod_enabled && !skinnedRun)
+			{
+				if (const auto* chain = reg.get_lod_chain(idMesh); chain && chain->lod_count > 1)
+				{
+					run.lodLevels = chain->lod_count;
+					for (u32 L = 0; L < chain->lod_count && L < 4; ++L) run.lodMesh[L] = chain->lods[L];
+					// thresholds scale with the mesh's radius (#360): a crate thins out at 40 m, a building at 800 m
+					const float radius = run.localR > 0.5f ? run.localR : 0.5f;
+					const float t1 = m_lod_mid * radius, t2 = m_lod_far * radius, t3 = m_lod_far * 1.8f * radius;
+					run.lodT1sq = t1 * t1;
+					run.lodT2sq = t2 * t2;
+					run.lodT3sq = t3 * t3;
+				}
+			}
+			const u32 ri = (u32)m_draw_runs.size();
+			m_draw_runs.push_back(run);
+			for (size_t k = i; k < j; ++k) m_item_run[k] = ri;
+			i = j;
+		}
+	}
+
 	void SdlGpuRenderer::prepare_scene(const FrameView& view)
 	{
 		using namespace DirectX;
+		instancing::ScopedMs timed(m_cpu_stats.cull_ms);   // the sort's share is moved to sort_ms below
 		auto& reg = ResourceRegistry::instance();
 		m_instance_staging.clear();
 		m_instance_count = 0;
 
 		// A mesh was destroyed since the draw runs were built (preview renders, asset reloads, runtime Destroy):
 		// the cached runs hold raw Mesh pointers and the kept queue may still name the dead mesh — drop those items
-		// and rebuild, instead of drawing through freed memory.
+		// and rebuild, instead of drawing through freed memory. Retained instances among them leave the store at the next
+		// swap — only those (#361).
 		if (const u32 gen = reg.mesh_generation(); gen != m_seen_mesh_generation)
 		{
 			m_seen_mesh_generation = gen;
-			m_render_queue.erase(std::remove_if(m_render_queue.begin(), m_render_queue.end(), [&reg](const RenderItem& it)
+			size_t kept = 0, keptRetained = 0;
+			for (size_t k = 0; k < m_render_queue.size(); ++k)
 			{
-				Mesh* m = reg.get_mesh(it.mesh_id);
-				return m == nullptr || !m->is_valid();
-			}), m_render_queue.end());
+				Mesh* m = reg.get_mesh(m_render_queue[k].mesh_id);
+				if (m == nullptr || !m->is_valid()) continue;
+				if (k < m_queue_retained) ++keptRetained;
+				if (kept != k) m_render_queue[kept] = m_render_queue[k];
+				++kept;
+			}
+			if (keptRetained != (std::min)(m_queue_retained, m_render_queue.size()))
+			{
+				m_queue_retained = keptRetained;
+				m_queue_retained_valid = false;
+				m_retained_drop = true;
+			}
+			m_render_queue.resize(kept);
 			m_draw_runs.clear();
 			m_queue_dirty = true;
 		}
 
 		size_t objectCount = (std::min)(m_render_queue.size(), (size_t)MAX_RENDER_OBJECTS);
 		if (m_render_queue.size() > (size_t)MAX_RENDER_OBJECTS) m_render_queue.resize(MAX_RENDER_OBJECTS);
+		if (m_queue_retained > objectCount) { m_queue_retained = objectCount; m_queue_retained_valid = false; }
 		if (objectCount == 0) m_draw_runs.clear();
-		m_mt_active = false;
+		if (m_frame_sort_pending)
+		{
+			// the frame's own submits of the last swap, sorted on their own — after the cap, as the whole queue was before
+			// #361 (the retained instances in front of them are sorted already)
+			const auto t_sort = instancing::Clock::now();
+			const size_t first = (std::min)(m_queue_retained, m_render_queue.size());
+			const XMFLOAT3 eye = view.eye;
+			std::sort(m_render_queue.begin() + (std::ptrdiff_t)first, m_render_queue.end(), [&eye](const RenderItem& a, const RenderItem& b) { return instancing::queue_less(a, b, eye); });
+			m_frame_sort_pending = false;
+			const float ms = instancing::ms_since(t_sort);
+			m_cpu_stats.sort_ms += ms; m_cpu_stats.cull_ms -= ms;
+			m_cpu_stats.sorted += (u32)(m_render_queue.size() - first);
+		}
 
 		const bool needRebuild = m_queue_dirty || (m_draw_runs.empty() && objectCount > 0);
+		m_cpu_stats.queue = (u32)objectCount;
 		if (needRebuild && objectCount > 0)
 		{
-			const XMFLOAT3 eye = view.eye;
-			std::sort(m_render_queue.begin(), m_render_queue.end(), [&eye](const RenderItem& a, const RenderItem& b)
-			{
-				if (a.layer != b.layer) return a.layer < b.layer;
-				if (a.material_id != b.material_id) return a.material_id < b.material_id;
-				if (a.mesh_id != b.mesh_id) return a.mesh_id < b.mesh_id;
-				if (a.mirrored != b.mirrored) return a.mirrored < b.mirrored;
-				float ax = a.world_matrix._41 - eye.x, ay = a.world_matrix._42 - eye.y, az = a.world_matrix._43 - eye.z;
-				float bx = b.world_matrix._41 - eye.x, by = b.world_matrix._42 - eye.y, bz = b.world_matrix._43 - eye.z;
-				return (ax * ax + ay * ay + az * az) < (bx * bx + by * by + bz * bz);
-			});
-
+			const auto t_sort = instancing::Clock::now();
+			// The queue is [the retained instances][the frame's own submits], each part already sorted by (layer, material,
+			// mesh, winding) in the swap (#361) — nothing is sorted here. The runs are built layer by layer across both parts,
+			// so the first-person runs still form the tail the viewmodel pass draws (#175); a frame item whose key the
+			// retained part of its layer has joins that run.
 			m_draw_runs.clear();
 			m_item_run.resize(objectCount);
-			size_t i = 0;
-			while (i < objectCount)
+			const size_t split = m_queue_retained;
+			size_t ra = 0, fa = split;
+			while (ra < split || fa < objectCount)
 			{
-				const auto idMesh = m_render_queue[i].mesh_id;
-				const auto idMat = m_render_queue[i].material_id;
-				const u32 idLayer = m_render_queue[i].layer;
-				const bool skinnedRun = m_render_queue[i].bone_offset != NO_BONES;
-				const u32 idMirrored = m_render_queue[i].mirrored;
-				size_t j = i;
-				if (skinnedRun) j = i + 1;
-				else while (j < objectCount && m_render_queue[j].mesh_id == idMesh && m_render_queue[j].material_id == idMat
-					&& m_render_queue[j].bone_offset == NO_BONES && m_render_queue[j].layer == idLayer
-					&& m_render_queue[j].mirrored == idMirrored) ++j;
-				Mesh* meshp = reg.get_mesh(idMesh);
-				float minx = 0, miny = 0, minz = 0, maxx = 1, maxy = 1, maxz = 1;
-				if (meshp && meshp->is_valid()) { meshp->get_min(minx, miny, minz); meshp->get_max(maxx, maxy, maxz); }
-				DrawRun run{};
-				run.layer = idLayer;
-				run.mirrored = idMirrored != 0;
-				run.start = i; run.count = (u32)(j - i); run.mesh = idMesh; run.mat = idMat; run.meshp = meshp;
-				run.defaultBounds = (minx == 0.f && miny == 0.f && minz == 0.f && maxx == 1.f && maxy == 1.f && maxz == 1.f);
-				run.lcx = (minx + maxx) * 0.5f; run.lcy = (miny + maxy) * 0.5f; run.lcz = (minz + maxz) * 0.5f;
-				float bdx = maxx - minx, bdy = maxy - miny, bdz = maxz - minz;
-				run.localR = 0.5f * sqrtf(bdx * bdx + bdy * bdy + bdz * bdz);
-				if (skinnedRun)
-				{
-					run.skinned = true;
-					run.boneOffset = m_render_queue[i].bone_offset;
-					run.boneCount = m_render_queue[i].bone_count;
-					run.palette = m_render_queue[i].palette;
-					run.localR *= 2.0f;
-				}
-				if (m_geo_lod_enabled && !skinnedRun)
-				{
-					if (const auto* chain = reg.get_lod_chain(idMesh); chain && chain->lod_count > 1)
-					{
-						run.lodLevels = chain->lod_count;
-						for (u32 L = 0; L < chain->lod_count && L < 4; ++L) run.lodMesh[L] = chain->lods[L];
-						// thresholds scale with the mesh's radius (#360): a crate thins out at 40 m, a building at 800 m
-						const float radius = run.localR > 0.5f ? run.localR : 0.5f;
-						const float t1 = m_lod_mid * radius, t2 = m_lod_far * radius, t3 = m_lod_far * 1.8f * radius;
-						run.lodT1sq = t1 * t1;
-						run.lodT2sq = t2 * t2;
-						run.lodT3sq = t3 * t3;
-					}
-				}
-				const u32 ri = (u32)m_draw_runs.size();
-				m_draw_runs.push_back(run);
-				for (size_t k = i; k < j; ++k) m_item_run[k] = ri;
-				i = j;
+				const u32 layer = (std::min)(ra < split ? m_render_queue[ra].layer : 0xFFFFFFFFu, fa < objectCount ? m_render_queue[fa].layer : 0xFFFFFFFFu);
+				size_t re = ra;
+				while (re < split && m_render_queue[re].layer == layer) ++re;
+				const size_t joinFirst = m_draw_runs.size();
+				build_runs(ra, re, joinFirst, joinFirst);
+				const size_t joinLast = m_draw_runs.size();
+				ra = re;
+				size_t fe = fa;
+				while (fe < objectCount && m_render_queue[fe].layer == layer) ++fe;
+				build_runs(fa, fe, joinFirst, joinLast);
+				fa = fe;
 			}
 			m_queue_dirty = false;
+			const float sort_ms = instancing::ms_since(t_sort);
+			m_cpu_stats.sort_ms += sort_ms;
+			m_cpu_stats.cull_ms -= sort_ms;
 		}
 
 		const size_t runN = m_draw_runs.size();
@@ -488,61 +631,91 @@ namespace vortex::graphics::sdlgpu
 		const bool useLod = m_lod_enabled && m_lod_mid > 0.0f && !m_geo_lod_enabled;
 		const float lodMid2 = m_lod_mid * m_lod_mid, lodFar2 = m_lod_far * m_lod_far;
 
-		// Pass A: visibility + LOD bucket per item (stored in m_item_lod; 0xFF = culled).
-		if (m_item_lod.size() < objectCount) m_item_lod.resize(objectCount);
-		std::vector<u32> counts(runN * 4, 0);
-		for (size_t k = 0; k < objectCount; ++k)
+		// The per-instance work runs in chunks of the queue: on the worker threads over m_mt_threshold items (#361 — the
+		// multithreading switch existed here but was never read), on this thread below. Each chunk counts its own items per
+		// (run, LOD) segment and packs into its own part of each segment, the parts in chunk order — the instance buffer
+		// comes out in queue order, exactly as one thread writes it, so nothing on screen depends on the thread count.
+		if (m_worker_count == 0)
 		{
-			const u32 ri = m_item_run[k];
-			const DrawRun& run = m_draw_runs[ri];
-			const RenderItem& item = m_render_queue[k];
-			bool visible = true; int lod = 0;
-			if (!run.defaultBounds && run.layer == 0)
+			const unsigned hc = std::thread::hardware_concurrency();
+			m_worker_count = hc > 9 ? 8u : (hc > 1 ? hc - 1u : 1u);
+		}
+		m_mt_active = m_mt_enabled && m_worker_count > 1 && runN > 0 && (m_mt_force || objectCount >= (size_t)m_mt_threshold);
+		const size_t chunks = m_mt_active ? m_worker_count : 1;
+		const size_t chunkItems = (objectCount + chunks - 1) / chunks;
+		const size_t segs = runN * 4;
+		m_cull_counts.assign(chunks * segs, 0u);
+		if (m_item_lod.size() < objectCount) m_item_lod.resize(objectCount);
+
+		// Pass A: visibility + LOD bucket per item (stored in m_item_lod; 0xFF = culled), counted per chunk.
+		auto passA = [&](size_t c0, size_t c1)
+		{
+			for (size_t c = c0; c < c1; ++c)
 			{
-				const XMFLOAT4X4& W = item.world_matrix;
-				XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(run.lcx, run.lcy, run.lcz, 1.f), XMLoadFloat4x4(&W));
-				float cx = XMVectorGetX(wc), cy = XMVectorGetY(wc), cz = XMVectorGetZ(wc);
-				float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
-				float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
-				float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
-				float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-				visible = sphere_in_frustum(frustum, cx, cy, cz, run.localR * maxScale + 0.05f);
-				if (visible && (useDist || useLod || run.lodLevels > 1))
+				u32* counts = m_cull_counts.data() + c * segs;
+				const size_t k1 = (std::min)((c + 1) * chunkItems, objectCount);
+				for (size_t k = c * chunkItems; k < k1; ++k)
 				{
-					float dx = cx - eye.x, dy = cy - eye.y, dz = cz - eye.z;
-					float d2 = dx * dx + dy * dy + dz * dz;
-					if (useDist && d2 > rd2) visible = false;
-					else if (useLod)
+					const u32 ri = m_item_run[k];
+					const DrawRun& run = m_draw_runs[ri];
+					const RenderItem& item = m_render_queue[k];
+					bool visible = true; int lod = 0;
+					if (!run.defaultBounds && run.layer == 0)
 					{
-						if (d2 > lodFar2) { if ((k & 3) != 0) visible = false; }
-						else if (d2 > lodMid2) { if ((k & 1) != 0) visible = false; }
+						const XMFLOAT4X4& W = item.world_matrix;
+						XMVECTOR wc = XMVector3TransformCoord(XMVectorSet(run.lcx, run.lcy, run.lcz, 1.f), XMLoadFloat4x4(&W));
+						float cx = XMVectorGetX(wc), cy = XMVectorGetY(wc), cz = XMVectorGetZ(wc);
+						float sx = sqrtf(W._11 * W._11 + W._12 * W._12 + W._13 * W._13);
+						float sy = sqrtf(W._21 * W._21 + W._22 * W._22 + W._23 * W._23);
+						float sz = sqrtf(W._31 * W._31 + W._32 * W._32 + W._33 * W._33);
+						float maxScale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+						visible = sphere_in_frustum(frustum, cx, cy, cz, run.localR * maxScale + 0.05f);
+						if (visible && (useDist || useLod || run.lodLevels > 1))
+						{
+							float dx = cx - eye.x, dy = cy - eye.y, dz = cz - eye.z;
+							float d2 = dx * dx + dy * dy + dz * dz;
+							if (useDist && d2 > rd2) visible = false;
+							else if (useLod)
+							{
+								if (d2 > lodFar2) { if ((k & 3) != 0) visible = false; }
+								else if (d2 > lodMid2) { if ((k & 1) != 0) visible = false; }
+							}
+							else if (run.lodLevels > 1)
+							{
+								lod = (d2 > run.lodT3sq) ? 3 : (d2 > run.lodT2sq) ? 2 : (d2 > run.lodT1sq) ? 1 : 0;
+								if (lod >= (int)run.lodLevels) lod = (int)run.lodLevels - 1;
+							}
+						}
 					}
-					else if (run.lodLevels > 1)
-					{
-						lod = (d2 > run.lodT3sq) ? 3 : (d2 > run.lodT2sq) ? 2 : (d2 > run.lodT1sq) ? 1 : 0;
-						if (lod >= (int)run.lodLevels) lod = (int)run.lodLevels - 1;
-					}
+					if (visible) { m_item_lod[k] = (unsigned char)lod; counts[(size_t)ri * 4 + lod]++; }
+					else m_item_lod[k] = 0xFF;
 				}
 			}
-			if (visible) { m_item_lod[k] = (unsigned char)lod; counts[(size_t)ri * 4 + lod]++; }
-			else m_item_lod[k] = 0xFF;
-		}
+		};
+		if (m_mt_active) m_cull_pool.run((u32)chunks, chunks, passA);
+		else passA(0, 1);
 
-		// Compact prefix sums: each run gets a contiguous slab, LOD segments contiguous inside it.
+		// Compact prefix sums: each run gets a contiguous slab, LOD segments contiguous inside it, and every chunk its part
+		// of a segment (the counts become the chunks' pack cursors).
 		u32 globalBase = 0;
-		std::vector<u32> cursor(runN * 4, 0);
 		for (size_t r = 0; r < runN; ++r)
 		{
 			m_draw_runs[r].vbBase = globalBase;
 			u32 localBase = 0;
 			for (int L = 0; L < 4; ++L)
 			{
-				u32 cnt = counts[r * 4 + L];
 				const u32 segStart = globalBase + localBase;
+				u32 cnt = 0;
+				for (size_t c = 0; c < chunks; ++c)
+				{
+					u32& n = m_cull_counts[c * segs + r * 4 + L];
+					const u32 part = n;
+					n = segStart + cnt;
+					cnt += part;
+				}
 				if (segStart >= MAX_RENDER_OBJECTS) cnt = 0;
 				else if (segStart + cnt > MAX_RENDER_OBJECTS) cnt = MAX_RENDER_OBJECTS - segStart;
 				m_draw_runs[r].lodCount[L] = cnt;
-				cursor[r * 4 + L] = segStart;
 				localBase += cnt;
 			}
 			m_draw_runs[r].visible = localBase;
@@ -551,14 +724,24 @@ namespace vortex::graphics::sdlgpu
 
 		// Pass B: pack the visible world matrices into the staging vector at their slab positions.
 		m_instance_staging.resize((size_t)globalBase * 16);
-		for (size_t k = 0; k < objectCount; ++k)
+		auto passB = [&](size_t c0, size_t c1)
 		{
-			const unsigned char lod = m_item_lod[k];
-			if (lod == 0xFF) continue;
-			const u32 ri = m_item_run[k];
-			const u32 dst = cursor[(size_t)ri * 4 + lod]++;
-			if (dst < globalBase) pack_instance(m_instance_staging.data() + (size_t)dst * 16, m_render_queue[k]);
-		}
+			for (size_t c = c0; c < c1; ++c)
+			{
+				u32* cursor = m_cull_counts.data() + c * segs;
+				const size_t k1 = (std::min)((c + 1) * chunkItems, objectCount);
+				for (size_t k = c * chunkItems; k < k1; ++k)
+				{
+					const unsigned char lod = m_item_lod[k];
+					if (lod == 0xFF) continue;
+					const u32 ri = m_item_run[k];
+					const u32 dst = cursor[(size_t)ri * 4 + lod]++;
+					if (dst < globalBase) pack_instance(m_instance_staging.data() + (size_t)dst * 16, m_render_queue[k]);
+				}
+			}
+		};
+		if (m_mt_active) m_cull_pool.run((u32)chunks, chunks, passB);
+		else passB(0, 1);
 
 		// Gizmo items ride in the same buffer after the scene slabs (solid list first, then wire).
 		m_gizmo_instance_base = globalBase;

@@ -17,6 +17,7 @@
 #include "../Decals/Decals.h"
 #include "../Skinning/BonePalettes.h"   // the palette stage + per-view budget shared with the SDL GPU backend (#415)
 #include "../Lighting/LightSelection.h"  // the light budget shared with the SDL GPU backend (#416)
+#include "../Instancing/RenderQueue.h"     // the scene queue's CPU stats, shared with the SDL GPU backend (#361)
 #include "DX12UpscalePipeline.h"
 #include "DX12PostFxChain.h"
 #include "DX12MotionVectorPipeline.h"
@@ -24,7 +25,7 @@
 #include "DX12RenderTarget.h"
 #include "DX12Streamline.h"   // DLSS SR + Frame Generation (inline set_fg_mode/fg_presented_fps below)
 #include "DX12Geometry.h"
-#include "CullWorkerPool.h"
+#include "../Instancing/CullWorkerPool.h"   // shared with the SDL GPU backend (#361)
 #include "UIOverlay.h"
 #include "../Resources/Mesh.h"
 #include <d3d12.h>
@@ -173,6 +174,17 @@ namespace vortex::graphics::dx12
 		void clear_render_queue();
 		void begin_static_scene();
 		void end_static_scene();
+		// Retained instances (#361): the scene's persistent rigid meshes, changed by handle — see Instancing/RenderQueue.h.
+		void apply_instance_ops(const instancing::InstanceOp* ops, u32 count);
+		// Counts up whenever the renderer dropped them all (scene switch, a mesh they drew was destroyed): the scene sends
+		// its instances again when it sees a new value.
+		u32 instance_epoch();
+		void clear_instances();
+		// The next swap replaces the frame's own submits even when this frame submitted none (the scene has nothing that is
+		// submitted per frame any more).
+		void mark_frame_submit();
+		// Previews draw their own items only: hidden, the retained instances stay out of the render queue.
+		void set_instances_visible(bool visible);
 
 		// Camera
 		void set_camera(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT3& target, const DirectX::XMFLOAT3& up);
@@ -457,6 +469,8 @@ namespace vortex::graphics::dx12
 		// Cull stats (per frame): instances examined vs actually drawn — proves cull effectiveness on big maps.
 		int get_instances_tested() const { return m_instances_tested; }
 		int get_instances_drawn() const { return m_instances_drawn; }
+		// What the scene queue cost the CPU in the last frame (#361): swap, sort + draw runs, cull + pack, shadow casters.
+		const instancing::CpuStats& cpu_stats() const { return m_cpu_stats_last; }
 		// The frame budgets of the main view: bone matrices in the GPU palette buffer / its capacity, and the skinned draws in
 		// view that had no room for their palette (drawn in the bind pose, #415); the point / spot lights submitted and holding
 		// a shader slot, and the lights that got or gave up a slot in the last frame (#416).
@@ -820,6 +834,25 @@ namespace vortex::graphics::dx12
 		std::vector<RenderItem> m_static_submit, m_static_render;
 		bool m_static_pending{ false };
 		int m_submit_target{ 0 };   // 0 = dynamic (per frame), 1 = static (retained)
+		// Retained instances (#361). The render queue is [the retained instances, sorted][the frame's own submits, sorted]:
+		// m_queue_retained of them lead it, and m_queue_retained_valid says they match the store (else the next swap copies
+		// them again). m_frame_scratch carries a kept frame part across a re-copy of the retained part.
+		instancing::RetainedInstances<RenderItem> m_retained;
+		std::vector<RenderItem> m_frame_scratch;
+		size_t m_queue_retained{ 0 };
+		bool m_queue_retained_valid{ false };
+		bool m_frame_submitted{ false };
+		bool m_frame_sort_pending{ false };       // the queue's frame part arrived unsorted: render_3d_scene sorts it
+		bool m_retained_visible{ true };
+		bool m_retained_drop{ false };            // render_3d_scene found a destroyed mesh among them: the next swap drops those instances
+		u32 m_retained_mesh_generation{ 0 };
+		u32 m_seen_mesh_generation{ 0 };          // ResourceRegistry::mesh_generation() the cached draw runs were built against
+		DirectX::XMFLOAT3 m_retained_eye{};       // where the distances inside the retained runs were measured
+		u32 m_retained_refresh_frame{ 0 };
+		instancing::Sync sync_retained();
+		// the draw runs over [begin, end) of the sorted render queue, appended to m_draw_runs; items whose key one of the
+		// runs [join_first, join_last) has join it
+		void build_runs(size_t begin, size_t end, size_t join_first, size_t join_last);
 		// Separate double-buffered queue for editor gizmos so the optimized scene path never touches them; they draw
 		// in render_gizmos() after the scene with the depth-disabled gizmo PSO (always on top).
 		std::vector<RenderItem> m_gizmo_render;
@@ -878,6 +911,7 @@ namespace vortex::graphics::dx12
 		int  m_mt_threshold{ 2048 };          // min instances before parallelizing
 		u32  m_worker_count{ 0 };             // lazily computed = clamp(hw_concurrency-1, 1, 8)
 		CullWorkerPool m_cull_pool;           // persistent workers (NEVER spawn threads per frame — debugger death)
+		instancing::CpuStats m_cpu_stats, m_cpu_stats_last;   // this frame's (accumulating) and the last finished frame's (#361)
 
 		// Camera
 		DirectX::XMFLOAT3 m_camera_position{ 0.0f, 3.0f, -8.0f };

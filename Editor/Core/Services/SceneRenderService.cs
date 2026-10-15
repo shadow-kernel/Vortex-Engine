@@ -11,7 +11,7 @@ namespace Editor.Core.Services
     /// Manages rendering of scene entities in the viewport.
     /// Acts as bridge between Editor entities and Engine rendering.
     /// </summary>
-    public class SceneRenderService : IDisposable
+    public partial class SceneRenderService : IDisposable
     {
         private static SceneRenderService _instance;
         public static SceneRenderService Instance
@@ -188,7 +188,7 @@ namespace Editor.Core.Services
         // thousands of times per frame. These keep that loop allocation-free and cheap.
         // One GPU mesh per primitive kind ("Primitive:Cube") for the whole scene — never one per entity.
         private static readonly Dictionary<string, long> _primitiveMeshCache = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        // Every SHARED mesh id (model submeshes + primitives): never DeleteMesh'd on behalf of one entity.
+        // Every SHARED mesh id (model submeshes, .vmesh files, primitives): never DeleteMesh'd on behalf of one entity.
         private static readonly HashSet<long> _sharedMeshIds = new HashSet<long>();
         // A model path's "path#submeshN" keys + mesh ids, resolved once — the per-frame loop no longer builds up to
         // 64 strings and misses up to 64 dictionary lookups per entity. Cleared whenever the submesh cache changes.
@@ -294,6 +294,7 @@ namespace Editor.Core.Services
         {
             if (!string.IsNullOrEmpty(meshPath) && materialId >= 0)
             {
+                if (!_meshPathToMaterialId.TryGetValue(meshPath, out long was) || was != materialId) ResolveEpoch++;   // the retained nodes resolve again (#361)
                 _meshPathToMaterialId[meshPath] = materialId;
                 _sharedMaterialIds.Add(materialId);   // shared by every entity of that model: never deleted per entity
                 Log($"[SceneRenderService] Registered material {materialId} for mesh path: {meshPath}");
@@ -310,6 +311,7 @@ namespace Editor.Core.Services
                 _submeshMeshCache[meshPath] = meshId;
                 _sharedMeshIds.Add(meshId);
                 _resolvedSubmeshes.Clear();   // per-path submesh sets are re-resolved on the next submit
+                ResolveEpoch++;
                 Log($"[SceneRenderService] Registered mesh {meshId} for path: {meshPath}");
             }
         }
@@ -328,7 +330,12 @@ namespace Editor.Core.Services
             foreach (var k in _submeshMeshCache.Keys) if (SameModel(k, target)) keys.Add(k);
             foreach (var k in _meshPathToMaterialId.Keys) if (SameModel(k, target)) keys.Add(k);
             foreach (var k in _meshBoundsCache.Keys) if (SameModel(k, target)) keys.Add(k);
-            if (keys.Count == 0) return;
+            if (keys.Count == 0)
+            {
+                // never loaded (missing, or it failed): the entities that wait for it try again now — it may just have arrived
+                _instance?.RetryUnresolvedNow();
+                return;
+            }
             var ids = new HashSet<long>();
             foreach (var k in keys)
             {
@@ -340,13 +347,17 @@ namespace Editor.Core.Services
                 _isModelPath.Remove(k);
             }
             _resolvedSubmeshes.Clear();
+            var inst = Instance;
+            // the retained instances that draw them leave the renderer before the meshes are freed — only those; their entities
+            // resolve the model again on the next submit, which this requests (#361)
+            if (inst != null) inst.ReleaseMeshes(ids);
             foreach (var id in ids)
             {
                 _sharedMeshIds.Remove(id);
                 try { VortexAPI.DeleteMesh(id); } catch { }
             }
-            var inst = Instance;
             if (inst != null) inst.ForgetEntityMeshes(ids);
+            ResolveEpoch++;   // the retained nodes of that model resolve again (#361)
             RuntimeDirty = true;
         }
 
@@ -541,6 +552,7 @@ namespace Editor.Core.Services
             if (scene == null) return;
 
             _vmatPathCache.Clear();   // fresh material resolution for the (re)loaded scene
+            ResolveEpoch++;
             Decals.DecalService.ClearMaterialCache();
             try { EvictModelsUnusedBy(scene); } catch { }   // the previous scene's models go (#358)
             Log($"[SceneRenderService] Preloading assets for scene: {scene.Name}");
@@ -670,40 +682,8 @@ namespace Editor.Core.Services
             if (animator != null && animator.IsEnabled)
                 Core.Animation.AnimationService.Instance.TryGetPalette(animatorOwner, meshRenderer.MeshPath, out bonePalette, out boneCount);
 
-            // Render layer (#175): 0 = world, 1 = first-person viewmodel (second pass, own FOV, depth
-            // cleared, casts no shadows), 2 = third-person only (hidden for the local player in play).
-            // Travels with every submit variant below. While playing (editor play, game window, GameHost)
-            // the layers always behave like the shipped game; in edit mode the viewport's preview mode
-            // decides how FP/3P meshes are presented (see ViewmodelPreviewMode).
             int layer = meshRenderer.RenderLayer;
-            if (layer < 0 || layer > 2) layer = 0;   // unknown layers = world geometry, in editor AND play
-            if (layer != 0)
-            {
-                if (DebugThirdPersonView)
-                {
-                    // In-game debug freecam: you are now an EXTERNAL camera looking AT the player, so render
-                    // like OTHER cameras see them — show the third-person body (layer 2) as world geometry,
-                    // hide the local first-person viewmodel (layer 1). Takes priority over the play-like FP
-                    // behaviour so flying out shows the character cleanly instead of nothing + floating arms.
-                    // DebugShowViewmodel inverts that: the freecam inspects the FIRST-PERSON arms + weapon
-                    // (grip / finger placement) as world geometry and hides the body instead.
-                    if (layer == (DebugShowViewmodel ? 2 : 1)) return;
-                    layer = 0;
-                }
-                else if (IsPlayLike || EditorViewmodelPreview == ViewmodelPreviewMode.GameView)
-                {
-                    if (layer == 2) return;            // third-person only: the local player never sees it
-                }
-                else if (EditorViewmodelPreview == ViewmodelPreviewMode.Hidden)
-                {
-                    if (layer == 1) return;            // FP meshes live in the game's FP pass, not the build view
-                    layer = 0;                          // 3P body: normal world object while editing
-                }
-                else // AsWorld — placement mode: draw FP/3P meshes as plain world geometry
-                {
-                    layer = 0;
-                }
-            }
+            if (!PresentLayer(ref layer)) return;
 
             // Imported models (no explicit .vmat) are multi-submesh with per-submesh colored materials —
             // submit EVERY submesh, not just the first, so e.g. a Kenney tree shows trunk + leaves.
@@ -737,6 +717,44 @@ namespace Editor.Core.Services
             else
                 SubmitRigid(meshId, materialId, worldMatrix, layer, r, g, b, a);
             _submitN++;
+        }
+
+        /// <summary>
+        /// Render layer (#175): 0 = world, 1 = first-person viewmodel (second pass, own FOV, depth cleared, casts no
+        /// shadows), 2 = third-person only (hidden for the local player in play). The layer a MeshRenderer's RenderLayer is
+        /// drawn on now, or false when it is not drawn at all. While playing (editor play, game window, GameHost) the layers
+        /// always behave like the shipped game; in edit mode the viewport's preview mode decides how FP/3P meshes are
+        /// presented (see ViewmodelPreviewMode). Shared by every submit path.
+        /// </summary>
+        private static bool PresentLayer(ref int layer)
+        {
+            if (layer < 0 || layer > 2) layer = 0;   // unknown layers = world geometry, in editor AND play
+            if (layer == 0) return true;
+            if (DebugThirdPersonView)
+            {
+                // In-game debug freecam: you are now an EXTERNAL camera looking AT the player, so render
+                // like OTHER cameras see them — show the third-person body (layer 2) as world geometry,
+                // hide the local first-person viewmodel (layer 1). Takes priority over the play-like FP
+                // behaviour so flying out shows the character cleanly instead of nothing + floating arms.
+                // DebugShowViewmodel inverts that: the freecam inspects the FIRST-PERSON arms + weapon
+                // (grip / finger placement) as world geometry and hides the body instead.
+                if (layer == (DebugShowViewmodel ? 2 : 1)) return false;
+                layer = 0;
+            }
+            else if (IsPlayLike || EditorViewmodelPreview == ViewmodelPreviewMode.GameView)
+            {
+                if (layer == 2) return false;            // third-person only: the local player never sees it
+            }
+            else if (EditorViewmodelPreview == ViewmodelPreviewMode.Hidden)
+            {
+                if (layer == 1) return false;            // FP meshes live in the game's FP pass, not the build view
+                layer = 0;                                // 3P body: normal world object while editing
+            }
+            else // AsWorld — placement mode: draw FP/3P meshes as plain world geometry
+            {
+                layer = 0;
+            }
+            return true;
         }
 
         /// <summary>A rigid (non-skinned) submit: batched per (mesh, material, layer) inside SubmitScene, immediate
@@ -886,28 +904,66 @@ namespace Editor.Core.Services
             }
         }
 
+        /// <summary>The whole last <see cref="SubmitScene"/> (lights, decals, terrain, foliage, water, meshes) in ms, and what it
+        /// allocated on the calling thread (#361) — the bench and the player's FPS line read them.</summary>
+        public static double LastSceneSubmitMs;
+        public static long LastSceneSubmitAllocBytes;
+        /// <summary>The phases of the last SubmitScene in ms: lights, decals, terrain, foliage, water, meshes.</summary>
+        public static readonly double[] LastSubmitPhaseMs = new double[6];
+        /// <summary>SubmitScene calls so far — a frame counter for measurements.</summary>
+        public static long SubmitCount;
+
         public void SubmitScene(Data.Scene scene)
         {
             if (scene == null || scene.Entities == null) return;
+            long alloc0 = GC.GetAllocatedBytesForCurrentThread();
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp(), t = t0;
+            void Phase(int i) { long now = System.Diagnostics.Stopwatch.GetTimestamp(); LastSubmitPhaseMs[i] = (now - t) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; t = now; }
 
-            // Clear and submit all lights first
-            SubmitSceneLights(scene);
-            Decals.DecalService.Submit(scene, IsPlayLike);   // #120: the scene's Decal components + spawned decals, like the lights
-            Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike);   // #124: the terrains' LOD chunks (built / rebuilt here)
-            Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike);   // #125: painted foliage through the instancing path
-            Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike);   // #200: water surfaces into the transparent pass
+            // #361: the retained meshes first — their walk (only after a structure change in play) indexes what the lights,
+            // decals, terrains, foliage and water need, so those no longer walk the whole scene every frame
+            long tMeshes = System.Diagnostics.Stopwatch.GetTimestamp();
+            long meshTicks;
+            bool retainedTried = _retainedEnabled;
+            try
+            {
+                bool retained = _retainedEnabled && PrepareRetained(scene);
+                meshTicks = System.Diagnostics.Stopwatch.GetTimestamp() - tMeshes;
+                var index = retained ? _index : null;
+                t = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            var swSubmit = System.Diagnostics.Stopwatch.StartNew();
-            if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
-            else SubmitSceneFull(scene);
-            swSubmit.Stop();
-            LastSubmitMs = swSubmit.Elapsed.TotalMilliseconds; LastSubmitMeshes = _submitN;
+                // Clear and submit all lights first
+                SubmitSceneLights(scene, index); Phase(0);
+                Decals.DecalService.Submit(scene, IsPlayLike, index?.Decals); Phase(1);   // #120: the scene's Decal components + spawned decals, like the lights
+                Editor.Core.Services.Terrain.TerrainService.Submit(scene, IsPlayLike, index?.Terrains); Phase(2);   // #124: the terrains' LOD chunks (built / rebuilt here)
+                Editor.Core.Services.Foliage.FoliageService.Submit(scene, IsPlayLike, index?.Foliage); Phase(3);   // #125: painted foliage through the instancing path
+                Editor.Core.Services.Water.WaterService.Submit(scene, IsPlayLike, index?.Water); Phase(4);   // #200: water surfaces into the transparent pass
+
+                tMeshes = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (retained) FinishRetained();   // the animated entities, then every instance change in one call
+                else if (_splitEnabled && IsPlayLike) SubmitSceneSplit(scene);
+                else SubmitSceneFull(scene);
+            }
+            catch (Exception ex)
+            {
+                // the retained instances' bookkeeping ran ahead of the ops that never reached the renderer: start over (#361)
+                if (retainedTried) RetainedFailed(ex);
+                throw;
+            }
+            Phase(5);
+            meshTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tMeshes;
+            LastSubmitPhaseMs[5] = meshTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            LastSubmitMs = LastSubmitPhaseMs[5];
+            LastSubmitMeshes = _submitN;
+            LastSceneSubmitMs = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            LastSceneSubmitAllocBytes = GC.GetAllocatedBytesForCurrentThread() - alloc0;
+            SubmitCount++;
             // a slow submit is either the first one (it imports every model) or a scene too big for the per-frame
             // re-submit (#364 A) — say so, at most once every 10 s
-            if (swSubmit.ElapsedMilliseconds > 500 && (DateTime.UtcNow - _slowSubmitLogAt).TotalSeconds > 10)
+            if (LastSubmitMs > 500 && (DateTime.UtcNow - _slowSubmitLogAt).TotalSeconds > 10)
             {
                 _slowSubmitLogAt = DateTime.UtcNow;
-                try { ConsoleService.Instance.LogSystem("Scene submit '" + scene.Name + "': " + _submitN + " meshes in " + swSubmit.ElapsedMilliseconds + " ms"); } catch { }
+                try { ConsoleService.Instance.LogSystem("Scene submit '" + scene.Name + "': " + _submitN + " meshes in " + (long)LastSubmitMs + " ms"); } catch { }
             }
             if (scene.Name != "Lobby" && _ssDbg < 12) { _ssDbg++; try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vortex_submit.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " SubmitScene '" + scene.Name + "' topEnts=" + System.Linq.Enumerable.Count(scene.Entities) + " submitted=" + _submitN + "\r\n"); } catch { } }
 
@@ -1679,6 +1735,7 @@ namespace Editor.Core.Services
                 // Check if it's a .vmesh file (binary format - fast load)
                 if (extension == ".vmesh")
                 {
+                    long vmesh = -1;
                     if (fromVfs)
                     {
                         // Shipped game: the native .vmesh loader is disk-path only (no bytes overload). Spill the
@@ -1693,11 +1750,21 @@ namespace Editor.Core.Services
                                 System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(tmp));
                                 System.IO.File.WriteAllBytes(tmp, vfsBytes);
                             }
-                            return VortexAPI.LoadVMeshFromFile(tmp);
+                            vmesh = VortexAPI.LoadVMeshFromFile(tmp);
                         }
                         catch { return -1; }
                     }
-                    return VortexAPI.LoadVMeshFromFile(fullPath);
+                    else vmesh = VortexAPI.LoadVMeshFromFile(fullPath);
+                    // one GPU mesh per .vmesh path, shared by every entity that draws it (#359): each entity used to load
+                    // its own copy — a forest of one palm was one upload and one draw run per tree. Like a model's
+                    // submeshes it is owned by the path cache: freed when no scene uses it (#358), reloaded when the
+                    // file changes (InvalidateModel), never on behalf of one entity.
+                    if (vmesh >= 0)
+                    {
+                        _submeshMeshCache[meshPath] = vmesh;
+                        _sharedMeshIds.Add(vmesh);
+                    }
+                    return vmesh;
                 }
 
                 // For model files (FBX, OBJ, etc.) - use multi-material import
@@ -1768,6 +1835,7 @@ namespace Editor.Core.Services
                         _submeshMeshCache[actualPath] = submeshes[0].MeshId;
                         _sharedMeshIds.Add(submeshes[0].MeshId);
                         _resolvedSubmeshes.Clear();   // the per-path submesh sets pick the new entries up next submit
+                        ResolveEpoch++;
 
                         // finish the import cache for the next start (#364 C): the manifest is written last and only
                         // when the engine wrote every submesh file and the material records; anything else (skinned
@@ -2202,6 +2270,7 @@ namespace Editor.Core.Services
                 if (!_sharedMeshIds.Contains(meshId)) VortexAPI.DeleteMesh(meshId);
                 _entityMeshes.Remove(entityId);
             }
+            ResolveEpoch++;   // the retained nodes resolve again (#361)
         }
 
         /// <summary>
@@ -2223,8 +2292,15 @@ namespace Editor.Core.Services
         public void RemoveEntityTree(GameEntity e)
         {
             if (e == null) return;
+            // its retained instances leave the renderer first, before a mesh of its own is freed under them (#361)
+            try { ReleaseTree(e); FlushOps(); } catch { }
+            RemoveEntityTreeResources(e);
+        }
+
+        private void RemoveEntityTreeResources(GameEntity e)
+        {
             try { RemoveEntity(e.Id); } catch { }
-            if (e.Children != null) for (int i = 0; i < e.Children.Count; i++) RemoveEntityTree(e.Children[i]);
+            if (e.Children != null) for (int i = 0; i < e.Children.Count; i++) RemoveEntityTreeResources(e.Children[i]);
         }
 
         /// <summary>
@@ -2257,6 +2333,9 @@ namespace Editor.Core.Services
         /// </summary>
         public void ClearAllRenderables()
         {
+            // the retained instances first: they may draw meshes freed below (#361)
+            DropRetained(clearNative: true);
+            ResolveEpoch++;
             // CRITICAL: imported MODEL meshes are SHARED + owned by _submeshMeshCache (loaded ONCE from a file,
             // reused by every entity that references the same path — incl. all Ctrl+D duplicates — and kept
             // resident across scene reloads so re-loading never re-imports). _entityMeshes maps MANY entities to
@@ -2527,7 +2606,7 @@ namespace Editor.Core.Services
         /// <summary>
         /// Submit all lights in the scene to the renderer.
         /// </summary>
-        private void SubmitSceneLights(Data.Scene scene)
+        private void SubmitSceneLights(Data.Scene scene, SceneIndex index = null)
         {
             // Clear previous frame's lights
             VortexAPI.ClearAllLights();
@@ -2536,11 +2615,13 @@ namespace Editor.Core.Services
             _hasDirectionalLight = false;
             _hasSkybox = false;
 
-            // Collect and submit all lights and skybox
-            foreach (var entity in scene.Entities)
+            // Collect and submit all lights and skybox — from the scene index when there is one (#361), else by walking
+            if (index != null)
             {
-                SubmitEntityLightsRecursive(entity);
+                var lights = index.Lights;
+                for (int i = 0; i < lights.Count; i++) SubmitEntityLights(lights[i]);
             }
+            else foreach (var entity in scene.Entities) SubmitEntityLightsRecursive(entity);
 
             // If no lights in scene, use default directional light
             if (!_hasSceneLights)
@@ -2743,6 +2824,16 @@ namespace Editor.Core.Services
             // the session flag must stay inert during play/GameHost re-submits).
             if (entity.IsHiddenInEditor && !IsPlayLike) return;
 
+            SubmitEntityLights(entity);
+
+            // Process children
+            var children = entity.Children;
+            for (int i = 0; i < children.Count; i++) SubmitEntityLightsRecursive(children[i]);
+        }
+
+        /// <summary>One visible entity's Skybox and Light (the scene index lists the entities that have one, #361).</summary>
+        private void SubmitEntityLights(GameEntity entity)
+        {
             // Check for Skybox component
             var skybox = entity.GetComponent<Skybox>();
             if (skybox != null && skybox.IsEnabled)
@@ -2834,10 +2925,9 @@ namespace Editor.Core.Services
                     // player camera, and lights used to submit LocalPosition/LocalRotation: a parented spot
                     // rendered at its local offset near the origin with an unrotated cone. Meshes already
                     // accumulate the chain; lights now match. Local forward is +Z (the old Euler math was
-                    // exactly Ry·Rx·(0,0,1)), so the world forward is the matrix's third basis row.
-                    float[] wm;
-                    try { wm = BuildWorldMatrixWithParent(entity); }
-                    catch { wm = BuildWorldMatrix(transform); }
+                    // exactly Ry·Rx·(0,0,1)), so the world forward is the matrix's third basis row. The transform's cached
+                    // world matrix (#361) — the same values, without two new arrays per level and frame.
+                    float[] wm = transform.WorldMatrix;
                     float px = wm[12], py = wm[13], pz = wm[14];
                     float dirX = wm[8], dirY = wm[9], dirZ = wm[10];
                     float dl = (float)Math.Sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
@@ -2895,15 +2985,6 @@ namespace Editor.Core.Services
                                 LightIdOf(entity));
                             break;
                     }
-                }
-            }
-
-            // Process children
-            if (entity.Children != null)
-            {
-                foreach (var child in entity.Children)
-                {
-                    SubmitEntityLightsRecursive(child);
                 }
             }
         }

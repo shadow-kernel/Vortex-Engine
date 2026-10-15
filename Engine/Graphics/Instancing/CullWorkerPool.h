@@ -7,7 +7,7 @@
 #include <functional>
 #include <vector>
 
-namespace vortex::graphics::dx12
+namespace vortex::graphics
 {
 	// Persistent worker pool for the per-frame parallel cull/pack.
 	//

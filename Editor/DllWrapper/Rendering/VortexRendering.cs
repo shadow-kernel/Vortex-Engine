@@ -423,6 +423,69 @@ namespace Editor.DllWrapper
             try { EndStaticScene(); } catch { }
         }
 
+        /// <summary>One change of a retained render instance (#361) — the layout of instancing::InstanceOp in
+        /// Engine/Graphics/Instancing/RenderQueue.h, 112 bytes.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public unsafe struct RenderInstanceOp
+        {
+            public int Handle;        // the scene's id of the instance: small, dense, reused after a remove
+            public int Kind;          // InstanceSet / InstanceMove / InstanceRemove
+            public long Mesh;
+            public long Material;
+            public int Layer;         // 0 world, 1 first-person viewmodel (#175)
+            public int Reserved;
+            public fixed float World[16];   // row-major, row 3 = translation
+            public fixed float Color[4];    // the per-instance tint (#331)
+
+            public float WorldAt(int i) => World[i];
+            public float ColorAt(int i) => Color[i];
+        }
+
+        /// <summary>Create or replace an instance (mesh, material, layer, matrix, tint).</summary>
+        public const int InstanceSet = 0;
+        /// <summary>Matrix and tint only: the instance keeps its draw run.</summary>
+        public const int InstanceMove = 1;
+        public const int InstanceRemove = 2;
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ApplyRenderInstances")]
+        private static extern unsafe uint ApplyRenderInstancesNative(RenderInstanceOp* ops, int count);
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "RenderInstancesEpoch")]
+        private static extern uint RenderInstancesEpochNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "ClearRenderInstances")]
+        private static extern void ClearRenderInstancesNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "MarkFrameSubmit")]
+        private static extern void MarkFrameSubmitNative();
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "SetRenderInstancesVisible")]
+        private static extern void SetRenderInstancesVisibleNative([MarshalAs(UnmanagedType.I1)] bool visible);
+
+        /// <summary>Retained instances (#361): the scene's persistent rigid meshes, changed by handle in one call per frame —
+        /// a moved instance is updated in place, the renderer re-sorts only when the set of (mesh, material, layer) changes.
+        /// <paramref name="epoch"/> counts up whenever the renderer dropped every instance (scene switch, a mesh they drew was
+        /// destroyed): the scene then sends them all again. False with an engine library older than the retained instances.</summary>
+        public static unsafe bool TryApplyRenderInstances(RenderInstanceOp[] ops, int count, out uint epoch)
+        {
+            epoch = 0;
+            try
+            {
+                // by pointer: the array grows to the largest batch (a whole scene) and must never be marshalled per call
+                if (ops == null || count <= 0) { epoch = RenderInstancesEpochNative(); return true; }
+                fixed (RenderInstanceOp* p = ops) epoch = ApplyRenderInstancesNative(p, System.Math.Min(count, ops.Length));
+                return true;
+            }
+            catch (System.EntryPointNotFoundException) { return false; }
+            catch (System.DllNotFoundException) { return false; }
+        }
+
+        /// <summary>Drop every retained instance (the scene's renderables were cleared).</summary>
+        public static void ClearRenderInstances() { try { ClearRenderInstancesNative(); } catch { } }
+
+        /// <summary>The frame's own submits (skinned characters, terrain, foliage, water …) replace the last frame's at the next
+        /// swap even when this frame submitted none — called by every scene submit.</summary>
+        public static void MarkFrameSubmit() { try { MarkFrameSubmitNative(); } catch { } }
+
+        /// <summary>Previews render their own items only: hidden, the retained instances stay out of the render queue.</summary>
+        public static void SetRenderInstancesVisible(bool visible) { try { SetRenderInstancesVisibleNative(visible); } catch { } }
+
         #endregion
 
         #region Grid & Gizmos Visibility
@@ -536,6 +599,20 @@ namespace Editor.DllWrapper
         public static int InstancesTested { get { try { return GetInstancesTested(); } catch { return 0; } } }
         /// <summary>Instances that survived culling and were drawn this frame.</summary>
         public static int InstancesDrawn { get { try { return GetInstancesDrawn(); } catch { return 0; } } }
+
+        [DllImport(_dllName, CallingConvention = _cc, EntryPoint = "GetRenderCpuStats")]
+        private static extern int GetRenderCpuStatsNative(float[] values, int count);
+
+        /// <summary>What the scene queue cost the CPU in the last frame (#361): [0] swap ms, [1] sort + draw-run build ms,
+        /// [2] cull + instance pack ms (all views), [3] shadow caster ms, [4] items sorted, [5] items in the render queue,
+        /// [6] the frame's index (counts up). False with an older engine library.</summary>
+        public static bool TryGetRenderCpuStats(float[] values)
+        {
+            if (values == null || values.Length == 0) return false;
+            try { return GetRenderCpuStatsNative(values, values.Length) > 0; }
+            catch (System.EntryPointNotFoundException) { return false; }
+            catch (System.DllNotFoundException) { return false; }
+        }
         /// <summary>Generic render-distance cull in world units (0 = disabled). From the game's graphics settings.</summary>
         public static void RenderDistance(float distance) { try { SetRenderDistance(distance); } catch { } }
         /// <summary>Density LOD: thin distant instances (1/2 beyond mid, 1/4 beyond far world units).</summary>

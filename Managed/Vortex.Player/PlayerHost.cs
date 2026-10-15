@@ -43,6 +43,12 @@ namespace Vortex.Player
         private static Editor.Core.Data.Scene _sceneToStart;   // the scripts start in the first tick, once the window exists
 
         private static int _gc0Last, _gc2Last;   // GC counts at the last FPS line
+        // per-frame sums over the FPS line's window (#361): scene submit (all / meshes), the renderer's queue CPU time,
+        // and the bytes the main thread allocated per frame
+        private static double _sumSubmitAll, _sumSubmitMesh, _maxSubmitAll, _sumSwap, _sumSort, _sumCull, _sumShadow;
+        private static long _sumSubmitAlloc, _allocLast = -1, _sumFrameAlloc;
+        private static int _statFrames;
+        private static readonly float[] _cpu = new float[6];
 
         public static int Run(PlayerOptions options)
         {
@@ -342,13 +348,22 @@ namespace Vortex.Player
                 {
                     var p = ProjectData.Current;
                     int gc0 = GC.CollectionCount(0), gc2 = GC.CollectionCount(2);
+                    var ci = System.Globalization.CultureInfo.InvariantCulture;
+                    double n = Math.Max(1, _statFrames);
                     Log("FPS=" + _frames / 2 + " scene=" + (p != null && p.ActiveScene != null ? p.ActiveScene.Name : "?")
-                        + " draws=" + VortexAPI.DrawCalls + " drawn=" + VortexAPI.InstancesDrawn + "/" + VortexAPI.InstancesTested
-                        // where the CPU time goes (#364 E): the last scene submit, and how often the GC ran since the last line
-                        + " submit=" + SceneRenderService.LastSubmitMs.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "ms/" + SceneRenderService.LastSubmitMeshes
+                        + " draws=" + VortexAPI.DrawCalls + " main=" + (VortexAPI.DrawCalls - VortexAPI.DrawCallsShadow - VortexAPI.DrawCallsPost)
+                        + " drawn=" + VortexAPI.InstancesDrawn + "/" + VortexAPI.InstancesTested
+                        // where the CPU time goes (#364 E, #361): the scene submit per frame (all phases / the meshes, averaged over
+                        // the line's frames, and the worst), the renderer's queue (swap, sort, cull + pack, shadow casters) and the
+                        // bytes allocated per frame (by the submit / by the whole main thread), and how often the GC ran
+                        + " submit=" + (_sumSubmitAll / n).ToString("0.00", ci) + "ms(max " + _maxSubmitAll.ToString("0.0", ci) + ") meshes=" + (_sumSubmitMesh / n).ToString("0.00", ci) + "ms/" + SceneRenderService.LastSubmitMeshes
+                        + " native: swap=" + (_sumSwap / n).ToString("0.00", ci) + " sort=" + (_sumSort / n).ToString("0.00", ci)
+                        + " cull=" + (_sumCull / n).ToString("0.00", ci) + " shadow=" + (_sumShadow / n).ToString("0.00", ci) + "ms"
+                        + " alloc=" + (_sumSubmitAlloc / n / 1024.0).ToString("0.0", ci) + "KB/" + (_sumFrameAlloc / n / 1024.0).ToString("0.0", ci) + "KB"
                         + " gc=" + (gc0 - _gc0Last) + "/" + (gc2 - _gc2Last));
                     _gc0Last = gc0; _gc2Last = gc2;
                     _frames = 0; _fpsT0 = now;
+                    _sumSubmitAll = _sumSubmitMesh = _maxSubmitAll = _sumSwap = _sumSort = _sumCull = _sumShadow = 0; _sumSubmitAlloc = _sumFrameAlloc = 0; _statFrames = 0;
                 }
 
                 if (playing)
@@ -380,7 +395,16 @@ namespace Vortex.Player
                     WorldService.ClearDirty();
                     SceneRenderService.RuntimeDirty = false;
                     _submittedScene = scene;
+                    _sumSubmitAll += SceneRenderService.LastSceneSubmitMs; _sumSubmitMesh += SceneRenderService.LastSubmitMs;
+                    _maxSubmitAll = Math.Max(_maxSubmitAll, SceneRenderService.LastSceneSubmitMs);
+                    _sumSubmitAlloc += SceneRenderService.LastSceneSubmitAllocBytes;
                 }
+                // the renderer's queue time of the frame rendered last, and this thread's allocations since the last tick
+                if (VortexAPI.TryGetRenderCpuStats(_cpu)) { _sumSwap += _cpu[0]; _sumSort += _cpu[1]; _sumCull += _cpu[2]; _sumShadow += _cpu[3]; }
+                long alloc = GC.GetAllocatedBytesForCurrentThread();
+                if (_allocLast >= 0) _sumFrameAlloc += alloc - _allocLast;
+                _allocLast = alloc;
+                _statFrames++;
             }
             catch (Exception ex) { Log("[Tick] " + ex); }
         }

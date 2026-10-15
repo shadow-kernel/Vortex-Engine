@@ -537,6 +537,7 @@ namespace vortex::graphics::dx12
 	void DX12Renderer::render_shadow_pass()
 	{
 		using namespace DirectX;
+		instancing::ScopedMs timed(m_cpu_stats.shadow_ms);   // caster gather + pack + the depth passes' recording (#361)
 		if ((m_shadow_spot_count == 0 && m_csm_count == 0 && m_shadow_point_count == 0)
 			|| !m_shadow_instance_vb_mapped) return;
 
