@@ -202,7 +202,7 @@ namespace VortexEditor.Claude.Tools
         [Description("Editor console lines: engine messages, warnings, errors and script Debug.Log output. Without since_id the newest lines " +
                      "(newest last). Every answer has next_id: pass it as since_id to get only the lines added since — oldest first, at most limit " +
                      "(more = how many are left; the next call with the new next_id returns them), so polling during a play test never reads a line " +
-                     "twice. missed counts lines that were removed (Console cleared, 5000-line cap) before they were read.")]
+                     "twice. missed counts the lines the filter matches that were removed (Console cleared, 5000-line cap) before they were read.")]
         public static object ReadConsole(
             [Description("'all', 'warning' (warnings and errors) or 'error'")] string severity = "all",
             [Description("Maximum lines")] int limit = 50,
@@ -221,7 +221,7 @@ namespace VortexEditor.Claude.Tools
             if (!string.IsNullOrEmpty(contains))
                 match = e => (level == null || level(e)) && e.Message?.IndexOf(contains, StringComparison.OrdinalIgnoreCase) >= 0;
             var console = ConsoleService.Instance;
-            var page = Editor.Core.Claude.ConsoleCursor.Read(console.Entries, console.LastId, since_id, match, Math.Clamp(limit, 1, 500));
+            var page = Editor.Core.Claude.ConsoleCursor.Read(console.Entries, console.Removed, console.LastId, since_id, match, Math.Clamp(limit, 1, 500));
             return new
             {
                 total = page.Total,
@@ -229,7 +229,9 @@ namespace VortexEditor.Claude.Tools
                 next_id = page.NextId,
                 more = page.More > 0 ? (int?)page.More : null,
                 missed = page.Missed > 0 ? (long?)page.Missed : null,
-                note = page.Restarted ? "since_id is newer than every line — the editor was restarted and its line ids began again — so this reads from the oldest line" : null,
+                missed_unchecked = page.MissedUnchecked > 0 ? (long?)page.MissedUnchecked : null,
+                note = page.Restarted ? "since_id is newer than every line — the editor was restarted and its line ids began again — so this reads from the oldest line"
+                     : page.MissedUnchecked > 0 ? page.MissedUnchecked + " older lines were removed too long ago to check them against the filter (missed_unchecked)" : null,
             };
         }
 
@@ -272,7 +274,7 @@ namespace VortexEditor.Claude.Tools
         internal static string[] NewEntries(long afterId, LogLevel level, int max)
         {
             var console = ConsoleService.Instance;
-            var page = Editor.Core.Claude.ConsoleCursor.Read(console.Entries, console.LastId, afterId + 1, e => e.Level == level, max);
+            var page = Editor.Core.Claude.ConsoleCursor.Read(console.Entries, console.Removed, console.LastId, afterId + 1, e => e.Level == level, max);
             return page.Lines.Count == 0 ? null : page.Lines.Select(e => ToolHost.Shorten(e.Message, 600)).ToArray();
         }
 
