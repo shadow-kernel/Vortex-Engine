@@ -190,6 +190,61 @@ namespace VortexTests
             t.Equal(0.0, P(-2, 4, true), "negative: the start");
         }
 
+        private const string DrummerScript = @"
+using Vortex;
+public class Drummer : VortexBehaviour
+{
+    public int Mode;   // 1 = steps on every beat, 2 = on every bar
+    public Vector3 Feet;
+    public int Bars, Beats;
+    public override void Start() { Feet = Position; }
+    public override void OnBar(int bar) { Bars++; if ((Mode & 2) != 0) Step(); }
+    public override void OnBeat(int beat) { Beats++; if ((Mode & 1) != 0) Step(); }
+    private void Step() { Feet = Physics.MoveCharacter(Feet, 0.35f, 1.8f, new Vector3(0.1f, -0.01f, 0f), EntityId); }
+}
+";
+
+        /// <summary>#437 review: OnBar / OnBeat run as their behaviour's code (#406) — a drummer stepping its own character
+        /// from OnBeat (or OnBar), its first move ever, moves its own capsule, its own collider no obstacle — and the per-class
+        /// callback cache is emptied when play ends (it held the session's script classes).</summary>
+        [Test]
+        public static void OnBeatAndOnBarRunAsTheirBehavioursCode(TestContext t)
+        {
+            var file = t.Write("Scripts/Drummer.cs", DrummerScript);
+            var asm = Editor.Scripting.RoslynScriptCompiler.Compile(new[] { file }, out var log);
+            if (asm == null) throw new TestFailure("the test script does not compile: " + log);
+            var s = new Editor.Core.Data.Scene { Name = "Band" };
+            CharacterOwnerTests.Floor(s);
+            Editor.ECS.GameEntity Drummer(string name, float x, int mode) => PhysicsRaycastTests.Add(s, null, name, new Editor.ECS.Vector3(x, 0, 0), e =>
+            {
+                e.AddComponentDirect(new Editor.ECS.Components.Physics.CapsuleCollider(e) { Radius = 0.35f, Height = 1.8f, Center = new Editor.ECS.Vector3(0, 0.9f, 0) });
+                CharacterOwnerTests.Attach(e, "Drummer", "Mode", mode.ToString());
+            });
+            var clapper = Drummer("Clapper", 0f, 1);
+            var leader = Drummer("Leader", 5f, 2);
+            var rt = Editor.Scripting.ScriptRuntime.Instance;
+            try
+            {
+                rt.Begin(s, asm);
+                rt.Update(1f / 60f);   // Start
+                for (int beat = 1; beat <= 4; beat++) rt.DispatchMusicBeat(beat, beat / 4, beat % 4 == 0);   // three beats, then bar 1's line
+                foreach (var (who, steps, x0) in new[] { (clapper, 4, 0f), (leader, 1, 5f) })
+                {
+                    var b = rt.BehavioursOf(who)[0];
+                    var feet = (Vortex.Vector3)CharacterOwnerTests.Field(b, "Feet");
+                    t.True((int)CharacterOwnerTests.Field(b, "Beats") == 4 && (int)CharacterOwnerTests.Field(b, "Bars") == 1, who.Name + ": four beats, one bar");
+                    t.True(Math.Abs(feet.X - x0 - 0.1f * steps) < 0.01f && Math.Abs(feet.Y) < 0.05f,
+                           who.Name + ": " + steps + " steps of 0.1 m inside its own collider (" + (feet.X - x0) + ", " + feet.Y + ")");
+                    var owned = new List<long>();
+                    Editor.Core.Services.Physics.CollisionService.CharacterIdsOwnedBy(o => o == who, owned);
+                    t.True(owned.Count == 1 && owned[0] == b.EntityId, who.Name + ": the capsule belongs to it");
+                }
+                t.True(Editor.Scripting.ScriptRuntime.MusicCallbackClassCount > 0, "the dispatch looked the class up");
+            }
+            finally { rt.End(); }
+            t.Equal(0, Editor.Scripting.ScriptRuntime.MusicCallbackClassCount, "play end empties the per-class cache");
+        }
+
         [Test]
         public static void VmusicKeepsItsDefaultsAndRoundTrips(TestContext t)
         {
