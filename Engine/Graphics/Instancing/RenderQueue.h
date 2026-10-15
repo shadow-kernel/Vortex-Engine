@@ -244,19 +244,26 @@ namespace vortex::graphics::instancing
 		const std::vector<u32>& patched() const { return m_patched; }
 		void clear_patched() { m_patched.clear(); }
 
-		// A mesh was destroyed (ResourceRegistry::mesh_generation changed): does any instance still draw a mesh `alive`
-		// rejects? The caller then clears the store and the scene sends its instances again.
+		// A mesh was destroyed (ResourceRegistry::mesh_generation changed): the instances that draw a mesh `alive` rejects
+		// leave — only those; the rest of the scene stays on screen. Their handles stay the scene's: an entity it resolves
+		// again (SceneRenderService.InvalidateModel reloads a model and has its entities resolve it once more) sends a SET
+		// that makes the instance anew, and until then a move of the dead instance is ignored (its mesh is gone). Returns how
+		// many left.
 		template <class AliveFn>
-		bool uses_dead_mesh(AliveFn alive) const
+		u32 remove_dead(AliveFn alive)
 		{
-			id::id_type last = id::invalid_id;
-			for (const Slot& s : m_slots)
+			u32 removed = 0;
+			id::id_type lastAlive = id::invalid_id;
+			for (size_t i = 0; i < m_slots.size(); ++i)
 			{
-				if (s.handle == NONE || s.item.mesh_id == last) continue;
-				if (!alive(s.item.mesh_id)) return true;
-				last = s.item.mesh_id;
+				Slot& s = m_slots[i];
+				if (s.handle == NONE || s.item.mesh_id == lastAlive) continue;
+				if (alive(s.item.mesh_id)) { lastAlive = s.item.mesh_id; continue; }
+				m_pos[s.handle] = NONE;
+				kill((u32)i);
+				++removed;
 			}
-			return false;
+			return removed;
 		}
 
 	private:
@@ -292,6 +299,22 @@ namespace vortex::graphics::instancing
 		bool m_layout{ false };
 		u32 m_epoch{ 1 };
 	};
+
+	// The render queue in the order of one sorted queue: its retained part [0, split) and its frame part [split, end), each
+	// sorted on its own, merged by queue_less — until `visit` returns false. A consumer that keeps only the first N items
+	// (the SSAO prepass's caster cap) then keeps the items it kept when the whole queue was one sorted list (#361).
+	template <class Item, class Visit>
+	inline void visit_merged(const std::vector<Item>& queue, size_t split, const DirectX::XMFLOAT3& eye, Visit visit)
+	{
+		const size_t n = queue.size();
+		if (split > n) split = n;
+		size_t a = 0, b = split;
+		while (a < split || b < n)
+		{
+			const bool retainedNext = a < split && (b >= n || !queue_less(queue[b], queue[a], eye));
+			if (!visit(queue[retainedNext ? a++ : b++])) return;
+		}
+	}
 
 	constexpr u32 NO_RUN = 0xFFFFFFFFu;
 

@@ -835,8 +835,9 @@ namespace vortex::graphics::sdlgpu
 		size_t m_queue_retained{ 0 };
 		bool m_queue_retained_valid{ false };
 		bool m_frame_submitted{ false };
+		bool m_frame_sort_pending{ false };       // the queue's frame part arrived unsorted: prepare_scene sorts it
 		bool m_retained_visible{ true };
-		bool m_retained_drop{ false };            // prepare_scene found a destroyed mesh among them: the next swap clears the store
+		bool m_retained_drop{ false };            // prepare_scene found a destroyed mesh among them: the next swap drops those instances
 		u32 m_retained_mesh_generation{ 0 };
 		DirectX::XMFLOAT3 m_retained_eye{};       // where the distances inside the retained runs were measured
 		u32 m_retained_refresh_frame{ 0 };

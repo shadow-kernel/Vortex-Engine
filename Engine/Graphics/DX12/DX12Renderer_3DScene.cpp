@@ -192,8 +192,8 @@ namespace vortex::graphics::dx12
 		// A mesh was destroyed since the draw runs were built (preview renders, asset reloads, runtime Destroy): the cached runs
 		// hold raw Mesh pointers and the kept queue may still name the dead mesh — drop those items and rebuild, instead of
 		// drawing through freed memory. The queue now lives across frames (#361), so this can no longer wait for a re-submit.
-		// A retained instance among them makes the next swap drop the whole store; the scene sees the new epoch and sends its
-		// instances again. Same as the SDL GPU backend's prepare_scene.
+		// Retained instances among them leave the store at the next swap (only those). Same as the SDL GPU backend's
+		// prepare_scene.
 		if (const u32 gen = reg.mesh_generation(); gen != m_seen_mesh_generation)
 		{
 			m_seen_mesh_generation = gen;
@@ -284,11 +284,23 @@ namespace vortex::graphics::dx12
 
 		// Rebuild the run table ONLY when the queue changed (or the pre-cull mutated it). A static map with a moving camera
 		// reuses the cached layout — the per-frame cull+pack still runs (frustum-dependent), but the run build is skipped.
-		// Nothing is sorted here (#361): the queue is [the retained instances][the frame's own submits], each part sorted by
-		// (layer, material, mesh, winding, distance) in the swap, so identical (mesh+material) objects are ADJACENT and each
-		// run draws as ONE instanced call; a frame that only moved retained instances keeps the runs.
+		// The queue is [the retained instances][the frame's own submits] (#361), each part sorted by (layer, material, mesh,
+		// winding, distance), so identical (mesh+material) objects are ADJACENT and each run draws as ONE instanced call; a
+		// frame that only moved retained instances keeps the runs.
 		bool needRebuild = m_queue_dirty || preCullRan || m_draw_runs.empty();
 		const auto t_sort = instancing::Clock::now();
+		if (m_frame_sort_pending)
+		{
+			// the frame's own submits of the last swap, sorted on their own — here, after the pre-cull dropped the invisible
+			// ones of a huge crowd, as the whole queue was sorted before #361 (the retained instances are sorted already)
+			const size_t first = (std::min)(m_queue_retained, m_render_queue.size());
+			const DirectX::XMFLOAT3 sortEye = m_camera_position;
+			std::sort(m_render_queue.begin() + (std::ptrdiff_t)first, m_render_queue.end(),
+				[&sortEye](const RenderItem& a, const RenderItem& b) { return instancing::queue_less(a, b, sortEye); });
+			m_cpu_stats.sorted += (u32)(m_render_queue.size() - first);
+			m_frame_sort_pending = false;
+			needRebuild = true;
+		}
 
 		// Frustum culling: build the 6 view planes once; objects fully outside are skipped (no draw, no
 		// vertex work). The biggest 2026-standard CPU win — don't render what the camera can't see.

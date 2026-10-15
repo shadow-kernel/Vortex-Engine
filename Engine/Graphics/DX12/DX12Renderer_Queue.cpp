@@ -270,17 +270,15 @@ namespace vortex::graphics::dx12
 
 	instancing::Sync DX12Renderer::sync_retained()
 	{
-		// a mesh was destroyed: when the instances drew it, they all go and the scene sends them again (it notices the epoch)
+		// a mesh was destroyed: the instances that drew it leave, the rest of the scene stays — a whole-store reset blanked
+		// the view until the next submit, and edit mode may not submit for a while
 		auto& reg = ResourceRegistry::instance();
 		const u32 gen = reg.mesh_generation();
 		if (m_retained_drop || gen != m_retained_mesh_generation)
 		{
 			m_retained_mesh_generation = gen;
-			if (m_retained_drop || m_retained.uses_dead_mesh([&reg](id::id_type m) { Mesh* p = reg.get_mesh(m); return p && p->is_valid(); }))
-			{
-				m_retained.clear();
+			if (m_retained.remove_dead([&reg](id::id_type m) { Mesh* p = reg.get_mesh(m); return p && p->is_valid(); }) > 0)
 				m_queue_retained_valid = false;
-			}
 			m_retained_drop = false;
 		}
 		const auto t_sort = instancing::Clock::now();

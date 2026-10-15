@@ -842,8 +842,9 @@ namespace vortex::graphics::dx12
 		size_t m_queue_retained{ 0 };
 		bool m_queue_retained_valid{ false };
 		bool m_frame_submitted{ false };
+		bool m_frame_sort_pending{ false };       // the queue's frame part arrived unsorted: render_3d_scene sorts it
 		bool m_retained_visible{ true };
-		bool m_retained_drop{ false };            // render_3d_scene found a destroyed mesh among them: the next swap clears the store
+		bool m_retained_drop{ false };            // render_3d_scene found a destroyed mesh among them: the next swap drops those instances
 		u32 m_retained_mesh_generation{ 0 };
 		u32 m_seen_mesh_generation{ 0 };          // ResourceRegistry::mesh_generation() the cached draw runs were built against
 		DirectX::XMFLOAT3 m_retained_eye{};       // where the distances inside the retained runs were measured

@@ -172,17 +172,15 @@ namespace vortex::graphics::sdlgpu
 
 	instancing::Sync SdlGpuRenderer::sync_retained()
 	{
-		// a mesh was destroyed: when the instances drew it, they all go and the scene sends them again (it notices the epoch)
+		// a mesh was destroyed: the instances that drew it leave, the rest of the scene stays — a whole-store reset blanked
+		// the view until the next submit, and edit mode may not submit for a while
 		auto& reg = ResourceRegistry::instance();
 		const u32 gen = reg.mesh_generation();
 		if (m_retained_drop || gen != m_retained_mesh_generation)
 		{
 			m_retained_mesh_generation = gen;
-			if (m_retained_drop || m_retained.uses_dead_mesh([&reg](id::id_type m) { Mesh* p = reg.get_mesh(m); return p && p->is_valid(); }))
-			{
-				m_retained.clear();
+			if (m_retained.remove_dead([&reg](id::id_type m) { Mesh* p = reg.get_mesh(m); return p && p->is_valid(); }) > 0)
 				m_queue_retained_valid = false;
-			}
 			m_retained_drop = false;
 		}
 		const auto t_sort = instancing::Clock::now();
@@ -237,25 +235,22 @@ namespace vortex::graphics::sdlgpu
 		const bool frameChanged = staticChanged || !m_submit_queue.empty() || m_frame_submitted;
 		m_frame_submitted = false;
 		const instancing::Sync sync = sync_retained();
-		if (!frameChanged && sync == instancing::Sync::None) return;   // nothing new -> keep last frame's scene (camera-only frames are free)
+		// nothing new -> keep last frame's scene (camera-only frames are free) — unless the queue's retained part is not the
+		// store's any more (shrunk by the render pass, or hidden for a preview and shown again)
+		if (!frameChanged && sync == instancing::Sync::None && m_queue_retained_valid
+			&& m_queue_retained == (m_retained_visible ? m_retained.count() : 0)) return;
 		// the retained part first (moved instances in place); the frame part is the queue's tail, kept or replaced (#361)
 		if (instancing::assemble_retained(m_render_queue, m_retained, sync, frameChanged, m_retained_visible, m_queue_retained, m_queue_retained_valid, m_frame_scratch))
 			m_queue_dirty = true;
 		if (frameChanged)
 		{
-			// the frame's own submits: the static split's set (#364 A) + this frame's per-frame items, sorted on their own —
-			// the retained instances in front of them are not sorted again (#361)
-			const size_t tail = m_render_queue.size();
-			m_render_queue.reserve(tail + m_static_render.size() + m_submit_queue.size());
+			// the frame's own submits: the static split's set (#364 A) + this frame's per-frame items — sorted on their own in
+			// prepare_scene, after the queue is capped (#361; the retained instances in front of them are sorted already)
+			m_render_queue.reserve(m_render_queue.size() + m_static_render.size() + m_submit_queue.size());
 			m_render_queue.insert(m_render_queue.end(), m_static_render.begin(), m_static_render.end());
 			m_render_queue.insert(m_render_queue.end(), m_submit_queue.begin(), m_submit_queue.end());
 			m_submit_queue.clear();
-			const auto t_sort = instancing::Clock::now();
-			const DirectX::XMFLOAT3 eye = m_camera_position;
-			std::sort(m_render_queue.begin() + (std::ptrdiff_t)tail, m_render_queue.end(), [&eye](const RenderItem& a, const RenderItem& b) { return instancing::queue_less(a, b, eye); });
-			const float ms = instancing::ms_since(t_sort);
-			m_cpu_stats.sort_ms += ms; m_cpu_stats.swap_ms -= ms;
-			m_cpu_stats.sorted += (u32)(m_render_queue.size() - tail);
+			m_frame_sort_pending = true;
 			m_bone_render.swap(m_bone_submit);
 			m_bone_submit.clear();
 			m_bone_upload_pending = true;
@@ -551,8 +546,8 @@ namespace vortex::graphics::sdlgpu
 
 		// A mesh was destroyed since the draw runs were built (preview renders, asset reloads, runtime Destroy):
 		// the cached runs hold raw Mesh pointers and the kept queue may still name the dead mesh — drop those items
-		// and rebuild, instead of drawing through freed memory. A retained instance among them makes the next swap drop
-		// the whole store; the scene sees the new epoch and sends its instances again (#361).
+		// and rebuild, instead of drawing through freed memory. Retained instances among them leave the store at the next
+		// swap — only those (#361).
 		if (const u32 gen = reg.mesh_generation(); gen != m_seen_mesh_generation)
 		{
 			m_seen_mesh_generation = gen;
@@ -580,6 +575,19 @@ namespace vortex::graphics::sdlgpu
 		if (m_render_queue.size() > (size_t)MAX_RENDER_OBJECTS) m_render_queue.resize(MAX_RENDER_OBJECTS);
 		if (m_queue_retained > objectCount) { m_queue_retained = objectCount; m_queue_retained_valid = false; }
 		if (objectCount == 0) m_draw_runs.clear();
+		if (m_frame_sort_pending)
+		{
+			// the frame's own submits of the last swap, sorted on their own — after the cap, as the whole queue was before
+			// #361 (the retained instances in front of them are sorted already)
+			const auto t_sort = instancing::Clock::now();
+			const size_t first = (std::min)(m_queue_retained, m_render_queue.size());
+			const XMFLOAT3 eye = view.eye;
+			std::sort(m_render_queue.begin() + (std::ptrdiff_t)first, m_render_queue.end(), [&eye](const RenderItem& a, const RenderItem& b) { return instancing::queue_less(a, b, eye); });
+			m_frame_sort_pending = false;
+			const float ms = instancing::ms_since(t_sort);
+			m_cpu_stats.sort_ms += ms; m_cpu_stats.cull_ms -= ms;
+			m_cpu_stats.sorted += (u32)(m_render_queue.size() - first);
+		}
 
 		const bool needRebuild = m_queue_dirty || (m_draw_runs.empty() && objectCount > 0);
 		m_cpu_stats.queue = (u32)objectCount;

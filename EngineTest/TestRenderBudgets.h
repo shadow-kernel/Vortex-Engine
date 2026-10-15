@@ -52,6 +52,7 @@ public:
 		retained_epoch_and_dead_meshes();
 		retained_queue_assembly();
 		frame_items_join_retained_runs();
+		capped_consumers_see_one_sorted_queue();
 		std::printf(m_failures ? "FAILURES!\n" : "ALL PASSED\n");
 	}
 
@@ -848,8 +849,18 @@ private:
 		r.apply(ops.data(), (u32)ops.size());
 		r.settle(eye);
 		check(r.count() == 2, "a handle beyond the limit is ignored");
-		check(!r.uses_dead_mesh([](vortex::id::id_type m) { return m != 99; }), "no instance draws a destroyed mesh");
-		check(r.uses_dead_mesh([](vortex::id::id_type m) { return m != 12; }), "an instance of a destroyed mesh is found");
+		check(r.remove_dead([](vortex::id::id_type m) { return m != 99; }) == 0 && r.settle(eye) == instancing::Sync::None,
+			"no instance draws a destroyed mesh: nothing leaves");
+		const u32 before = r.epoch();
+		const u32 gone = r.remove_dead([](vortex::id::id_type m) { return m != 12; });
+		const bool relaid = r.settle(eye) == instancing::Sync::Layout;
+		check(gone == 1 && relaid && r.count() == 1 && r.at(0).mesh_id == 11 && r.epoch() == before,
+			"a destroyed mesh takes only its own instances out — the rest stays, no reset");
+		auto again = op(1, instancing::OP_SET, 14, 1, 2);   // the entity resolves its reloaded model: the same handle comes back
+		auto ghost = op(1, instancing::OP_MOVE, 0, 0, 3);
+		r.apply(&again, 1); r.apply(&ghost, 1);
+		r.settle(eye);
+		check(r.count() == 2 && r.at(1).mesh_id == 14 && r.at(1).world_matrix._41 == 3.0f, "a SET for the dropped handle makes the instance anew");
 		const u32 e0 = r.epoch();
 		r.clear();
 		const bool empty = r.settle(eye) == instancing::Sync::Layout && r.count() == 0;
@@ -937,5 +948,29 @@ private:
 		QueueItem vm = item(9, 1, 0); vm.layer = 1;
 		check(instancing::find_run(runs, 0, 4, vm) == instancing::NO_RUN && instancing::find_run(runs, 4, 5, item(7, 5, 0)) == instancing::NO_RUN,
 			"never a run of another layer, never a skinned run");
+	}
+
+	void capped_consumers_see_one_sorted_queue()
+	{
+		std::printf("render queue: a consumer with a cap (SSAO casters) visits the two parts as one sorted queue (#361)\n");
+		const DirectX::XMFLOAT3 eye{ 0, 0, 0 };
+		auto item = [](vortex::id::id_type mesh, vortex::id::id_type mat, float x, u32 layer = 0)
+		{
+			QueueItem q; q.mesh_id = mesh; q.material_id = mat; q.layer = layer; q.world_matrix._41 = x; return q;
+		};
+		// [retained, sorted][frame part, sorted] — and the same items as one sorted queue
+		std::vector<QueueItem> queue = { item(1, 1, 5), item(2, 3, 1), item(3, 7, 2), item(1, 1, 9, 1),
+										 item(1, 1, 2), item(4, 2, 1), item(5, 7, 0) };
+		std::vector<QueueItem> whole = queue;
+		std::sort(whole.begin(), whole.end(), [&eye](const QueueItem& a, const QueueItem& b) { return instancing::queue_less(a, b, eye); });
+		std::vector<QueueItem> seen;
+		instancing::visit_merged(queue, 4, eye, [&](const QueueItem& q) { seen.push_back(q); return true; });
+		bool same = seen.size() == whole.size();
+		for (size_t i = 0; same && i < seen.size(); ++i)
+			same = seen[i].mesh_id == whole[i].mesh_id && seen[i].material_id == whole[i].material_id && seen[i].world_matrix._41 == whole[i].world_matrix._41;
+		check(same, "the merged visit is the order of the whole queue sorted at once");
+		seen.clear();
+		instancing::visit_merged(queue, 4, eye, [&](const QueueItem& q) { seen.push_back(q); return seen.size() < 3; });
+		check(seen.size() == 3 && seen[2].mesh_id == whole[2].mesh_id, "it stops where the consumer's cap is reached");
 	}
 };

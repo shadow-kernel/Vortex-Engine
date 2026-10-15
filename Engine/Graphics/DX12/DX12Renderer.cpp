@@ -304,25 +304,23 @@ namespace vortex::graphics::dx12
 		const bool frameChanged = staticChanged || !m_submit_queue.empty() || m_frame_submitted;
 		m_frame_submitted = false;
 		const instancing::Sync sync = sync_retained();
-		if (!frameChanged && sync == instancing::Sync::None) return;   // scene: nothing new -> KEEP last frame's (camera-only orbit is free)
+		// scene: nothing new -> KEEP last frame's (camera-only orbit is free) — unless the queue's retained part is not the
+		// store's any more (shrunk by the render pass, or hidden for a preview and shown again)
+		if (!frameChanged && sync == instancing::Sync::None && m_queue_retained_valid
+			&& m_queue_retained == (m_retained_visible ? m_retained.count() : 0)) return;
 		// the retained part first (moved instances in place); the frame part is the queue's tail, kept or replaced (#361)
 		if (instancing::assemble_retained(m_render_queue, m_retained, sync, frameChanged, m_retained_visible, m_queue_retained, m_queue_retained_valid, m_frame_scratch))
 			m_queue_dirty = true;
 		if (frameChanged)
 		{
-			// the frame's own submits: the static split's set (#364 A) + this frame's per-frame items, sorted on their own —
-			// the retained instances in front of them are not sorted again (#361)
-			const size_t tail = m_render_queue.size();
-			m_render_queue.reserve(tail + m_static_render.size() + m_submit_queue.size());
+			// the frame's own submits: the static split's set (#364 A) + this frame's per-frame items — sorted on their own in
+			// render_3d_scene after the pre-cull, which drops the invisible ones of a huge crowd first (#361; the retained
+			// instances in front of them are sorted already)
+			m_render_queue.reserve(m_render_queue.size() + m_static_render.size() + m_submit_queue.size());
 			m_render_queue.insert(m_render_queue.end(), m_static_render.begin(), m_static_render.end());
 			m_render_queue.insert(m_render_queue.end(), m_submit_queue.begin(), m_submit_queue.end());
 			m_submit_queue.clear();
-			const auto t_sort = instancing::Clock::now();
-			const DirectX::XMFLOAT3 eye = m_camera_position;
-			std::sort(m_render_queue.begin() + (std::ptrdiff_t)tail, m_render_queue.end(), [&eye](const RenderItem& a, const RenderItem& b) { return instancing::queue_less(a, b, eye); });
-			const float ms = instancing::ms_since(t_sort);
-			m_cpu_stats.sort_ms += ms; m_cpu_stats.swap_ms -= ms;
-			m_cpu_stats.sorted += (u32)(m_render_queue.size() - tail);
+			m_frame_sort_pending = true;
 
 			// Bone palettes travel with the scene queue: adopt the staged palettes now, but do NOT touch the
 			// GPU buffer yet — the previous frame's command list may still be reading it. The actual memcpy

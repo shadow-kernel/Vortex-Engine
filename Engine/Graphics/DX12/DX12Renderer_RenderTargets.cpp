@@ -316,6 +316,10 @@ namespace vortex::graphics::dx12
 			const u32 maxPaneSlot = MAX_DRAW_RUNS - MAX_GIZMO_ITEMS - 1;
 			u32 drawSlot = 0;
 
+			// Opaque items first, then the blended (alpha / additive) ones over them: the queue is sorted by material (#361
+			// sorts the frame part on its own), and a translucent submesh with the lower material id drew before the body it
+			// shows in a thumbnail.
+			for (int phase = 0; phase < 2; ++phase)
 			for (size_t i = 0; i < objectCount; ++i)
 			{
 				const auto& item = m_render_queue[i];
@@ -326,6 +330,11 @@ namespace vortex::graphics::dx12
 				if (item.layer != 0) continue;
 				auto* mesh = reg.get_mesh(item.mesh_id);
 				if (!mesh) continue;
+				{
+					auto* phaseMat = reg.get_material(item.material_id);
+					const u32 phaseBlend = phaseMat ? phaseMat->blend_mode() : 0u;
+					if ((phaseBlend == 1 || phaseBlend == 2) != (phase == 1)) continue;
+				}
 				
 				PerObjectConstants obj_cb{};
 				obj_cb.world = item.world_matrix;
