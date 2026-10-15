@@ -114,6 +114,10 @@ namespace Editor.Core.Services.Physics
             public SysVec PrevPos;        // dynamic bodies: pose after the step before LastPos (render interpolation)
             public SysQuat PrevRot;
             public bool Moving;           // dynamic bodies: Prev != Last, the rendered pose is still interpolating
+            public SysVec ShownPos;       // dynamic bodies: the body pose last written to the entity (WritePose)
+            public SysQuat ShownRot;
+            public bool ShownValid;
+            public bool ShowsBlend;       // … and it was an interpolated one, not where the body is (#481: FixedUpdate syncs it)
         }
 
         private struct ChildShape { public int Type; public SysVec Dims; public SysVec LocalPos; public SysQuat LocalRot; }
@@ -375,10 +379,14 @@ namespace Editor.Core.Services.Physics
                 bool snapshotted = false;
                 for (int i = 0; i < due; i++)
                 {
-                    // FixedUpdate first (#481): a force it adds acts on exactly this step
+                    // FixedUpdate first (#481): a force it adds acts on exactly this step. It reads the bodies where the
+                    // simulation has them — after the previous step — not the interpolated pose the frame renders (a step
+                    // behind, and the same for every step of a frame): a spring or a hover controller would feed back on
+                    // stale positions and diverge. The rendered blend is written again after the frame's steps.
                     var before = BeforeStep;
                     if (before != null)
                     {
+                        ShowLivePoses();
                         before(step);
                         if (!IsBuilt) return;   // a FixedUpdate ended the session (the world is gone)
                     }
@@ -1820,7 +1828,29 @@ namespace Editor.Core.Services.Physics
                 if ((pos - b.LastPos).LengthSquared() < 1e-12f && Math.Abs(SysQuat.Dot(rot, b.LastRot)) > 0.99999999f) continue;
                 b.LastPos = pos; b.LastRot = rot;
                 if (Interpolate) { b.Moving = true; continue; }
-                WritePose(b, pos, rot);
+                WritePose(b, pos, rot, blend: false);
+                any = true;
+            }
+            if (any) SceneRenderService.RuntimeDirty = true;
+        }
+
+        /// <summary>#481: before a FixedUpdate, every dynamic body's entity shows where the body is now — the pose after the
+        /// previous step — instead of the interpolated pose of the last rendered frame. Awake bodies are read from the world;
+        /// a sleeping one only when its entity still shows a blend. Nothing is written for an entity that shows it already.</summary>
+        private static void ShowLivePoses()
+        {
+            bool any = false;
+            for (int i = 0; i < _bodies.Count; i++)
+            {
+                var b = _bodies[i];
+                if (b.Motion != MotionDynamic || b.Secondary || b.IsTrigger) continue;
+                if (!b.ShowsBlend && VortexAPI.PhysicsIsActive(b.Id) == 0) continue;   // asleep where its entity shows it
+                if (VortexAPI.PhysicsGetBodyTransform(b.Id, _f3a, _f4) == 0) continue;
+                var pos = new SysVec(_f3a[0], _f3a[1], _f3a[2]);
+                var rot = new SysQuat(_f4[0], _f4[1], _f4[2], _f4[3]);
+                if (float.IsNaN(pos.X) || float.IsNaN(rot.W)) continue;
+                if (!b.ShowsBlend && b.ShownValid && pos == b.ShownPos && rot == b.ShownRot) continue;
+                WritePose(b, pos, rot, blend: false);
                 any = true;
             }
             if (any) SceneRenderService.RuntimeDirty = true;
@@ -1854,18 +1884,21 @@ namespace Editor.Core.Services.Physics
                 var b = _bodies[i];
                 if (!b.Moving || b.Motion != MotionDynamic || b.Secondary || b.IsTrigger) continue;
                 bool still = (b.LastPos - b.PrevPos).LengthSquared() < 1e-12f && Math.Abs(SysQuat.Dot(b.LastRot, b.PrevRot)) > 0.99999999f;
-                if (still) { WritePose(b, b.LastPos, b.LastRot); b.Moving = false; any = true; continue; }
-                WritePose(b, SysVec.Lerp(b.PrevPos, b.LastPos, alpha), SysQuat.Slerp(b.PrevRot, b.LastRot, alpha));
+                if (still) { WritePose(b, b.LastPos, b.LastRot, blend: false); b.Moving = false; any = true; continue; }
+                WritePose(b, SysVec.Lerp(b.PrevPos, b.LastPos, alpha), SysQuat.Slerp(b.PrevRot, b.LastRot, alpha), blend: true);
                 any = true;
             }
             if (any) SceneRenderService.RuntimeDirty = true;
         }
 
-        private static void WritePose(Body b, SysVec bodyPos, SysQuat rot)
+        /// <summary>Write a body pose to its entity (world → local against the parent chain). <paramref name="blend"/>: an
+        /// interpolated pose, not where the body is (<see cref="ShowLivePoses"/> replaces it before a FixedUpdate).</summary>
+        private static void WritePose(Body b, SysVec bodyPos, SysQuat rot, bool blend)
         {
             var e = b.Entity;
             var t = e?.Transform;
             if (t == null) return;
+            b.ShownPos = bodyPos; b.ShownRot = rot; b.ShownValid = true; b.ShowsBlend = blend;
             var entityPos = bodyPos - SysVec.Transform(b.CenterOffset, rot);
             var world = SysMat.CreateScale(b.Scale) * SysMat.CreateFromQuaternion(rot) * SysMat.CreateTranslation(entityPos);
             var local = world;

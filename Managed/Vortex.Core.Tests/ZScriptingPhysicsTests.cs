@@ -30,6 +30,20 @@ public class Idle : VortexBehaviour { }
 
 public static class BodyLog { public static System.Collections.Generic.List<string> Log = new System.Collections.Generic.List<string>(); }
 
+public static class SpringLog { public static System.Collections.Generic.List<float> Y = new System.Collections.Generic.List<float>(); }
+
+// a damped spring around y = 100 driven from FixedUpdate: k = 400 N/m, c = 4 N·s/m on 1 kg (ω = 20 rad/s, ζ = 0.1)
+public class Spring : VortexBehaviour
+{
+    public float K = 400f, C = 4f, Rest = 100f;
+    public override void FixedUpdate(float fixedDt)
+    {
+        float y = Position.Y, v = Physics.GetVelocity(EntityId).Y;
+        SpringLog.Y.Add(y);
+        AddForce(new Vector3(0f, -K * (y - Rest) - C * v, 0f));
+    }
+}
+
 public class BodyProbe : VortexBehaviour
 {
     public override void OnEnable() { BodyLog.Log.Add(""OnEnable body="" + Physics.HasRigidbody(EntityId) + "" mass="" + Physics.GetMass(EntityId)); }
@@ -97,6 +111,55 @@ public class BodyProbe : VortexBehaviour
                 t.True(Math.Abs(speeds[0] - speeds[2]) <= 0.02f, "30 and 144 fps agree within 1 % (" + speeds[0] + " / " + speeds[2] + ")");
             }
             finally { rt.End(); GameTime.ResetSession(1f / 60f); PhysicsNative.Shutdown(); }
+        }
+
+        /// <summary>#481 review: FixedUpdate reads the body where the simulation has it. A damped spring (k = 400, c = 4, m = 1,
+        /// 1 m out) driven from FixedUpdate settles as the maths says — e^(-ζωt) = 0.018 m at 2 s — at 30, 60 and 144 fps, with
+        /// and without interpolation, and every FixedUpdate sees the same positions at every frame rate. (When FixedUpdate
+        /// read the interpolated pose — a step behind, the same for all steps of a frame — the spring diverged: 28–32 m.)</summary>
+        [Test]
+        public static void ASpringInFixedUpdateSettlesAtEveryFrameRate(TestContext t)
+        {
+            if (!Jolt()) return;
+            var asm = Compile(t);
+            var rt = ScriptRuntime.Instance;
+            var ys = (System.Collections.Generic.List<float>)asm.GetType("SpringLog").GetField("Y").GetValue(null);
+            int[] fps = { 30, 60, 144 };
+            try
+            {
+                foreach (bool interpolate in new[] { true, false })
+                {
+                    var runs = new System.Collections.Generic.List<float[]>();
+                    foreach (int f in fps)
+                    {
+                        PhysicsService.Interpolate = interpolate;
+                        var s = new Scene { Name = "Spring" + f };
+                        var bob = Body(s, "Bob", 1f, gravity: false, script: "Spring");
+                        bob.Transform.LocalPosition = new Vector3(0f, 101f, 0f);   // 1 m from rest
+                        PhysicsRaycastTests.AsLoaded(s);
+                        GameTime.ResetSession(1f / 60f);
+                        ys.Clear();
+                        rt.Begin(s, asm);
+                        float late = 0f;
+                        for (int i = 0; i < 3 * f; i++)
+                        {
+                            rt.Update(1f / f);
+                            if (i >= 2 * f) late = Math.Max(late, Math.Abs(bob.Transform.LocalPosition.Y - 100f));
+                        }
+                        rt.End();
+                        string tag = f + " fps, interpolation " + (interpolate ? "on" : "off");
+                        Console.WriteLine("        " + tag + ": " + ys.Count + " steps, |y - rest| at 2..3 s at most " + late.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture) + " m");
+                        t.True(ys.Count >= 178 && ys.Count <= 181, tag + ": 180 steps in 3 s (" + ys.Count + ")");
+                        t.True(late < 0.05f, tag + ": the spring settled like the maths says (≈0.018 m at 2 s; " + late + ")");
+                        runs.Add(ys.ToArray());
+                    }
+                    int n = runs.Min(r => r.Length);
+                    float worst = 0f;
+                    for (int k = 0; k < n; k++) worst = Math.Max(worst, Math.Max(Math.Abs(runs[0][k] - runs[1][k]), Math.Abs(runs[2][k] - runs[1][k])));
+                    t.True(worst < 1e-4f, "interpolation " + (interpolate ? "on" : "off") + ": every FixedUpdate sees the same positions at 30, 60 and 144 fps (worst difference " + worst + " m)");
+                }
+            }
+            finally { PhysicsService.Interpolate = true; rt.End(); GameTime.ResetSession(1f / 60f); PhysicsNative.Shutdown(); }
         }
 
         /// <summary>#422 acceptance: a Rigidbody child under an inactive area root has no body in Start; Scene.SetActive(root,

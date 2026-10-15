@@ -734,8 +734,10 @@ namespace Vortex
         /// <para>Order in a frame: every Update → the AI tick → [FixedUpdate → physics step] × steps → LateUpdate → animation.
         /// Inside it <see cref="Time.DeltaTime"/> is the fixed step and <see cref="Time.InFixedStep"/> is true. Contacts of a
         /// frame's steps (OnCollisionEnter, OnTrigger*) are reported once after its last step, so the next frame's FixedUpdate
-        /// sees them. Dynamic bodies render interpolated between the last two steps, whatever moved them; a transform a
-        /// script writes here is what renders, so move kinematic things in Update.</para>
+        /// sees them. Inside FixedUpdate every dynamic body's Position and Rotation are where the simulation has it — after the
+        /// previous step, fresh for each step — so a spring or a hover controller reads the state it acts on; Update and
+        /// LateUpdate see the pose that renders, interpolated between the last two steps (whatever moved the body). A
+        /// transform a script writes here is what renders, so move kinematic things in Update.</para>
         /// <c>public override void FixedUpdate(float fixedDt) { AddForce(Forward * EngineForce); }</c></summary>
         public virtual void FixedUpdate(float fixedDt) { }
 
